@@ -44,17 +44,19 @@ class SkipResolver:
 
     # --- decision ----------------------------------------------------------
     @staticmethod
-    def to_skip(chapters: Sequence[Sequence], mode: str = 'all') -> Tuple[Side, Side]:
+    def _decide(chapters, mode='all'):
+        """(op, ed, op_src, ed_src) - src is 'named' | 'positional' | None."""
         op = ed = None
+        osrc = esrc = None
         if mode != 'auto':  # trust explicit titles
             for c in chapters:
                 k = SkipResolver.kind(c[0])
                 if k == 'op' and op is None:
-                    op = (c[1], c[2])
+                    op, osrc = (c[1], c[2]), 'named'
                 elif k == 'ed' and ed is None:
-                    ed = (c[1], c[2])
+                    ed, esrc = (c[1], c[2]), 'named'
         if mode == 'names' or len(chapters) < 2:
-            return op, ed
+            return op, ed, osrc, esrc
         # positional fallback for a side the names did not provide
         main = max(chapters, key=lambda c: c[2] - c[1])
         mlen = main[2] - main[1]
@@ -65,12 +67,20 @@ class SkipResolver:
 
         leading = [c for c in chapters if c[2] <= main[1] + 1 and short(c)]
         trailing = [c for c in chapters if c[1] >= main[2] - 1 and short(c)]
-        # infer an OP only for a real OP/main/ED sandwich (keeps 'Part A/B' safe)
         if op is None and leading and (ed is not None or trailing):
-            op = (min(c[1] for c in leading), main[1])
+            op, osrc = (min(c[1] for c in leading), main[1]), 'positional'
         if ed is None and trailing:
-            ed = (main[2], max(c[2] for c in trailing))
+            ed, esrc = (main[2], max(c[2] for c in trailing)), 'positional'
+        return op, ed, osrc, esrc
+
+    @staticmethod
+    def to_skip(chapters, mode='all'):
+        op, ed, _os, _es = SkipResolver._decide(chapters, mode)
         return op, ed
+
+    def resolve(self, url: str, mode: str = 'all', timeout=None):
+        """(op, ed, op_src, ed_src) from the file's own chapters."""
+        return self._decide(self.probe(url, timeout), mode)
 
     # --- ffprobe -----------------------------------------------------------
     def probe(self, url: str, timeout: Optional[float] = None) -> List[Chapter]:

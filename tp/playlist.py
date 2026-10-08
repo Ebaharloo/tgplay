@@ -93,16 +93,16 @@ class Playlist:
                 ready.wait(25)
                 url = self.proxy.url(name)
 
-                flags = []
+                flags, note = [], 'off'
                 if self.skip is not None:
                     try:
-                        flags = self.skip.flags(title=title, ep=ep.num, url=url,
-                                                mode=skip_mode,
-                                                toggle=skip_toggle)
+                        flags, note = self.skip.flags(
+                            title=title, ep=ep.num, url=url, mode=skip_mode,
+                            toggle=skip_toggle)
                     except Exception as ex:
-                        log.cprint(f'skip: failed ({ex})')
-                if i == 0 and flags:
-                    log.cprint('skip: ' + ' '.join(flags))
+                        flags, note = [], f'failed ({ex})'
+                if i == 0:
+                    log.cprint(f'skip[{skip_mode}]: {note}')
 
                 sock = f'/tmp/tgplay-{os.getpid()}-{ep.num}.ipc'
                 fire = None

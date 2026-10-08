@@ -1,14 +1,57 @@
-"""tp.skip - intro/outro skip flags.
+"""tp.skip - intro/outro skip flags, with a human note of WHAT was applied.
 
 Order: the mkv's OWN chapters first (see tp.chapters), then ani-skip
-(aniskip.com) when the file carries nothing. Produces the `--script-opts` that
-skip.lua consumes, so the player just gets a list of mpv args.
+(aniskip.com) when the file carries nothing. `flags()` returns
+`(mpv_args, note)` where note says which detector ran and the times, so the
+log shows exactly why a jump happened.
 """
+import re
 import shutil
 import subprocess
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from .chapters import SkipResolver
+
+
+def _mmss(x) -> str:
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return str(x)
+    m, s = divmod(int(v), 60)
+    h, m = divmod(m, 60)
+    return f'{h}:{m:02d}:{s:02d}' if h else f'{m}:{s:02d}'
+
+
+def _span(seg) -> str:
+    return f'{_mmss(seg[0])}-{_mmss(seg[1])}' if seg else ''
+
+
+def _chapter_note(op, ed, osrc, esrc) -> str:
+    src = osrc if osrc == esrc else ('mixed' if (osrc or esrc) else '?')
+    parts = []
+    if op:
+        parts.append(f'op {_span(op)}')
+    if ed:
+        parts.append(f'ed {_span(ed)}')
+    return f'chapters({src}) · ' + ' · '.join(parts)
+
+
+def _ani_note(flags) -> str:
+    blob = ' '.join(flags)
+
+    def val(k):
+        m = re.search(rf'{k}=([0-9.]+)', blob)
+        return m.group(1) if m else None
+
+    op = (val('skip-op_start'), val('skip-op_end'))
+    ed = (val('skip-ed_start'), val('skip-ed_end'))
+    parts = []
+    if op[0] and op[1]:
+        parts.append(f'op {_mmss(op[0])}-{_mmss(op[1])}')
+    if ed[0] and ed[1]:
+        parts.append(f'ed {_mmss(ed[0])}-{_mmss(ed[1])}')
+    return 'ani-skip' + (' · ' + ' · '.join(parts) if parts else '')
 
 
 class AniSkip:
@@ -45,14 +88,17 @@ class SkipService:
 
     def flags(self, *, title: str, ep: int, url: Optional[str] = None,
               mode: str = 'all', toggle: bool = False,
-              timeout: float = 30) -> List[str]:
+              timeout: float = 30) -> Tuple[List[str], str]:
+        """(mpv args, note). note names the detector + times applied."""
         if url:
-            f = self.chapters.flags(url, mode, toggle, timeout)
+            op, ed, osrc, esrc = self.chapters.resolve(url, mode, timeout)
+            f = self.chapters.opts_from(op, ed, toggle)
             if f:
-                return f
+                return f, _chapter_note(op, ed, osrc, esrc)
         mal = None
         if self.meta is not None:
             mal = self.meta.resolve_mal(title, ask=False)
         if mal is None or not self.ani.available():
-            return []
-        return self.ani.flags(mal, ep, toggle) or []
+            return [], 'none (no usable chapters, no ani-skip data)'
+        af = self.ani.flags(mal, ep, toggle) or []
+        return af, (_ani_note(af) if af else 'none (ani-skip has no data)')
