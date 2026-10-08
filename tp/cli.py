@@ -231,7 +231,21 @@ def main(argv: Optional[List[str]] = None):
 
     if interactive:
         eps = provider.episodes()
-        chosen = ui.pick_start(eps, _resume_ep(cfg, provider.title))
+        labels = dict(eps)
+        try:
+            mal = meta.resolve_mal(provider.title, ask=False)
+        except Exception:
+            mal = None
+        if mal:
+            log.cprint('episodes: fetching titles...')
+            for n in sorted(eps):
+                try:
+                    t = meta.ep_title(mal, n)
+                except Exception:
+                    t = None
+                if t:
+                    labels[n] = t
+        chosen = ui.pick_start(labels, _resume_ep(cfg, provider.title))
         if chosen is None:
             print('menu: cancelled')
             return 0

@@ -208,7 +208,7 @@ def pick_start(items, resume=None):
                 top = cur
             if cur >= top + view:
                 top = cur - view + 1
-            head = f' {len(nums)} episodes   Enter = play from here   a = all   q = quit '
+            head = f' {len(nums)} episodes   Enter = from here   o = only this   a = all   q = quit '
             stdscr.addnstr(0, 0, head[:max(0, w - 1)], max(0, w - 1),
                            curses.A_REVERSE)
             for i in range(top, min(top + view, len(nums))):
@@ -220,7 +220,7 @@ def pick_start(items, resume=None):
                                max(0, w - 2), attr)
             stdscr.addnstr(
                 h - 1, 0,
-                ' Up/Down scroll   Enter start-here   a all   q cancel '[
+                ' Up/Down scroll   Enter start-here   o only-this   a all   q cancel '[
                     :max(0, w - 1)], max(0, w - 1), curses.A_DIM)
             stdscr.refresh()
             ch = _read_key(stdscr)
@@ -228,6 +228,8 @@ def pick_start(items, resume=None):
                 return None
             if ch == ord('a'):
                 return nums
+            if ch == ord('o'):
+                return [nums[cur]]
             if ch in (curses.KEY_UP, ord('k')):
                 cur = max(0, cur - 1)
             elif ch in (curses.KEY_DOWN, ord('j')):

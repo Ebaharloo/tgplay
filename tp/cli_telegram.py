@@ -43,6 +43,7 @@ tgp (tgplay) - stream the last 50 mkv files of a Telegram channel.
   tgp <channel> -e 2-5,9    play picks directly (no menu)
   tgp <channel> -a          play all 50
   tgp <channel> -f 720      filter by name substring
+  tgp <channel> --window N  scan N newest files (default 50)
   tgp cache [clean --days 3]   show / clean the download cache
   tgp login | tgp logout    one-time login / forget the session
 
@@ -155,6 +156,20 @@ def main_tgp(argv: Optional[List[str]] = None) -> int:
     if _maybe_login(argv):
         return 0
     from . import ui
+    window = 50
+    if '--window' in argv:
+        i = argv.index('--window')
+        if i + 1 < len(argv):
+            try:
+                window = int(argv[i + 1])
+            except ValueError:
+                pass
+            del argv[i:i + 2]
+        else:
+            del argv[i]
+    if '--all' in argv:
+        window = 500
+        argv.remove('--all')
     interactive = not argv
     argv, menu = _strip_menu(argv)
     interactive = interactive or menu
@@ -168,7 +183,7 @@ def main_tgp(argv: Optional[List[str]] = None) -> int:
             return 0
         interactive = True
     provider = TelegramProvider(channel, session=Config().tg_session,
-                                window=50, matcher=opts['f'])
+                                window=window, matcher=opts['f'])
     provider.load()
     cfg = Config()
     qs = provider.qualities()
