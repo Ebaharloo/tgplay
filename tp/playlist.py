@@ -1,0 +1,136 @@
+"""tp.playlist - the episode loop: provider + proxy + cache + player + skip.
+
+No module-level state: one Playlist instance owns the run, and everything it
+needs is injected. Handles resume, retry-on-open-failure, skip, cut/start and
+the --next prefetch trigger (via the player's PosWatcher).
+"""
+import json
+import os
+import re
+import threading
+import urllib.parse
+from typing import List, Optional
+
+from . import log
+from .episodes import Episode
+from .player import PosWatcher
+
+
+class Playlist:
+    def __init__(self, provider, proxy, cache, player, config, *,
+                 skip=None, prefetcher=None, interval: float = 10.0):
+        self.provider = provider
+        self.proxy = proxy
+        self.cache = cache
+        self.player = player
+        self.cfg = config
+        self.skip = skip
+        self.prefetcher = prefetcher
+        self.interval = float(os.environ.get('AGP_WATCH_INTERVAL', interval))
+
+    # --- progress ----------------------------------------------------------
+    def _load(self):
+        try:
+            return json.load(open(self.cfg.progress))
+        except Exception:
+            return {}
+
+    def progress_for(self, title: str):
+        return self._load().get(title)
+
+    def _save(self, title: str, ep: int, pos: float):
+        d = self._load()
+        d[title] = {'ep': ep, 'pos': round(pos)}
+        os.makedirs(os.path.dirname(self.cfg.progress), exist_ok=True)
+        json.dump(d, open(self.cfg.progress, 'w'))
+
+    # --- helpers -----------------------------------------------------------
+    def _name(self, ep: Episode, stream) -> str:
+        url = getattr(stream, 'url', None)
+        if url:
+            m = re.search(r'/([^/?]+\.mkv)', url)
+            if m:
+                return urllib.parse.unquote(m.group(1))
+        return f'{self.provider.title} - ({ep.num}).mkv'
+
+    def _trigger(self, cut, frac):
+        if frac == 'cut':
+            def fire(p, d):
+                return bool(d) and p >= d - 60
+        else:
+            def fire(p, d):
+                eff = (d - cut) if (isinstance(cut, int) and d) else d
+                return bool(eff) and p / eff > frac
+        return fire
+
+    # --- loop --------------------------------------------------------------
+    def run(self, episodes: List[Episode], *, skip_mode: str = 'all',
+            skip_toggle: bool = False, cut: Optional[int] = None,
+            start: Optional[int] = None, next_frac=False,
+            extra: Optional[List[str]] = None):
+        title = self.provider.title
+        for i, ep in enumerate(episodes):
+            nxt = episodes[i + 1] if i + 1 < len(episodes) else None
+            attempt = 0
+            while True:
+                stream = self.provider.stream(ep.num)
+                name = self._name(ep, stream)
+                self.proxy.register(name, stream)
+                ready = threading.Event()
+                self.proxy.prewarm(name, ready)
+                ready.wait(25)
+                url = self.proxy.url(name)
+
+                flags = []
+                if self.skip is not None:
+                    try:
+                        flags = self.skip.flags(title=title, ep=ep.num, url=url,
+                                                mode=skip_mode,
+                                                toggle=skip_toggle)
+                    except Exception as ex:
+                        log.cprint(f'skip: failed ({ex})')
+
+                sock = f'/tmp/tgplay-{os.getpid()}-{ep.num}.ipc'
+                fire = None
+                on_fire = None
+                if next_frac and nxt is not None and self.prefetcher is not None:
+                    fire = self._trigger(cut, next_frac)
+
+                    def on_fire(_nxt=nxt):
+                        try:
+                            st = self.provider.stream(_nxt.num)
+                            nm = self._name(_nxt, st)
+                            log.cprint(f'next: prefetching ep{_nxt.num}')
+                            threading.Thread(
+                                target=self.prefetcher.prefetch,
+                                args=(nm, st), daemon=True).start()
+                        except Exception:
+                            pass
+
+                watcher = PosWatcher(
+                    sock, self.interval,
+                    on_pos=lambda p, _n=ep.num: self._save(title, _n, p),
+                    fire_when=fire, on_fire=on_fire)
+                watcher.start()
+                cmd = self.player.command(
+                    url, title=name, extra=(list(extra or []) + flags),
+                    start=start, cut=cut, ipc=sock)
+                log.cprint(f'>> streaming ep{ep.num}: {name}')
+                rc = self.player.play(cmd)
+                watcher.join(timeout=12)
+                try:
+                    os.remove(sock)
+                except OSError:
+                    pass
+
+                if rc == 4:  # user quit
+                    return
+                if rc == 2 and attempt < 2:  # failed to open: fresh link, retry
+                    attempt += 1
+                    self.proxy.streams.pop(name, None)
+                    log.cprint(f'load: ep{ep.num} failed to open -> retry {attempt}')
+                    continue
+                if rc == 0:
+                    self._save(title, ep.num + 1, 0)
+                break
+        log.cprint('>> done')

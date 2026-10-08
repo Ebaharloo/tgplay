@@ -76,11 +76,15 @@ CLIs build the real one. No module-level singletons.
    on-disk mirror window and live gap reads. Tested with an in-memory source.
    This is the single implementation that replaces `tg_server.py` and the two
    inline Telegram handlers.
-3. **`MediaSource`**: `AnimeGateSource` + `TelegramSource`; `RangeProxy` and
-   `Playlist` become source-agnostic.
-4. **`Prefetcher` + `Player` + `Playlist`** classes replace `agp.play()`'s body
-   and its globals; thin `cli.main()` entry points.
-5. **Tracking + UI** as injectable services.
+3. **Providers** (done): `tp/providers` — a `Provider` interface plus
+   `AnimeGateProvider` (signed CDN links) and `TelegramProvider`
+   (`TelegramSource`, telethon imported lazily).
+4. **Prefetcher + Player + Playlist + CLI** (done): `tp/prefetch`
+   (cancellable mirroring into the Cache), `tp/player` (mpv command builder +
+   IPC `PosWatcher`), `tp/playlist` (resume / retry-on-open / skip / cut /
+   `--next`), `tp/skip` + `tp/metadata`, and `tp/cli` with a thin `agp` script.
+5. **Tracking + MenuUI** as injectable services; a `tg`/`tgp` CLI over
+   `TelegramProvider`.
 
 Each phase keeps every `tests/test_*.py` green; no phase changes user-visible
 behaviour on its own.

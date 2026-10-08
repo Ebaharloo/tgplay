@@ -10,7 +10,7 @@ player is easy to test, reuse and tune. See `ARCHITECTURE.md`.
 
 ## Status
 
-Early. Phases 1–2 (pure core + unified range server) are in `tp/`:
+Phases 1–4 are in `tp/`, with a working `agp` entry point:
 
 ```
 tp/log.py        colour/emoji logging
@@ -20,19 +20,31 @@ tp/chapters.py   SkipResolver: mkv chapters -> skip flags
 tp/episodes.py   Episode + select()/resume()  (the only place the play list is built)
 tp/sources.py    MediaSource ABC + BytesSource + HttpSource
 tp/cache.py      Cache: mirror geometry + LRU eviction
-tp/proxy.py      RangeProxy: one source-agnostic range server (RAM head/tail +
-                 disk mirror + live gaps)
+tp/proxy.py      RangeProxy: one source-agnostic range server
+tp/providers/    Provider + AnimeGateProvider + TelegramProvider/TelegramSource
+tp/metadata.py   AniList -> MAL id, Jikan -> episode titles
+tp/skip.py       SkipService: file chapters, then ani-skip
+tp/prefetch.py   Prefetcher: cancellable mirroring into the Cache
+tp/player.py     Player: mpv command + IPC PosWatcher
+tp/playlist.py   Playlist: resume / retry / skip / cut / --next
+tp/cli.py        arg parsing + wiring
+agp              thin entry point (AniGate)
 ```
 
-Tests:
+Run:
 
 ```
-python3 tests/test_core.py     # config/http/chapters/episodes
-python3 tests/test_proxy.py    # proxy + cache (in-memory source)
+./agp -h
+python3 tests/test_core.py
+python3 tests/test_proxy.py
+python3 tests/test_providers.py
+python3 tests/test_player.py
+python3 tests/test_prefetch.py
+python3 tests/test_skip.py
 ```
 
-Later phases (`ARCHITECTURE.md`): `AnimeGateSource`/`TelegramSource`,
-`Prefetcher`, `Player`, `Playlist`, `Tracker`, `MenuUI`, then thin CLIs.
+Not yet ported (Phase 5): AniList progress sync, the curses menu, and separate
+`tg`/`tgp` CLIs (the `TelegramProvider` exists; wire it to a CLI next).
 
 ## Tests
 
