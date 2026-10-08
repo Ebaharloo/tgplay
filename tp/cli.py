@@ -38,7 +38,8 @@ agp (tgplay) - stream animegate.ir mkv links, no downloads.
   --start N       start each episode at N seconds
   any other --flag goes to mpv verbatim
 
-  agp --menu                pick the link + options in a terminal form
+  agp --menu                pick the link, then the episodes page (with MAL/
+                            AniList titles) and the options, in terminal forms
   agp cache [clean [--days N]]  show / clean the download cache
   agp login <CLIENT_ID> | logout | sync [--dry] | new | tracking
                             AniList progress sync + new-episode notices
@@ -61,6 +62,34 @@ def _resume_ep(cfg, title):
         return int(e.get('ep')) if e.get('ep') else None
     except Exception:
         return None
+
+
+def _resume_pos(cfg, title):
+    import json as _j
+    try:
+        d = _j.load(open(cfg.progress))
+        return int(d.get(title, {}).get('pos') or 0)
+    except Exception:
+        return 0
+
+
+def _titled(meta, title, eps):
+    """Episode labels enriched with MAL/AniList titles (best effort, cached)."""
+    labels = dict(eps)
+    try:
+        mal = meta.resolve_mal(title, ask=False)
+    except Exception:
+        mal = None
+    if mal:
+        log.cprint('episodes: fetching titles...')
+        for n in sorted(eps):
+            try:
+                t = meta.ep_title(mal, n)
+            except Exception:
+                t = None
+            if t:
+                labels[n] = t
+    return labels
 
 
 def cache_command(args: List[str]) -> int:
@@ -201,15 +230,33 @@ def main(argv: Optional[List[str]] = None):
 
     cfg = Config().ensure()
     http = HttpClient()
+    meta = Metadata(cfg, http)
     provider = AnimeGateProvider(url, quality=opts['f'], http=http)
+
+    planned = None
+    resume_pt = None
     if interactive:
+        # 1) show the whole playlist first (with MAL/AniList titles) and let
+        #    the user pick a start / single episode / all
         provider.fetch_groups()
+        provider.select(opts['f'])
+        eps = provider.episodes()
+        labels = _titled(meta, provider.title, eps)
+        res_ep = _resume_ep(cfg, provider.title)
+        resume_pt = (res_ep, _resume_pos(cfg, provider.title))
+        chosen = ui.pick_start(labels, res_ep)
+        if chosen is None:
+            print('menu: cancelled')
+            return 0
+        # 2) then the options form (quality + skip/cut/...)
         res = ui.gather(opts, provider.groups, mpv, show_eps=False)
         if res is None:
             print('menu: cancelled')
             return 0
         opts, mpv = res
         provider.select(opts['f'])
+        eps = provider.episodes()
+        planned = [Episode(k, eps[k]) for k in chosen if k in eps]
     else:
         provider.load()
     ui.recent_add(url)
@@ -222,35 +269,13 @@ def main(argv: Optional[List[str]] = None):
 
     proxy = RangeProxy(port=cfg.proxy_port).start()
     cache = Cache(cfg.cache_dir, cfg.cache_budget)
-    meta = Metadata(cfg, http)
     skip = SkipService(metadata=meta)
     prefetch = Prefetcher(cache)
     player = Player()
     playlist = Playlist(provider, proxy, cache, player, cfg,
                         skip=skip, prefetcher=prefetch, tracker=tracker)
 
-    if interactive:
-        eps = provider.episodes()
-        labels = dict(eps)
-        try:
-            mal = meta.resolve_mal(provider.title, ask=False)
-        except Exception:
-            mal = None
-        if mal:
-            log.cprint('episodes: fetching titles...')
-            for n in sorted(eps):
-                try:
-                    t = meta.ep_title(mal, n)
-                except Exception:
-                    t = None
-                if t:
-                    labels[n] = t
-        chosen = ui.pick_start(labels, _resume_ep(cfg, provider.title))
-        if chosen is None:
-            print('menu: cancelled')
-            return 0
-        planned = [Episode(k, eps[k]) for k in chosen]
-    else:
+    if not interactive:
         planned = _plan(provider, opts, playlist)
     if not planned:
         print('nothing to play')
@@ -261,10 +286,9 @@ def main(argv: Optional[List[str]] = None):
         next_frac = 'cut' if (opts['nowait'] and opts['cut']) else opts['next']
     skip_mode = opts['skip'] or 'all'
     start = None
-    if getattr(playlist, '_resume', None):
-        ep0, pos0 = playlist._resume
-        if planned and planned[0].num == ep0:
-            start = pos0
+    rp = getattr(playlist, '_resume', None) or resume_pt
+    if rp and planned and planned[0].num == rp[0]:
+        start = rp[1]
     try:
         playlist.run(planned, skip_mode=skip_mode,
                      skip_toggle=opts['skip_toggle'], cut=opts['cut'],

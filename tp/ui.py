@@ -83,6 +83,10 @@ def choose_url() -> Optional[str]:
     def run(stdscr):
         curses.curs_set(0)
         stdscr.keypad(True)
+        try:
+            curses.flushinp()  # drop stale typeahead (no auto-advance)
+        except Exception:
+            pass
         cur = 0
         while True:
             stdscr.erase()
@@ -194,6 +198,10 @@ def pick_start(items, resume=None):
     def run(stdscr):
         curses.curs_set(0)
         stdscr.keypad(True)
+        try:
+            curses.flushinp()  # drop stale typeahead (no auto-advance)
+        except Exception:
+            pass
         try:
             curses.set_escdelay(25)
         except Exception:
@@ -347,6 +355,10 @@ def _curses_form(opts, groups, mpv, show_eps=True):
     def run(stdscr):
         curses.curs_set(0)
         stdscr.keypad(True)
+        try:
+            curses.flushinp()  # drop stale typeahead (no auto-advance)
+        except Exception:
+            pass
         try:
             curses.set_escdelay(25)
         except Exception:
