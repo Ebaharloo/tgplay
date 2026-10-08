@@ -151,6 +151,10 @@ class Simkl:
             return None
         return f'https://simkl.com/anime/{sid}/{slug or ""}'.rstrip('/')
 
+    def show_link(self, mal=None, anilist=None, query=None) -> Optional[str]:
+        """The anime's Simkl page URL (keyless; None when not found)."""
+        return self.page_url(self.info(mal=mal, anilist=anilist, query=query))
+
 
 def save_client_id(client_id: str):
     os.makedirs(os.path.dirname(CONF), exist_ok=True)

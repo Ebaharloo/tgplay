@@ -43,7 +43,6 @@ agp (tgplay) - stream animegate.ir mkv links, no downloads.
                             AniList titles) and the options, in terminal forms
   agp cache [clean [--days N]]  show / clean the download cache
   agp simkl <CLIENT_ID>     set the Simkl key for episode titles (donghua)
-  agp info <anime-url>      cross-site links (MAL / AniList / Simkl / ...)
   agp login <CLIENT_ID> | logout | sync [--dry] | new | tracking
                             AniList progress sync + new-episode notices
   Telegram: use ./tg (one file) and ./tgp (channel); log in with `tgp login`.
@@ -76,35 +75,44 @@ def _resume_pos(cfg, title):
         return 0
 
 
-def info_command(url: str) -> int:
-    """`agp info <anime-url>` - cross-site links (MAL / AniList / Simkl / ...)."""
-    from .providers.animegate import slug_title
-    from .simkl import Simkl
-    cfg = Config().ensure()
-    http = HttpClient()
-    title = slug_title(url)
-    mal = Metadata(cfg, http).resolve_mal(title, ask=False)
-    sk = Simkl(http=http)
-    info = sk.info(mal=mal) if mal else sk.info(query=title)
-    print(f'· {title}')
-    print(f'  animegate  {url}')
-    if mal:
-        print(f'  MAL        https://myanimelist.net/anime/{mal}   ({mal})')
-    if not info:
-        print('  Simkl      (not found)')
-        return 0
-    ids = info.get('ids') or {}
-    print(f"  Simkl      {Simkl.page_url(info)}")
-    for k, label, base in (('anilist', 'AniList', 'https://anilist.co/anime/'),
-                           ('anidb', 'AniDB', 'https://anidb.net/anime/'),
-                           ('kitsu', 'Kitsu', 'https://kitsu.io/anime/'),
-                           ('imdb', 'IMDb', 'https://www.imdb.com/title/'),
-                           ('tvdb', 'TVDB', 'https://thetvdb.com/series/')):
-        if ids.get(k):
-            print(f'  {label:<9} {base}{ids[k]}')
-    print(f"  title      {info.get('title')} ({info.get('year')}) · "
-          f"{info.get('total_episodes')} eps · {info.get('status')}")
-    return 0
+def _links_path(cfg):
+    return os.path.join(os.path.dirname(cfg.progress), 'links.json')
+
+
+def _link_get(cfg, title):
+    import json as _j
+    try:
+        return _j.load(open(_links_path(cfg))).get(title)
+    except Exception:
+        return None
+
+
+def _link_put(cfg, title, url):
+    import json as _j
+    try:
+        p = _links_path(cfg)
+        d = _j.load(open(p)) if os.path.exists(p) else {}
+        d[title] = url
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        _j.dump(d, open(p, 'w'))
+    except Exception:
+        pass
+
+
+def _show_link_async(cfg, meta, title):
+    """Resolve the anime's page link (Simkl; keyless) in the background and
+    print it, so the log shows where to go check - without delaying playback."""
+    def run():
+        try:
+            mal = meta.cached_mal(title) or meta.resolve_mal(title, ask=False)
+            url = (meta.simkl.show_link(mal=mal) if mal
+                   else meta.simkl.show_link(query=title))
+            if url:
+                _link_put(cfg, title, url)
+                log.cprint(f'show: {url}')
+        except Exception:
+            pass
+    threading.Thread(target=run, daemon=True).start()
 
 
 def cache_command(args: List[str]) -> int:
@@ -231,13 +239,6 @@ def main(argv: Optional[List[str]] = None):
             print('simkl: configured' if s.available()
                   else 'simkl: not configured (agp simkl <CLIENT_ID>)')
         return 0
-    if argv and argv[0].lower() in ('info', 'sheet'):
-        url = next((a for a in argv[1:] if 'animegate' in a), None) \
-            or (argv[1] if len(argv) > 1 else None)
-        if not url:
-            print('usage: agp info <anime-url>')
-            return 0
-        return info_command(url)
 
     from . import ui
     interactive = False
@@ -295,6 +296,11 @@ def main(argv: Optional[List[str]] = None):
         provider.load()
     ui.recent_add(url)
     log.cprint(f'>> {provider.title} - {len(provider.episodes())} episodes')
+    link = _link_get(cfg, provider.title)
+    if link:
+        log.cprint(f'show: {link}')
+    else:
+        _show_link_async(cfg, meta, provider.title)
 
     from .tracking import Tracker
     tracker = Tracker(cfg, http)

@@ -19,6 +19,7 @@ _STYLES = [
     (r'^>> streaming',       '🎬 ',  '1;32'),
     (r'^>> done',            '🏁 ',  '1'),
     (r'^track:',             '🔔 ',  '1;36'),
+    (r'^show:',              '📺 ',  '36'),
 ]
 _RULES = [(re.compile(p), e, s) for p, e, s in _STYLES]
 _COLOR = sys.stdout.isatty() and not os.environ.get('NO_COLOR')
