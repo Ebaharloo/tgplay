@@ -38,6 +38,7 @@ agp (tgplay) - stream animegate.ir mkv links, no downloads.
   any other --flag goes to mpv verbatim
 
   agp --menu                pick the link + options in a terminal form
+  agp cache [clean [--days N]]  show / clean the download cache
   agp login <CLIENT_ID> | logout | sync [--dry] | new | tracking
                             AniList progress sync + new-episode notices
   Telegram: use ./tg (one file) and ./tgp (channel); log in with `tgp login`.
@@ -49,6 +50,34 @@ def _notify(tracker):
         tracker.notify_new()
     except Exception:
         pass
+
+
+def cache_command(args: List[str]) -> int:
+    """`agp cache` (report) / `agp cache clean [--days N|--all]`."""
+    cfg = Config()
+    c = Cache(cfg.cache_dir, cfg.cache_budget)
+    if args and args[0] == 'clean':
+        days = 3.0
+        if '--days' in args:
+            try:
+                days = float(args[args.index('--days') + 1])
+            except Exception:
+                pass
+        n = c.clean(days=days, all='--all' in args,
+                    include_partials='--keep-partial' not in args)
+        print(f'cache: removed {n} file(s) from {cfg.cache_dir}')
+        return 0
+    rows = c.report()
+    total = sum(r['bytes'] for r in rows)
+    print(f'cache: {cfg.cache_dir}  ({total // 1048576}MB, {len(rows)} entries)')
+    for r in rows:
+        tag = 'partial' if r['partial'] else 'done'
+        print(f"  {r['bytes'] // 1048576:>6}MB  {r['age_days']:>5.1f}d  "
+              f"{tag:<7} {r['name'][:70]}")
+    print('  keep: unfinished downloads are never auto-deleted')
+    print('  clean older than 3 days:  agp cache clean --days 3')
+    print('  clean everything:         agp cache clean --all')
+    return 0
 
 
 def parse(argv: List[str]) -> Tuple[dict, List[str], List[str]]:
@@ -135,6 +164,8 @@ def main(argv: Optional[List[str]] = None):
         from .tracking import Tracker
         Tracker(Config().ensure()).cli(argv[0].lower(), argv[1:])
         return 0
+    if argv and argv[0].lower() == 'cache':
+        return cache_command(argv[1:])
 
     from . import ui
     interactive = False

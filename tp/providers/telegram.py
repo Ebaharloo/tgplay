@@ -11,6 +11,7 @@ import threading
 from typing import Dict, List, Optional, Tuple
 
 from ..sources import MediaSource
+from .. import quality
 from .base import Provider
 
 API_ID = 2040
@@ -156,6 +157,9 @@ class TelegramProvider(_TelegramBase, Provider):
         self.window = window
         self.matcher = matcher
         self._items: List[Tuple[object, str, int]] = []
+        self._view: List[Tuple[object, str, int]] = []
+        self._qualities: List[str] = []
+        self._byq: Dict[str, List[str]] = {}
         self._loaded = False
         self._init_client(session)
 
@@ -180,6 +184,9 @@ class TelegramProvider(_TelegramBase, Provider):
     def load(self):
         self.run_loop()
         self._items = self._await(self._load_async())
+        self._view = list(self._items)
+        self._qualities, self._byq = quality.group(
+            [n for _m, n, _s in self._items])
         self._loaded = True
         return self
 
@@ -187,20 +194,37 @@ class TelegramProvider(_TelegramBase, Provider):
         await self._connect()
         return await self._pick()
 
+    def qualities(self) -> List[str]:
+        """Distinct qualities found in the names ([] when there is only one)."""
+        if not self._loaded:
+            self.load()
+        return list(self._qualities)
+
+    def set_quality(self, q) -> 'TelegramProvider':
+        """Narrow the episode list to one quality variant."""
+        if not self._loaded:
+            self.load()
+        if q and self._byq.get(q):
+            want = set(self._byq[q])
+            self._view = [it for it in self._items if it[1] in want]
+        else:
+            self._view = list(self._items)
+        return self
+
     def episodes(self) -> Dict[int, str]:
         if not self._loaded:
             self.load()
-        return {i + 1: name for i, (_m, name, _s) in enumerate(self._items)}
+        return {i + 1: name for i, (_m, name, _s) in enumerate(self._view)}
 
     def display_name(self, num: int):
         if not self._loaded:
             self.load()
-        return self._items[num - 1][1]
+        return self._view[num - 1][1]
 
     def stream(self, num: int) -> TelegramSource:
         if not self._loaded:
             self.load()
-        msg, _name, size = self._items[num - 1]
+        msg, _name, size = self._view[num - 1]
         return TelegramSource(self.client, self.loop, msg, size)
 
 

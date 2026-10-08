@@ -4,6 +4,7 @@ Both reuse the exact same Player/Playlist/RangeProxy as `agp`; only the
 Provider differs. `--menu` opens the same curses form (no Quality row, since
 Telegram files have no quality groups).
 """
+import json
 import os
 import re
 import sys
@@ -38,11 +39,15 @@ tg (tgplay) - stream one Telegram video via a local range proxy.
 TGP_HELP = """\
 tgp (tgplay) - stream the last 50 mkv files of a Telegram channel.
 
-  tgp --menu [<channel>]    pick the channel + options in the terminal form
+  tgp --menu [<channel>]    pick quality, options and the START episode
   tgp <channel> -e 2-5,9    play picks directly (no menu)
   tgp <channel> -a          play all 50
   tgp <channel> -f 720      filter by name substring
+  tgp cache [clean --days 3]   show / clean the download cache
   tgp login | tgp logout    one-time login / forget the session
+
+  Quality is read from the file names (480p/720p/1080p/4K); unfinished
+  downloads are kept for later - `tgp cache` reports them.
 
   login is single-shot: it does NOT retry. Do not attempt it repeatedly -
   Telegram rate-limits (FloodWait) and can temporarily block the account.
@@ -84,7 +89,20 @@ def _maybe_login(argv) -> bool:
         print('telegram: logged out' if logout(Config().tg_session)
               else 'telegram: no session to remove')
         return True
+    if argv and argv[0] == 'cache':
+        from .cli import cache_command
+        cache_command(argv[1:])
+        return True
     return False
+
+
+def _resume_ep(cfg, title) -> Optional[int]:
+    try:
+        d = json.load(open(cfg.progress))
+        e = d.get(title, {})
+        return int(e.get('ep')) if e.get('ep') else None
+    except Exception:
+        return None
 
 
 def _chat_msg(pos):
@@ -152,16 +170,27 @@ def main_tgp(argv: Optional[List[str]] = None) -> int:
     provider = TelegramProvider(channel, session=Config().tg_session,
                                 window=50, matcher=opts['f'])
     provider.load()
-    eps = provider.episodes()
+    cfg = Config()
+    qs = provider.qualities()
+    quality_groups = [{'label': q} for q in qs]
     if interactive:
-        res = ui.gather(opts, [], mpv)
+        res = ui.gather(opts, quality_groups, mpv, show_eps=False)
         if res is None:
             print('menu: cancelled')
             return 0
         opts, mpv = res
-        planned = select(eps, all=True) if (opts['a'] or not opts['e']) \
-            else select(eps, nums=parse_range(opts['e']))
+        if qs:
+            provider.set_quality(opts.get('f'))
+        eps = provider.episodes()
+        chosen = ui.pick_start(eps, _resume_ep(cfg, channel))
+        if chosen is None:
+            print('menu: cancelled')
+            return 0
+        planned = [Episode(k, eps[k]) for k in chosen]
     else:
+        if qs and opts.get('f') in qs:
+            provider.set_quality(opts['f'])
+        eps = provider.episodes()
         direct = next((a for a in pos if a != channel), None) or opts['e']
         if opts['a'] or direct == 'a':
             planned = select(eps, all=True)

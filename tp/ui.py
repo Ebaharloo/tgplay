@@ -167,6 +167,83 @@ def prompt(text: str) -> Optional[str]:
         return None
 
 
+def pick_start(items, resume=None):
+    """Show the whole list; Enter = play from the highlighted item to the end,
+    'a' = all, 'q' = cancel. Returns the chosen keys (or None)."""
+    nums = sorted(items)
+    if not nums:
+        return []
+    if not _curses_ok():
+        print(f'{len(nums)} items: {nums[0]}..{nums[-1]}')
+        try:
+            v = input(f'play from [{resume or nums[0]}] '
+                      '(a=all, q=quit): ').strip().lower()
+        except EOFError:
+            return None
+        if v == 'q':
+            return None
+        if v in ('', 'a'):
+            start = resume if resume in items else nums[0]
+        elif v.isdigit() and int(v) in items:
+            start = int(v)
+        else:
+            return nums
+        return [n for n in nums if n >= start]
+    import curses
+
+    def run(stdscr):
+        curses.curs_set(0)
+        stdscr.keypad(True)
+        try:
+            curses.set_escdelay(25)
+        except Exception:
+            pass
+        cur = nums.index(resume) if resume in items else 0
+        top = 0
+        while True:
+            stdscr.erase()
+            h, w = stdscr.getmaxyx()
+            view = max(1, h - 3)
+            if cur < top:
+                top = cur
+            if cur >= top + view:
+                top = cur - view + 1
+            head = f' {len(nums)} episodes   Enter = play from here   a = all   q = quit '
+            stdscr.addnstr(0, 0, head[:max(0, w - 1)], max(0, w - 1),
+                           curses.A_REVERSE)
+            for i in range(top, min(top + view, len(nums))):
+                n = nums[i]
+                tag = '   <resume>' if n == resume else ''
+                line = f'{n:>5}  {items[n]}{tag}'
+                attr = curses.A_REVERSE if i == cur else curses.A_NORMAL
+                stdscr.addnstr(2 + (i - top), 1, line[:max(0, w - 2)],
+                               max(0, w - 2), attr)
+            stdscr.addnstr(
+                h - 1, 0,
+                ' Up/Down scroll   Enter start-here   a all   q cancel '[
+                    :max(0, w - 1)], max(0, w - 1), curses.A_DIM)
+            stdscr.refresh()
+            ch = _read_key(stdscr)
+            if ch in (ord('q'), 27):
+                return None
+            if ch == ord('a'):
+                return nums
+            if ch in (curses.KEY_UP, ord('k')):
+                cur = max(0, cur - 1)
+            elif ch in (curses.KEY_DOWN, ord('j')):
+                cur = min(len(nums) - 1, cur + 1)
+            elif ch == curses.KEY_PPAGE:
+                cur = max(0, cur - view)
+            elif ch == curses.KEY_NPAGE:
+                cur = min(len(nums) - 1, cur + view)
+            elif ch in (curses.KEY_ENTER, 10, 13):
+                return [n for n in nums if n >= nums[cur]]
+    try:
+        return curses.wrapper(run)
+    except Exception:
+        return None
+
+
 def _help_lines(f, width) -> List[str]:
     out = textwrap.wrap(f.get('help', ''), width) or ['']
     if f['kind'] == 'radio':
@@ -180,17 +257,17 @@ def _help_lines(f, width) -> List[str]:
     return out
 
 
-def gather(opts, groups, mpv):
+def gather(opts, groups, mpv, show_eps=True):
     """Show the option boxes; return updated (opts, mpv), or None if cancelled."""
     if _curses_ok():
         try:
-            return _curses_form(opts, groups, mpv)
+            return _curses_form(opts, groups, mpv, show_eps)
         except Exception:
             pass
-    return _plain_form(opts, groups, mpv)
+    return _plain_form(opts, groups, mpv, show_eps)
 
 
-def _curses_form(opts, groups, mpv):
+def _curses_form(opts, groups, mpv, show_eps=True):
     import curses
     labels = [str(g['label']) for g in groups]
     skip_modes = ['off', 'all', 'names', 'auto']
@@ -203,9 +280,11 @@ def _curses_form(opts, groups, mpv):
         fields.append({'k': 'quality', 'label': 'Quality', 'kind': 'radio',
                        'opts': labels, 'i': qidx,
                        'help': "Which release to stream (higher = larger/slower)."})
+    if show_eps:
+        fields.append({'k': 'eps', 'label': 'Episodes  (1-12, 2-5,9, a = all)',
+                       'kind': 'text', 'val': opts.get('e') or 'a',
+                       'help': 'Episodes to play, back-to-back.'})
     fields += [
-        {'k': 'eps', 'label': 'Episodes  (1-12, 2-5,9, a = all)', 'kind': 'text',
-         'val': opts.get('e') or 'a', 'help': 'Episodes to play, back-to-back.'},
         {'k': 'skip', 'label': 'Skip intro / outro', 'kind': 'radio',
          'opts': skip_modes, 'i': skip_modes.index(skip_cur),
          'help': 'names = chapters titled Intro/Opening/Ending/Credits; auto = '
@@ -323,11 +402,12 @@ def _curses_form(opts, groups, mpv):
     out = dict(opts)
     if labels:
         out['f'] = labels[by['quality']['i']]
-    e = (by['eps']['val'] or '').strip().lower()
-    if e in ('', 'a', 'all'):
-        out['a'], out['e'] = True, None
-    else:
-        out['a'], out['e'] = False, e
+    if show_eps:
+        e = (by['eps']['val'] or '').strip().lower()
+        if e in ('', 'a', 'all'):
+            out['a'], out['e'] = True, None
+        else:
+            out['a'], out['e'] = False, e
     sm = by['skip']['opts'][by['skip']['i']]
     out['skip'] = False if sm == 'off' else sm
     out['skip_toggle'] = bool(by['toggle']['val'])
@@ -341,7 +421,7 @@ def _curses_form(opts, groups, mpv):
     return out, m
 
 
-def _plain_form(opts, groups, mpv):
+def _plain_form(opts, groups, mpv, show_eps=True):
     labels = [str(g['label']) for g in groups]
     if labels:
         print('Quality:')
@@ -354,10 +434,11 @@ def _plain_form(opts, groups, mpv):
         if q.isdigit() and 1 <= int(q) <= len(labels):
             opts['f'] = labels[int(q) - 1]
     try:
-        e = input('eps [a|2-5,9]: ').strip().lower()
+        if show_eps:
+            e = input('eps [a|2-5,9]: ').strip().lower()
+            opts['a'], opts['e'] = (True, None) if e in ('', 'a') else (False, e)
         c = input('cut last N sec [blank]: ').strip()
     except EOFError:
         return None
-    opts['a'], opts['e'] = (True, None) if e in ('', 'a') else (False, e)
     opts['cut'] = int(c) if c.isdigit() else None
     return opts, mpv
