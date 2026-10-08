@@ -101,15 +101,13 @@ def _link_put(cfg, title, url):
 
 
 def _log_show(cfg, meta, title):
-    """Resolve + log the anime's MAL id and page link (once, cached)."""
+    """Resolve + log ONE page link (Simkl preferred, else MAL); cached."""
     mal = meta.cached_mal(title)
     if mal is None:
         try:
             mal = meta.resolve_mal(title, ask=False)
         except Exception:
             mal = None
-    if mal:
-        log.cprint(f'mal:  https://myanimelist.net/anime/{mal}')
     link = _link_get(cfg, title)
     if link is None and mal:
         try:
@@ -120,6 +118,8 @@ def _log_show(cfg, meta, title):
             _link_put(cfg, title, link)
     if link:
         log.cprint(f'show: {link}')
+    elif mal:
+        log.cprint(f'show: https://myanimelist.net/anime/{mal}')
     else:
         log.cprint('show: not found (no MAL / Simkl match)')
 
@@ -353,6 +353,10 @@ def main(argv: Optional[List[str]] = None):
     rp = getattr(playlist, '_resume', None) or resume_pt
     if rp and planned and planned[0].num == rp[0]:
         start = rp[1]
+    if start:
+        _m, _s = divmod(int(start), 60)
+        log.cprint(f'resume: ep{planned[0].num} at {_m:d}:{_s:02d} '
+                   f'(mpv --start={int(start)})')
     try:
         playlist.run(planned, skip_mode=skip_mode,
                      skip_toggle=opts['skip_toggle'], cut=opts['cut'],

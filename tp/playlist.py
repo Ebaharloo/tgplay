@@ -25,7 +25,7 @@ def _safe(fn, *a):
 
 class Playlist:
     def __init__(self, provider, proxy, cache, player, config, *,
-                 skip=None, prefetcher=None, tracker=None, interval: float = 10.0):
+                 skip=None, prefetcher=None, tracker=None, interval: float = 3.0):
         self.provider = provider
         self.proxy = proxy
         self.cache = cache
@@ -101,6 +101,8 @@ class Playlist:
                                                 toggle=skip_toggle)
                     except Exception as ex:
                         log.cprint(f'skip: failed ({ex})')
+                if i == 0 and flags:
+                    log.cprint('skip: ' + ' '.join(flags))
 
                 sock = f'/tmp/tgplay-{os.getpid()}-{ep.num}.ipc'
                 fire = None
@@ -123,11 +125,20 @@ class Playlist:
                     sock, self.interval,
                     on_pos=lambda p, _n=ep.num: self._save(title, _n, p),
                     fire_when=fire, on_fire=on_fire)
+                if start is not None:
+                    log.cprint(f'start: ep{ep.num} at {int(start)}s')
+                elif ep.num == episodes[0].num:
+                    log.cprint(f'start: ep{ep.num} at 0s (no saved position)')
                 watcher.start()
                 cmd = self.player.command(
                     url, title=name, extra=(list(extra or []) + flags),
                     start=start, cut=cut, ipc=sock)
-                log.cprint(f'>> streaming ep{ep.num}: {name}')
+                tag = (f'  [start {int(start)}s]' if start is not None else '')
+                if cut:
+                    tag += f'  [cut {cut}s]'
+                if flags:
+                    tag += '  [skip]'
+                log.cprint(f'>> streaming ep{ep.num}: {name}{tag}')
                 rc = self.player.play(cmd)
                 watcher.join(timeout=12)
                 try:
