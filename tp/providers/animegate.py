@@ -130,24 +130,37 @@ class AnimeGateProvider(Provider):
         self.prompt = prompt
         self.title = slug_title(url)
         self.group = None
+        self.groups = None
         self._loaded = False
         self._eps: Dict[int, str] = {}
         self._aid = self._gid = self._csrf = None
         self._cs: Dict[str, str] = {}
         self._labels: Dict[int, str] = {}
 
-    def load(self):
+    def fetch_groups(self) -> List[dict]:
         cs = self._cookies if self._cookies is not None else firefox_cookies()
         groups, csrf, aid = get_base(self.url, cs, self.http)
-        # keep the site's labels for nicer menus
-        for g in groups:
+        for g in groups:  # keep the site's labels for nicer menus
             for e in g.get('data', []):
                 self._labels.setdefault(e.get('es'), e.get('label'))
-        group = pick_group(groups, self.quality, self.all_groups, self.prompt)
-        self._cs, self._csrf, self._aid, self._gid = cs, csrf, aid, group['id']
-        self.group = group
-        self._eps = all_eps(aid, group['id'], group, csrf, cs, self.http)
+        self._cs, self._csrf, self._aid, self.groups = cs, csrf, aid, groups
+        return groups
+
+    def select(self, quality=None):
+        if self.groups is None:
+            self.fetch_groups()
+        self.group = pick_group(self.groups,
+                                quality if quality is not None else self.quality,
+                                self.all_groups, self.prompt)
+        self._gid = self.group['id']
+        self._eps = all_eps(self._aid, self.group['id'], self.group,
+                            self._csrf, self._cs, self.http)
         self._loaded = True
+        return self
+
+    def load(self):
+        self.fetch_groups()
+        self.select(self.quality)
         return self
 
     def episodes(self) -> Dict[int, str]:

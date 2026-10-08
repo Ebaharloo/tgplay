@@ -99,10 +99,29 @@ def test_cache():
     print('PASS cache eviction + geometry')
 
 
+def test_port_fallback():
+    import socket
+    # occupy a port, then ask the proxy for it -> it must pick another
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(('127.0.0.1', 0))
+    busy = s.getsockname()[1]
+    s.listen(1)
+    p = RangeProxy(port=busy).start()
+    try:
+        assert p.port != busy and p.port > 0, p.port
+        p.register('m.mkv', BytesSource(b'hello'))
+        assert _get(p.url('m.mkv'))[2] == b'hello'
+        print('PASS proxy port fallback')
+    finally:
+        p.stop()
+        s.close()
+
+
 def main():
     test_proxy_ranges()
     test_local_mirror()
     test_cache()
+    test_port_fallback()
     print('PROXY OK')
 
 

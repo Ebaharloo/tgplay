@@ -49,6 +49,10 @@ class Config:
     def anilist_ids(self):
         return self._p('anilist_ids.json')
 
+    @property
+    def tg_session(self):
+        return os.environ.get('TG_SESSION') or self._p('tg.session')
+
     # --- cache -------------------------------------------------------------
     def cache_path(self, name):
         os.makedirs(self.cache_dir, exist_ok=True)

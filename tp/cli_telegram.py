@@ -1,0 +1,134 @@
+"""tp.cli_telegram - the `tg` (one file) and `tgp` (channel playlist) CLIs.
+
+Both reuse the exact same Player/Playlist/RangeProxy as `agp`; only the
+Provider differs, which is the payoff of Phase 3.
+"""
+import os
+import re
+import sys
+from typing import List, Optional
+
+from .cache import Cache
+from .config import Config
+from .episodes import Episode, parse_range, select
+from .metadata import Metadata
+from .player import Player
+from .playlist import Playlist
+from .prefetch import Prefetcher
+from .providers.telegram import SingleFileProvider, TelegramProvider, login
+from .proxy import RangeProxy
+from .skip import SkipService
+from .cli import parse
+from . import log
+
+TG_HELP = """\
+tg (tgplay) - stream one Telegram video via a local range proxy.
+
+  tg <t.me link>            e.g. tg "https://t.me/SomeChannel/2598"
+  tg <channel> <msg_id>
+  tg login                  one-time Telegram login (phone + code)
+  [opts]                    -q/-f SUB  --skip[=MODE]  --skip-toggle  --cut N
+"""
+
+TGP_HELP = """\
+tgp (tgplay) - stream the last 50 mkv files of a Telegram channel.
+
+  tgp <channel>             menu, then play
+  tgp <channel> -e 2-5,9    play picks directly (no menu)
+  tgp <channel> -a          play all 50
+  tgp <channel> -f 720      filter by name substring
+  tgp login                 one-time Telegram login
+"""
+
+
+def _run(provider, episodes, opts, mpv):
+    cfg = Config().ensure()
+    proxy = RangeProxy(port=cfg.proxy_port).start()
+    cache = Cache(cfg.cache_dir, cfg.cache_budget)
+    skip = SkipService(metadata=Metadata(cfg))
+    playlist = Playlist(provider, proxy, cache, Player(referer='https://t.me/'),
+                        cfg, skip=skip, prefetcher=Prefetcher(cache))
+    next_frac = False
+    if opts['next']:
+        next_frac = 'cut' if (opts['nowait'] and opts['cut']) else opts['next']
+    try:
+        playlist.run(episodes, skip_mode=(opts['skip'] or 'all'),
+                     skip_toggle=opts['skip_toggle'], cut=opts['cut'],
+                     next_frac=next_frac, extra=mpv)
+    finally:
+        proxy.stop()
+
+
+def _maybe_login(argv) -> bool:
+    if argv and argv[0] in ('login', 'tg-login'):
+        me = login(Config().tg_session)
+        print('logged in as', getattr(me, 'first_name', me))
+        return True
+    return False
+
+
+def main_tg(argv: Optional[List[str]] = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if not argv or any(a in ('-h', '--help') for a in argv):
+        print(TG_HELP)
+        return 0
+    if _maybe_login(argv):
+        return 0
+    opts, pos, mpv = parse(argv)
+    if not pos:
+        print(TG_HELP)
+        return 0
+    m = re.search(r't\.me/([A-Za-z0-9_]+)/(\d+)', pos[0])
+    if m:
+        chat, msg_id = m.group(1), int(m.group(2))
+    elif len(pos) >= 2:
+        chat, msg_id = pos[0], pos[1]
+    else:
+        print(TG_HELP)
+        return 0
+    provider = SingleFileProvider(chat, msg_id, Config().tg_session)
+    provider.load()
+    provider.run_loop()
+    _run(provider, [Episode(1, f'{chat}/{msg_id}')], opts, mpv)
+    return 0
+
+
+def main_tgp(argv: Optional[List[str]] = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if not argv or any(a in ('-h', '--help') for a in argv):
+        print(TGP_HELP)
+        return 0
+    if _maybe_login(argv):
+        return 0
+    opts, pos, mpv = parse(argv)
+    if not pos:
+        print(TGP_HELP)
+        return 0
+    channel = pos[0]
+    provider = TelegramProvider(channel, session=Config().tg_session,
+                                window=50, matcher=opts['f'])
+    provider.load()
+    provider.run_loop()
+    eps = provider.episodes()
+    direct = next((a for a in pos if a != channel), None) or opts['e']
+    if opts['a'] or direct == 'a':
+        planned = select(eps, all=True)
+    elif direct:
+        planned = select(eps, nums=parse_range(direct))
+    else:
+        print(f'\n[ last {len(eps)} mkv files | {eps[1]} ... {eps[len(eps)]} ]')
+        for k in sorted(eps):
+            print(f'{k}) {eps[k]}')
+        try:
+            val = input('\npick [1|2-5,9|a|q]: ').strip().lower()
+        except EOFError:
+            val = 'q'
+        if val in ('', 'q'):
+            return 0
+        planned = select(eps, all=True) if val == 'a' \
+            else select(eps, nums=parse_range(val))
+    if not planned:
+        print('nothing to play')
+        return 0
+    _run(provider, planned, opts, mpv)
+    return 0

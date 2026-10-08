@@ -16,9 +16,16 @@ from .episodes import Episode
 from .player import PosWatcher
 
 
+def _safe(fn, *a):
+    try:
+        fn(*a)
+    except Exception as ex:
+        log.cprint(f'track: sync failed ({ex})')
+
+
 class Playlist:
     def __init__(self, provider, proxy, cache, player, config, *,
-                 skip=None, prefetcher=None, interval: float = 10.0):
+                 skip=None, prefetcher=None, tracker=None, interval: float = 10.0):
         self.provider = provider
         self.proxy = proxy
         self.cache = cache
@@ -26,6 +33,7 @@ class Playlist:
         self.cfg = config
         self.skip = skip
         self.prefetcher = prefetcher
+        self.tracker = tracker
         self.interval = float(os.environ.get('AGP_WATCH_INTERVAL', interval))
 
     # --- progress ----------------------------------------------------------
@@ -51,7 +59,11 @@ class Playlist:
             m = re.search(r'/([^/?]+\.mkv)', url)
             if m:
                 return urllib.parse.unquote(m.group(1))
-        return f'{self.provider.title} - ({ep.num}).mkv'
+        try:
+            dn = self.provider.display_name(ep.num)
+        except Exception:
+            dn = None
+        return dn or f'{self.provider.title} - ({ep.num}).mkv'
 
     def _trigger(self, cut, frac):
         if frac == 'cut':
@@ -132,5 +144,18 @@ class Playlist:
                     continue
                 if rc == 0:
                     self._save(title, ep.num + 1, 0)
+                    self._mark(ep.num)
                 break
         log.cprint('>> done')
+
+    def _mark(self, num):
+        if self.tracker is None:
+            return
+        try:
+            if not self.tracker.enabled():
+                return
+        except Exception:
+            return
+        threading.Thread(
+            target=lambda: _safe(self.tracker.mark_watched, self.provider.title, num),
+            daemon=True).start()

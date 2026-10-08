@@ -18,3 +18,7 @@ class Provider(ABC):
     @abstractmethod
     def stream(self, num: int) -> MediaSource:
         """A byte source for episode `num` (re-resolves the link)."""
+
+    def display_name(self, num: int):
+        """Optional human/file name for an episode (None -> derive it)."""
+        return None

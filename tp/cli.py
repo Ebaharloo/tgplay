@@ -5,6 +5,7 @@ the services together and runs the Playlist. No globals.
 """
 import os
 import sys
+import threading
 from typing import List, Optional, Tuple
 
 from .cache import Cache
@@ -36,9 +37,18 @@ agp (tgplay) - stream animegate.ir mkv links, no downloads.
   --start N       start each episode at N seconds
   any other --flag goes to mpv verbatim
 
-  NOTE: this is the OOP rewrite (tgplay). The menu, AniList sync and Telegram
-  backends land in later phases; see ARCHITECTURE.md.
+  agp --menu                pick the link + options in a terminal form
+  agp login <CLIENT_ID> | logout | sync [--dry] | new | tracking
+                            AniList progress sync + new-episode notices
+  Telegram: use ./tg (one file) and ./tgp (channel); log in with `tgp login`.
 """
+
+
+def _notify(tracker):
+    try:
+        tracker.notify_new()
+    except Exception:
+        pass
 
 
 def parse(argv: List[str]) -> Tuple[dict, List[str], List[str]]:
@@ -117,20 +127,56 @@ def _plan(provider, opts, playlist):
 
 def main(argv: Optional[List[str]] = None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    if not argv or any(a in ('-h', '--help') for a in argv):
+    if any(a in ('-h', '--help') for a in argv) or (argv and argv[0] == 'help'):
         print(HELP)
         return 0
+    if argv and argv[0].lower() in ('login', 'logout', 'sync', 'new', 'notify',
+                                    'tracking', 'status'):
+        from .tracking import Tracker
+        Tracker(Config().ensure()).cli(argv[0].lower(), argv[1:])
+        return 0
+
+    from . import ui
+    interactive = False
+    if not argv:  # bare `agp`: open the menu when we have a terminal
+        if ui.available():
+            interactive = True
+        else:
+            print(HELP)
+            return 0
+    if any(a in ('--menu', '--tui') for a in argv):
+        interactive = True
+        argv = [a for a in argv if a not in ('--menu', '--tui')]
     opts, pos, mpv = parse(argv)
-    if not pos:
+    url = next((a for a in pos if 'animegate' in a), pos[0]) if pos else None
+    if interactive and url is None:
+        url = ui.choose_url()
+        if not url:
+            return 0
+    if url is None:
         print(HELP)
         return 0
-    url = next((a for a in pos if 'animegate' in a), pos[0])
 
     cfg = Config().ensure()
     http = HttpClient()
     provider = AnimeGateProvider(url, quality=opts['f'], http=http)
-    provider.load()
+    if interactive:
+        provider.fetch_groups()
+        res = ui.gather(opts, provider.groups, mpv)
+        if res is None:
+            print('menu: cancelled')
+            return 0
+        opts, mpv = res
+        provider.select(opts['f'])
+    else:
+        provider.load()
+    ui.recent_add(url)
     log.cprint(f'>> {provider.title} - {len(provider.episodes())} episodes')
+
+    from .tracking import Tracker
+    tracker = Tracker(cfg, http)
+    if tracker.enabled():
+        threading.Thread(target=lambda: _notify(tracker), daemon=True).start()
 
     proxy = RangeProxy(port=cfg.proxy_port).start()
     cache = Cache(cfg.cache_dir, cfg.cache_budget)
@@ -139,7 +185,7 @@ def main(argv: Optional[List[str]] = None):
     prefetch = Prefetcher(cache)
     player = Player()
     playlist = Playlist(provider, proxy, cache, player, cfg,
-                        skip=skip, prefetcher=prefetch)
+                        skip=skip, prefetcher=prefetch, tracker=tracker)
 
     planned = _plan(provider, opts, playlist)
     if not planned:

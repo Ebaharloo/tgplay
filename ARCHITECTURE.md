@@ -83,8 +83,9 @@ CLIs build the real one. No module-level singletons.
    (cancellable mirroring into the Cache), `tp/player` (mpv command builder +
    IPC `PosWatcher`), `tp/playlist` (resume / retry-on-open / skip / cut /
    `--next`), `tp/skip` + `tp/metadata`, and `tp/cli` with a thin `agp` script.
-5. **Tracking + MenuUI** as injectable services; a `tg`/`tgp` CLI over
-   `TelegramProvider`.
+5. **Tracking + MenuUI + Telegram CLIs** (done): `tp/tracking` (AniList sync +
+   notices), `tp/ui` (curses option form + link picker), and `tp/cli_telegram`
+   with `tg` / `tgp` entry points over `TelegramProvider`.
 
 Each phase keeps every `tests/test_*.py` green; no phase changes user-visible
 behaviour on its own.

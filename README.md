@@ -10,41 +10,48 @@ player is easy to test, reuse and tune. See `ARCHITECTURE.md`.
 
 ## Status
 
-Phases 1–4 are in `tp/`, with a working `agp` entry point:
+Phases 1–5 are done. Entry points: `agp` (animegate), `tg` (one Telegram
+file), `tgp` (Telegram channel playlist).
 
 ```
-tp/log.py        colour/emoji logging
-tp/config.py     Config: paths + tunables (injectable)
-tp/http.py       HttpClient: retries + exact byte-range fetches + parallel chunk
-tp/chapters.py   SkipResolver: mkv chapters -> skip flags
-tp/episodes.py   Episode + select()/resume()  (the only place the play list is built)
-tp/sources.py    MediaSource ABC + BytesSource + HttpSource
-tp/cache.py      Cache: mirror geometry + LRU eviction
-tp/proxy.py      RangeProxy: one source-agnostic range server
-tp/providers/    Provider + AnimeGateProvider + TelegramProvider/TelegramSource
-tp/metadata.py   AniList -> MAL id, Jikan -> episode titles
-tp/skip.py       SkipService: file chapters, then ani-skip
-tp/prefetch.py   Prefetcher: cancellable mirroring into the Cache
-tp/player.py     Player: mpv command + IPC PosWatcher
-tp/playlist.py   Playlist: resume / retry / skip / cut / --next
-tp/cli.py        arg parsing + wiring
-agp              thin entry point (AniGate)
+tp/log.py         colour/emoji logging
+tp/config.py      Config: paths + tunables (injectable)
+tp/http.py        HttpClient: retries + exact byte-range fetches + parallel chunk
+tp/chapters.py    SkipResolver: mkv chapters -> skip flags
+tp/episodes.py    Episode + select()/resume()  (the only place the play list is built)
+tp/sources.py     MediaSource ABC + BytesSource + HttpSource
+tp/cache.py       Cache: mirror geometry + LRU eviction
+tp/proxy.py       RangeProxy: one source-agnostic range server (port fallback)
+tp/providers/     Provider + AnimeGateProvider + TelegramProvider/SingleFileProvider
+tp/metadata.py    AniList -> MAL id, Jikan -> episode titles
+tp/skip.py        SkipService: file chapters, then ani-skip
+tp/prefetch.py    Prefetcher: cancellable mirroring into the Cache
+tp/player.py      Player: mpv command + IPC PosWatcher
+tp/playlist.py    Playlist: resume / retry / skip / cut / --next
+tp/tracking.py    Tracker: AniList progress sync + new-episode notices
+tp/ui.py          MenuUI: curses option form + recent-link picker
+tp/cli.py         agp wiring        tp/cli_telegram.py  tg/tgp wiring
+agp  tg  tgp      thin entry points
 ```
 
-Run:
+## Auth (same as before)
+- **AnimeGate**: reads your Firefox cookies for `animegate.ir` (log in there).
+- **Telegram**: real-phone login once with `./tgp login` (or `./tg login`);
+  the session is stored at `~/.config/tgp/tg.session` (override with `$TG_SESSION`).
 
+## Run
 ```
 ./agp -h
-python3 tests/test_core.py
-python3 tests/test_proxy.py
-python3 tests/test_providers.py
-python3 tests/test_player.py
-python3 tests/test_prefetch.py
-python3 tests/test_skip.py
-```
+./agp --menu
+./agp <anime-url> -e 1-12 -q 720 --skip --cut 30 --next
+./agp login <CLIENT_ID>   # AniList; sync | new | tracking
+./tgp login && ./tgp <channel> -a
+./tg "https://t.me/<channel>/<id>"
 
-Not yet ported (Phase 5): AniList progress sync, the curses menu, and separate
-`tg`/`tgp` CLIs (the `TelegramProvider` exists; wire it to a CLI next).
+python3 tests/test_core.py tests/test_proxy.py tests/test_providers.py \
+        tests/test_player.py tests/test_prefetch.py tests/test_skip.py \
+        tests/test_tracking.py tests/test_ui.py
+```
 
 ## Tests
 

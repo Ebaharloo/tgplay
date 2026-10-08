@@ -113,9 +113,15 @@ class RangeProxy:
             return self
         ThreadingHTTPServer.allow_reuse_address = True
         _Handler.proxy = self
-        self._srv = ThreadingHTTPServer((self.host, self.port), _Handler)
-        if self.port == 0:
-            self.port = self._srv.server_address[1]
+        try:
+            self._srv = ThreadingHTTPServer((self.host, self.port), _Handler)
+        except OSError as ex:  # 98 EADDRINUSE / 48 on macOS
+            if getattr(ex, 'errno', None) not in (48, 98):
+                raise
+            from . import log
+            log.cprint(f'proxy: port {self.port} busy - using a free one')
+            self._srv = ThreadingHTTPServer((self.host, 0), _Handler)
+        self.port = self._srv.server_address[1]  # real port (also when 0)
         threading.Thread(target=self._srv.serve_forever, daemon=True).start()
         self._started = True
         return self
