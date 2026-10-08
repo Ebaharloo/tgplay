@@ -19,6 +19,7 @@ from .skip import SkipService
 from .metadata import Metadata
 from .providers.animegate import AnimeGateProvider
 from . import episodes as epmod
+from .episodes import Episode
 from . import log
 
 HELP = """\
@@ -50,6 +51,16 @@ def _notify(tracker):
         tracker.notify_new()
     except Exception:
         pass
+
+
+def _resume_ep(cfg, title):
+    import json as _j
+    try:
+        d = _j.load(open(cfg.progress))
+        e = d.get(title, {})
+        return int(e.get('ep')) if e.get('ep') else None
+    except Exception:
+        return None
 
 
 def cache_command(args: List[str]) -> int:
@@ -193,7 +204,7 @@ def main(argv: Optional[List[str]] = None):
     provider = AnimeGateProvider(url, quality=opts['f'], http=http)
     if interactive:
         provider.fetch_groups()
-        res = ui.gather(opts, provider.groups, mpv)
+        res = ui.gather(opts, provider.groups, mpv, show_eps=False)
         if res is None:
             print('menu: cancelled')
             return 0
@@ -218,7 +229,15 @@ def main(argv: Optional[List[str]] = None):
     playlist = Playlist(provider, proxy, cache, player, cfg,
                         skip=skip, prefetcher=prefetch, tracker=tracker)
 
-    planned = _plan(provider, opts, playlist)
+    if interactive:
+        eps = provider.episodes()
+        chosen = ui.pick_start(eps, _resume_ep(cfg, provider.title))
+        if chosen is None:
+            print('menu: cancelled')
+            return 0
+        planned = [Episode(k, eps[k]) for k in chosen]
+    else:
+        planned = _plan(provider, opts, playlist)
     if not planned:
         print('nothing to play')
         return 0
