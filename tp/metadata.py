@@ -27,9 +27,13 @@ def _write(path, d):
 
 
 class Metadata:
-    def __init__(self, config, http: Optional[HttpClient] = None):
+    def __init__(self, config, http: Optional[HttpClient] = None, simkl=None):
         self.cfg = config
         self.http = http or HttpClient(timeout=20)
+        if simkl is None:
+            from .simkl import Simkl
+            simkl = Simkl(http=self.http)
+        self.simkl = simkl
 
     def _post(self, query, variables):
         req = self.http.request(ANILIST, method='POST',
@@ -80,7 +84,32 @@ class Metadata:
                 return pick
         return None
 
-    def ep_title(self, mal_id: int, ep: int) -> Optional[str]:
+    def ep_title(self, mal_id, ep, title: Optional[str] = None,
+                 anilist_id=None) -> Optional[str]:
+        """MAL/Jikan title first, then Simkl (which has many donghua titles)."""
+        t = self._jikan_title(mal_id, ep)
+        if t:
+            return t
+        # Simkl titles live under their own cache key so the two sources do not
+        # shadow each other (Jikan often has *no* entry for donghua).
+        key = f'simkl:{mal_id}' if mal_id else f'simkl:anilist:{anilist_id}'
+        cache = _read(self.cfg.ep_titles, {})
+        st = cache.get(key, {}).get(str(ep))
+        if st:
+            return st
+        if self.simkl is not None and self.simkl.available():
+            try:
+                st = self.simkl.episode_title(ep, mal=mal_id, anilist=anilist_id,
+                                              query=title)
+            except Exception:
+                st = None
+            if st:
+                cache.setdefault(key, {})[str(ep)] = st
+                _write(self.cfg.ep_titles, cache)
+                return st
+        return None
+
+    def _jikan_title(self, mal_id, ep: int) -> Optional[str]:
         cache = _read(self.cfg.ep_titles, {})
         shows = cache.setdefault(str(mal_id), {})
         key = str(ep)

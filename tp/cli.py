@@ -41,6 +41,7 @@ agp (tgplay) - stream animegate.ir mkv links, no downloads.
   agp --menu                pick the link, then the episodes page (with MAL/
                             AniList titles) and the options, in terminal forms
   agp cache [clean [--days N]]  show / clean the download cache
+  agp simkl <CLIENT_ID>     set the Simkl key for episode titles (donghua)
   agp login <CLIENT_ID> | logout | sync [--dry] | new | tracking
                             AniList progress sync + new-episode notices
   Telegram: use ./tg (one file) and ./tgp (channel); log in with `tgp login`.
@@ -84,7 +85,7 @@ def _titled(meta, title, eps):
         log.cprint('episodes: fetching titles...')
         for n in sorted(eps):
             try:
-                t = meta.ep_title(mal, n)
+                t = meta.ep_title(mal, n, title=title)
             except Exception:
                 t = None
             if t:
@@ -206,6 +207,16 @@ def main(argv: Optional[List[str]] = None):
         return 0
     if argv and argv[0].lower() == 'cache':
         return cache_command(argv[1:])
+    if argv and argv[0].lower() == 'simkl':
+        from .simkl import Simkl, save_client_id
+        if len(argv) > 1 and not argv[1].startswith('-'):
+            save_client_id(argv[1])
+            print('simkl: client id saved')
+        else:
+            s = Simkl()
+            print('simkl: configured' if s.available()
+                  else 'simkl: not configured (agp simkl <CLIENT_ID>)')
+        return 0
 
     from . import ui
     interactive = False

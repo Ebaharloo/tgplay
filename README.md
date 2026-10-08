@@ -47,6 +47,7 @@ agp  tg  tgp      thin entry points
 ./agp --menu
 ./agp <anime-url> -e 1-12 -q 720 --skip --cut 30 --next
 ./agp login <CLIENT_ID>   # AniList; sync | new | tracking
+./agp simkl <CLIENT_ID>   # Simkl key for episode titles (donghua)
 ./tgp login && ./tgp <channel> -a
 ./tg "https://t.me/<channel>/<id>"
 
