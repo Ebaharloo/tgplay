@@ -286,9 +286,10 @@ def main(argv: Optional[List[str]] = None):
         provider.fetch_groups()
         provider.select(opts['f'])
         eps = provider.episodes()
-        # each run: resolve the MAL id (once) and (re)look for any name we do
-        # not have yet - a name that was absent before, the site being back up,
-        # or a newly aired episode. Known names are never refetched.
+        # ONE lookup, when the episode list is built. Fetch only what we are
+        # missing (a name that wasn't there before, a site that is back, or a
+        # new episode). Known names are never refetched/overwritten; nothing is
+        # searched again while you play - close and re-run to look again.
         mal = meta.cached_mal(provider.title)
         if mal is None:
             try:
@@ -300,8 +301,9 @@ def main(argv: Optional[List[str]] = None):
             log.cprint(f'titles: looking up {len(missing)} missing '
                        'episode name(s)...')
             meta.refresh_titles(mal)
+            if mal:
+                meta._refreshed.add(mal)  # no per-episode search this run
         labels = titles.labels(mal, eps)
-        titles.start(provider.title, list(eps))  # fill any rest in background
         res_ep = _resume_ep(cfg, provider.title)
         resume_pt = (res_ep, _resume_pos(cfg, provider.title))
         chosen = ui.pick_start(labels, res_ep)

@@ -1,14 +1,11 @@
-"""tp.titles - non-blocking episode-title cache.
+"""tp.titles - instant, cache-only episode-title lookups.
 
-Titles are cosmetic, so the menu reads this cache **instantly** and never waits
-on a metadata API. Missing titles are filled by a background thread that
-respects `Metadata`'s per-source circuit breakers, so a dead Jikan/AniList/
-Simkl never slows or blocks playback - you just see the plain episode label
-until the cache is warm.
+Titles are filled once, by `Metadata.refresh_titles()`, when the playlist is
+built (see cli). This class only READS the persistent cache, so building the
+menu never waits on a metadata API and nothing is searched during playback.
 """
 import json
-import threading
-from typing import Dict, Iterable, Optional
+from typing import Dict, Optional
 
 
 class TitleService:
@@ -42,36 +39,3 @@ class TitleService:
             if t and t != '?':
                 out[n] = t
         return out
-
-    def start(self, title: str, nums: Iterable[int],
-              upto: Optional[int] = None, anilist_id=None):
-        """Fill missing titles in a background daemon thread."""
-        todo = [n for n in sorted(nums) if upto is None or n <= upto]
-        if not todo:
-            return None
-        th = threading.Thread(target=self._fill,
-                              args=(title, todo, anilist_id), daemon=True)
-        th.start()
-        return th
-
-    def _fill(self, title, todo, anilist_id):
-        mal = self.meta.cached_mal(title)
-        if mal is None:
-            if self.meta.down('anilist'):
-                return
-            try:
-                mal = self.meta.resolve_mal(title, ask=False)
-            except Exception:
-                mal = None
-        if not mal:
-            return
-        for n in todo:
-            if self.get(mal, n):
-                continue
-            if self.meta.down('jikan') and (
-                    self.meta.simkl is None or self.meta.down('simkl')):
-                return  # every title source is cooling down
-            try:
-                self.meta.ep_title(mal, n, title=title, anilist_id=anilist_id)
-            except Exception:
-                pass
