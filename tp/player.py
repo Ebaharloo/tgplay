@@ -10,6 +10,19 @@ from typing import Callable, List, Optional
 from .http import DEFAULT_UA
 
 
+def _flush_stdin():
+    """Drop pending keystrokes before handing the terminal to mpv. A stray
+    Enter from the menu would reach mpv as Ctrl+M and print 'No key binding
+    found for key Ctrl+m'."""
+    try:
+        import sys
+        import termios
+        if sys.stdin and sys.stdin.isatty():
+            termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+    except Exception:
+        pass
+
+
 def gpu_context(env=None) -> Optional[str]:
     """Pin mpv to the session's real display so 'auto' can't fall through to
     DRM (which fails with 'Failed to acquire DRM master')."""
@@ -57,6 +70,7 @@ class Player:
         return cmd
 
     def play(self, cmd: List[str]) -> int:
+        _flush_stdin()
         try:
             return subprocess.run(cmd).returncode
         except KeyboardInterrupt:
