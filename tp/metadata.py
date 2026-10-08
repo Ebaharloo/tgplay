@@ -20,6 +20,7 @@ import urllib.parse
 from typing import Dict, Optional
 
 from .http import HttpClient, _quiet_close
+from .bangumi import Bangumi, cjk_title as _cjk
 
 ANILIST = 'https://graphql.anilist.co'
 _SEARCH = ('query($s:String){Page(page:1,perPage:8){media(search:$s,type:ANIME){'
@@ -55,6 +56,8 @@ class Metadata:
             from .simkl import Simkl
             simkl = Simkl(http=self.http)
         self.simkl = simkl
+        self.bangumi = Bangumi()
+        self._bgm_done = set()
 
     # --- circuit breakers --------------------------------------------------
     @property
@@ -224,15 +227,19 @@ class Metadata:
     # --- episode titles ----------------------------------------------------
     def ep_title(self, mal_id, ep, title: Optional[str] = None,
                  anilist_id=None) -> Optional[str]:
-        """MAL episode name first, then Simkl."""
+        """MAL episode name first, then Bangumi (Chinese), then Simkl."""
         if mal_id and not self.down('mal'):
             try:
-                t = self._mal_title(mal_id, ep)
+                t = self._mal_title(mal_id, ep, title)
                 self._mark_up('mal')
                 if t and not _GENERIC_EP.match(t):
                     return t
             except Exception:
                 self._mark_down('mal')
+        if mal_id:
+            bt = self.bangumi_titles(mal_id, title).get(str(ep))
+            if bt and not _GENERIC_EP.match(bt):
+                return bt
         key = f'simkl:{mal_id}' if mal_id else f'simkl:anilist:{anilist_id}'
         cache = _read(self.cfg.ep_titles, {})
         st = cache.get(key, {}).get(str(ep))
@@ -253,7 +260,44 @@ class Metadata:
                 return st
         return None
 
-    def _mal_title(self, mal_id, ep: int) -> Optional[str]:
+    def _cjk_title(self, mal_id, title):
+        try:
+            info = self.simkl.info(mal=mal_id) if mal_id else None
+        except Exception:
+            info = None
+        return _cjk(info, title or '')
+
+    def bangumi_titles(self, mal_id, title) -> Dict[str, str]:
+        """Merge Bangumi Chinese episode names (once per run)."""
+        cur = _read(self.cfg.ep_titles, {}).get(str(mal_id)) or {}
+        if not mal_id or self.down('bangumi') or mal_id in self._bgm_done:
+            return cur
+        self._bgm_done.add(mal_id)
+        kw = self._cjk_title(mal_id, title)
+        if not kw:
+            return cur
+        try:
+            sid = self.bangumi.subject_id(kw)
+            eps = self.bangumi.episodes(sid) if sid else {}
+            self._mark_up('bangumi')
+        except Exception:
+            self._mark_down('bangumi')
+            return cur
+        if not eps:
+            return cur
+        cache = _read(self.cfg.ep_titles, {})
+        shows = cache.get(str(mal_id)) or {}
+        before = len(shows)
+        for n, t in eps.items():
+            shows.setdefault(str(n), t)
+        if len(shows) != before:
+            shows.setdefault('_done', '1')
+            cache[str(mal_id)] = shows
+            _write(self.cfg.ep_titles, cache)
+        return shows
+
+    def _mal_title(self, mal_id, ep: int,
+                   title: Optional[str] = None) -> Optional[str]:
         cache = _read(self.cfg.ep_titles, {})
         shows = cache.get(str(mal_id)) or {}
         key = str(ep)
@@ -263,27 +307,31 @@ class Metadata:
         # still-airing episodes; never overwrites/costs on known ones)
         if mal_id not in self._refreshed:
             self._refreshed.add(mal_id)
-            self.refresh_titles(mal_id)
+            self.refresh_titles(mal_id, title)
             shows = _read(self.cfg.ep_titles, {}).get(str(mal_id)) or {}
         return shows.get(key)
 
-    def refresh_titles(self, mal_id) -> None:
-        """Scrape MAL and MERGE - existing episode names are never overwritten,
-        so we fetch each once and keep it forever (a new aired ep is added)."""
-        if not mal_id or self.down('mal'):
+    def refresh_titles(self, mal_id, title=None) -> None:
+        """Scrape MAL (and Bangumi) and MERGE - existing episode names are
+        never overwritten, so we fetch each once and keep it forever."""
+        if not mal_id:
             return
-        try:
-            fetched = self._mal_titles(mal_id)
-            self._mark_up('mal')
-        except Exception:
-            self._mark_down('mal')
-            return
-        if not fetched:
+        if not self.down('mal'):
+            try:
+                fetched = self._mal_titles(mal_id)
+                self._mark_up('mal')
+                self._merge(mal_id, fetched)
+            except Exception:
+                self._mark_down('mal')
+        self.bangumi_titles(mal_id, title)
+
+    def _merge(self, mal_id, titles: Dict[int, str]) -> None:
+        if not titles:
             return
         cache = _read(self.cfg.ep_titles, {})
         shows = cache.get(str(mal_id)) or {}
         before = len(shows)
-        for n, t in fetched.items():
+        for n, t in titles.items():
             shows.setdefault(str(n), t)   # keep the first name we ever saw
         if len(shows) != before:
             shows.setdefault('_done', '1')

@@ -51,6 +51,7 @@ class Simkl:
         self.http = http or HttpClient(timeout=25)
         self._ids: Dict[tuple, Optional[int]] = {}
         self._eps: Dict[int, Dict[int, str]] = {}
+        self._records: Dict[int, Optional[dict]] = {}
 
     @staticmethod
     def _file_id() -> Optional[str]:
@@ -138,10 +139,14 @@ class Simkl:
         sid = self.resolve(mal=mal, anilist=anilist, query=query)
         if not sid:
             return None
+        if sid in self._records:
+            return self._records[sid]
         try:
-            return self._get(f'/anime/{sid}')
+            rec = self._get(f'/anime/{sid}')
         except Exception:
-            return None
+            rec = None
+        self._records[sid] = rec
+        return rec
 
     @staticmethod
     def page_url(info: dict) -> Optional[str]:

@@ -34,15 +34,18 @@ def test_metadata_title_merge():
         return dict(state['list'])
 
     m._mal_titles = fake
+    m._cjk_title = lambda *a: None
     assert m._mal_title(999, 1) == 'A' and calls['n'] == 1
     assert m._mal_title(999, 2) == 'B' and calls['n'] == 1   # known: no refetch
     state['list'][3] = 'C'                                   # a new episode aired
     m2 = Metadata(cfg)                                       # next run
     m2._mal_titles = fake
+    m2._cjk_title = lambda *a: None
     assert m2._mal_title(999, 3) == 'C' and calls['n'] == 2   # synced the new ep
     state['list'][1] = 'CHANGED'                             # source rewritten
     m3 = Metadata(cfg)
     m3._mal_titles = fake
+    m3._cjk_title = lambda *a: None
     assert m3._mal_title(999, 4) is None                     # triggers a refresh
     assert m3._mal_title(999, 1) == 'A'                      # never overwritten
     print('PASS metadata title merge (fetch once, never overwrite, sync new)')
@@ -57,11 +60,13 @@ def test_retry_missing_each_run():
 
     m = Metadata(cfg)
     m._mal_titles = fake
+    m._cjk_title = lambda *a: None
     assert m._mal_title(7, 1) == 'A'
     assert m._mal_title(7, 2) is None          # name not available yet
     src['list'][2] = 'B'                        # appears later (or site is back)
     m2 = Metadata(cfg)                          # next run
     m2._mal_titles = fake
+    m2._cjk_title = lambda *a: None
     assert m2._mal_title(7, 2) == 'B'           # retried and found
     assert m2._mal_title(7, 1) == 'A'           # known one untouched
     print('PASS titles retry missing each run')

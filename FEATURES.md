@@ -82,7 +82,12 @@ this file = behaviour + to-do.)
   - title → MAL id via `myanimelist.net/search/prefix.json` (fuzzy over names)
   - MAL id → episode names by scraping `/anime/<id>/<slug>/episode` (slug from
     the search URL / canonical link; paginated)
-  - fallbacks: **AniList** (title → MAL id), **Simkl** (episode names)
+- **Bangumi (bgm.tv)** for donghua: its public v0 API (`/v0/search/subjects`,
+  `/v0/episodes`) has Chinese episode names (e.g. Mushen Ji → 天黑别出门 …).
+  Search matches CJK only, so we get the Chinese title from the **Simkl**
+  record's `alt_titles` (牧神记/遮天) and pass it in.
+- Fallbacks order per episode: **MAL → Bangumi → Simkl** (AniList for the MAL id
+  itself). Existing names are never overwritten.
 - Generic `"Episode N"` titles are dropped (plain label fallback).
 - **Circuit breakers** per source (mal/anilist/simkl): after a failure the
   source is skipped ~30 min (persisted in `meta_down.json`).

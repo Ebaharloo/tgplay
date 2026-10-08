@@ -300,7 +300,7 @@ def main(argv: Optional[List[str]] = None):
         if missing:
             log.cprint(f'titles: looking up {len(missing)} missing '
                        'episode name(s)...')
-            meta.refresh_titles(mal)
+            meta.refresh_titles(mal, provider.title)
             if mal:
                 meta._refreshed.add(mal)  # no per-episode search this run
         labels = titles.labels(mal, eps)
