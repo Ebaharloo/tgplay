@@ -1,0 +1,171 @@
+"""tp.providers.animegate - animegate.ir catalog + signed-CDN byte sources.
+
+Ported from the original `agp`, with the HTTP plumbing delegated to
+`tp.http.HttpClient` and the byte source to `tp.sources.HttpSource`.
+"""
+import glob
+import json
+import os
+import re
+import sqlite3
+import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
+from typing import Dict, List, Optional, Tuple
+
+from ..http import HttpClient, _quiet_close
+from ..sources import HttpSource
+from .base import Provider
+
+BASE = 'https://animegate.ir'
+
+
+# --- site helpers -----------------------------------------------------------
+def firefox_cookies() -> Dict[str, str]:
+    dbs = glob.glob(os.path.expanduser(
+        '~/.mozilla/firefox/*.default-release/cookies.sqlite'))
+    if not dbs:
+        raise RuntimeError('no firefox cookies db (log in to animegate in Firefox)')
+    con = sqlite3.connect(f'file:{dbs[0]}?immutable=1', uri=True)
+    try:
+        return dict(con.execute(
+            "SELECT name, value FROM moz_cookies WHERE host='animegate.ir'"))
+    finally:
+        con.close()
+
+
+def hdrs(cookies: Dict[str, str], extra: Optional[Dict[str, str]] = None):
+    h = {'User-Agent': 'Mozilla/5.0 Gecko/20100101 Firefox/130.0',
+         'Cookie': '; '.join(
+             f'{n}={urllib.parse.unquote(urllib.parse.quote(v))}'
+             for n, v in (cookies or {}).items())}
+    if extra:
+        h.update(extra)
+    return h
+
+
+def parse_page(page: str) -> Tuple[List[dict], str, Optional[str]]:
+    """(groups, csrf, anime_id) from the anime page HTML."""
+    i = page.find(":links='")
+    if i < 0:
+        raise ValueError('no links (logged out / cookie expired?)')
+    groups, _ = json.JSONDecoder().raw_decode(page[i + 8:])
+    groups = [g for g in groups if g.get('data') and isinstance(g['data'], list)]
+    m = re.search(r':anime_id="(\d+)"', page) or re.search(r'anime-id="(\d+)"', page)
+    csrf = re.search(r'csrf-token" content="([^"]+)"', page)
+    if csrf is None:
+        raise ValueError('no csrf token (page changed / not logged in)')
+    return groups, csrf.group(1), (m.group(1) if m else None)
+
+
+def slug_title(url: str) -> str:
+    slug = re.search(r'/anime/([^/?#]+)', url).group(1)
+    words = re.sub(r'\d+.*$', '', slug).replace('-', ' ').strip()
+    return ' '.join(w.capitalize() if w.islower() else w for w in words.split())
+
+
+def pick_group(groups: List[dict], quality: Optional[str] = None,
+               all_groups: bool = False, prompt=None) -> dict:
+    if quality:
+        gs = [g for g in groups if quality.lower() in str(g['label']).lower()]
+        if not gs:
+            raise ValueError(f'no quality matching "{quality}"')
+        return gs[0]
+    if len(groups) > 1 and not all_groups and prompt is not None:
+        return prompt(groups)
+    return groups[0]
+
+
+def fetch_page(url, cookies, http):
+    r = http.open(http.request(url, headers=hdrs(cookies)))
+    try:
+        return r.read().decode('utf-8', 'replace')
+    finally:
+        _quiet_close(r)
+
+
+def get_base(url, cookies, http):
+    groups, csrf, aid = parse_page(fetch_page(url, cookies, http))
+    return groups, csrf, aid
+
+
+def fetch_eps_window(aid, gid, start, end, csrf, cookies, http) -> List[dict]:
+    u = (f'{BASE}/anime/download-links/{aid}'
+         f'?index={gid}&start={start}&end={end}&page=1')
+    extra = {'Accept': 'application/json',
+             'X-Requested-With': 'XMLHttpRequest',
+             'X-CSRF-TOKEN': csrf,
+             'X-XSRF-TOKEN': urllib.parse.unquote(cookies.get('XSRF-TOKEN', ''))}
+    r = http.open(http.request(u, headers=hdrs(cookies, extra)))
+    try:
+        d = json.loads(r.read().decode())
+    finally:
+        _quiet_close(r)
+    return d.get('data') if d.get('status') else []
+
+
+def all_eps(aid, gid, group, csrf, cookies, http) -> Dict[int, str]:
+    eps = {e['es']: e['link'] for e in group['data']}
+    if aid and eps:
+        hi = max(eps)
+        windows = [(lo, min(lo + 51, hi)) for lo in range(1, hi + 1, 52)
+                   if any(k not in eps for k in range(lo, min(lo + 51, hi) + 1))]
+        with ThreadPoolExecutor(6) as ex:
+            for got in ex.map(
+                    lambda w: fetch_eps_window(aid, gid, w[0], w[1], csrf,
+                                               cookies, http), windows):
+                for e in got:
+                    eps[e['es']] = e['link']
+    return eps
+
+
+# --- provider ---------------------------------------------------------------
+class AnimeGateProvider(Provider):
+    def __init__(self, url, quality=None, all_groups=False, http=None,
+                 cookies=None, prompt=None):
+        self.url = url
+        self.quality = quality
+        self.all_groups = all_groups
+        self.http = http or HttpClient()
+        self._cookies = cookies
+        self.prompt = prompt
+        self.title = slug_title(url)
+        self.group = None
+        self._loaded = False
+        self._eps: Dict[int, str] = {}
+        self._aid = self._gid = self._csrf = None
+        self._cs: Dict[str, str] = {}
+        self._labels: Dict[int, str] = {}
+
+    def load(self):
+        cs = self._cookies if self._cookies is not None else firefox_cookies()
+        groups, csrf, aid = get_base(self.url, cs, self.http)
+        # keep the site's labels for nicer menus
+        for g in groups:
+            for e in g.get('data', []):
+                self._labels.setdefault(e.get('es'), e.get('label'))
+        group = pick_group(groups, self.quality, self.all_groups, self.prompt)
+        self._cs, self._csrf, self._aid, self._gid = cs, csrf, aid, group['id']
+        self.group = group
+        self._eps = all_eps(aid, group['id'], group, csrf, cs, self.http)
+        self._loaded = True
+        return self
+
+    def episodes(self) -> Dict[int, str]:
+        if not self._loaded:
+            self.load()
+        return {k: (self._labels.get(k) or f'Episode {k}')
+                for k in sorted(self._eps)}
+
+    def stream(self, num: int) -> HttpSource:
+        if not self._loaded:
+            self.load()
+        try:
+            e = fetch_eps_window(self._aid, self._gid, num, num,
+                                 self._csrf, self._cs, self.http)
+            link = e[0]['link'] if e else self._eps.get(num)
+        except Exception:
+            link = self._eps.get(num)
+        if not link:
+            raise KeyError(f'no link for episode {num}')
+        return HttpSource(link, hdrs(self._cs, {'Referer': BASE + '/'}),
+                          self.http)
