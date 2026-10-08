@@ -100,20 +100,28 @@ def _link_put(cfg, title, url):
         pass
 
 
-def _show_link_async(cfg, meta, title):
-    """Resolve the anime's page link (Simkl; keyless) in the background and
-    print it, so the log shows where to go check - without delaying playback."""
-    def run():
+def _log_show(cfg, meta, title):
+    """Resolve + log the anime's MAL id and page link (once, cached)."""
+    mal = meta.cached_mal(title)
+    if mal is None:
         try:
-            mal = meta.cached_mal(title) or meta.resolve_mal(title, ask=False)
-            url = (meta.simkl.show_link(mal=mal) if mal
-                   else meta.simkl.show_link(query=title))
-            if url:
-                _link_put(cfg, title, url)
-                log.cprint(f'show: {url}')
+            mal = meta.resolve_mal(title, ask=False)
         except Exception:
-            pass
-    threading.Thread(target=run, daemon=True).start()
+            mal = None
+    if mal:
+        log.cprint(f'mal:  https://myanimelist.net/anime/{mal}')
+    link = _link_get(cfg, title)
+    if link is None and mal:
+        try:
+            link = meta.simkl.show_link(mal=mal)
+        except Exception:
+            link = None
+        if link:
+            _link_put(cfg, title, link)
+    if link:
+        log.cprint(f'show: {link}')
+    else:
+        log.cprint('show: not found (no MAL / Simkl match)')
 
 
 def cache_command(args: List[str]) -> int:
@@ -300,11 +308,7 @@ def main(argv: Optional[List[str]] = None):
         provider.load()
     ui.recent_add(url)
     log.cprint(f'>> {provider.title} - {len(provider.episodes())} episodes')
-    link = _link_get(cfg, provider.title)
-    if link:
-        log.cprint(f'show: {link}')
-    else:
-        _show_link_async(cfg, meta, provider.title)
+    _log_show(cfg, meta, provider.title)
 
     from .tracking import Tracker
     tracker = Tracker(cfg, http)

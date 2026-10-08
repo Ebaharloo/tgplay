@@ -47,7 +47,7 @@ def test_resolve_episodes():
 def test_metadata_fallback():
     cfg = Config(home=tempfile.mkdtemp(prefix='tgplay-simkl-')).ensure()
     m = Metadata(cfg)
-    m._jikan_title = lambda mal, ep: None  # MAL has no title for this donghua
+    m._mal_title = lambda mal, ep: None  # MAL has no title for this donghua
 
     class FakeSimkl:
         def available(self):

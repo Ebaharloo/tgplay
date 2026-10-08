@@ -1,19 +1,32 @@
-"""tp.metadata - external metadata: AniList -> MAL id, Jikan -> episode titles."""
+"""tp.metadata - external metadata.
+
+Primary source is **MyAnimeList directly** (the Jikan API is often down, and MAL
+itself knows donghua titles like 'Mushen Ji' that AniList spells differently):
+
+    title  -> MAL id       : myanimelist.net/search/prefix.json  (fuzzy)
+    MAL id -> episode names: myanimelist.net/anime/{id}/episode (scraped)
+
+Fallbacks: AniList (title -> MAL id), Simkl (episode names). Each source has a
+circuit breaker so a dead API is skipped for a while.
+"""
 import difflib
+import html as _html
 import json
 import os
 import re
 import subprocess
 import time
-from typing import Dict, List, Optional
+import urllib.parse
+from typing import Dict, Optional
 
 from .http import HttpClient, _quiet_close
 
 ANILIST = 'https://graphql.anilist.co'
 _SEARCH = ('query($s:String){Page(page:1,perPage:8){media(search:$s,type:ANIME){'
            'idMal title{romaji english native} synonyms}}}')
-_MISS = '?'
 _GENERIC_EP = re.compile(r'^\s*episode\s*\d+\s*$', re.I)
+_MAL_SEARCH = 'https://myanimelist.net/search/prefix.json'
+_MAL_UA = 'Mozilla/5.0 (X11; Linux x86_64) Gecko/20100101 Firefox/130.0'
 
 
 def _read(path, default):
@@ -40,7 +53,7 @@ class Metadata:
             simkl = Simkl(http=self.http)
         self.simkl = simkl
 
-    # --- circuit breakers (a dead API must not be retried every run) --------
+    # --- circuit breakers --------------------------------------------------
     @property
     def _down_file(self):
         return os.path.join(os.path.dirname(self.cfg.ep_titles), 'meta_down.json')
@@ -71,33 +84,96 @@ class Metadata:
             self._save_down()
 
     def cached_mal(self, title: str):
-        """MAL id from cache only - never blocks (for the menu)."""
+        """MAL id from cache only - never blocks."""
         cache = _read(self.cfg.mal_ids, {})
         for k, v in cache.items():
             if k.casefold() == title.casefold():
                 return v
         return None
 
-    def _post(self, query, variables):
-        req = self.http.request(ANILIST, method='POST',
-                                headers={'Content-Type': 'application/json',
-                                         'Accept': 'application/json'},
-                                data=json.dumps(
-                                    {'query': query, 'variables': variables}
-                                ).encode())
-        r = self.http.open(req)
+    # --- MAL slug cache (episode URLs need /anime/<id>/<slug>/episode) -----
+    @property
+    def _slugs_file(self):
+        return os.path.join(os.path.dirname(self.cfg.mal_ids), 'mal_slugs.json')
+
+    def _slug_get(self, mal_id):
+        return _read(self._slugs_file, {}).get(str(mal_id))
+
+    def _slug_put(self, mal_id, slug):
+        d = _read(self._slugs_file, {})
+        d[str(mal_id)] = slug
+        _write(self._slugs_file, d)
+
+    def _mal_slug(self, mal_id) -> Optional[str]:
+        s = self._slug_get(mal_id)
+        if s:
+            return s
         try:
-            return json.load(r)
-        finally:
-            _quiet_close(r)
+            doc = self._curl(f'https://myanimelist.net/anime/{mal_id}')
+            m = re.search(
+                r'<link rel="canonical" href="https://myanimelist\.net/anime/'
+                r'\d+/([^"/]+)"', doc)
+            if m:
+                self._slug_put(mal_id, m.group(1))
+                return m.group(1)
+        except Exception:
+            pass
+        return None
+
+    def _remember(self, title: str, mal_id: int, slug: Optional[str] = None):
+        cache = _read(self.cfg.mal_ids, {})
+        cache[title] = mal_id
+        _write(self.cfg.mal_ids, cache)
+        if slug:
+            self._slug_put(mal_id, slug)
+
+    @staticmethod
+    def _curl(url: str, timeout: int = 15) -> str:
+        r = subprocess.run(['curl', '-sS', '-m', str(timeout), '-A', _MAL_UA,
+                            url], capture_output=True, text=True)
+        if not r.stdout:
+            raise OSError('empty response')
+        return r.stdout
+
+    # --- title -> MAL id ---------------------------------------------------
+    def _mal_search(self, title: str):
+        """(MAL id, slug) for a title, or (None, None)."""
+        url = _MAL_SEARCH + '?' + urllib.parse.urlencode(
+            {'type': 'anime', 'keyword': title})
+        d = json.loads(self._curl(url))
+        items = []
+        for c in d.get('categories', []):
+            for it in (c.get('items') or []):
+                if it.get('id') and it.get('name'):
+                    m = re.search(r'/anime/\d+/([^"/]+)', it.get('url') or '')
+                    items.append((it['name'], it['id'],
+                                  m.group(1) if m else None))
+        if not items:
+            return None, None
+        scored = sorted(
+            ((difflib.SequenceMatcher(None, title.casefold(), n.casefold())
+              .ratio(), i, s) for n, i, s in items), reverse=True)
+        best, mid, slug = scored[0]
+        return (mid, slug) if best >= 0.6 else (None, None)
 
     def resolve_mal(self, title: str, ask: bool = True, prompt=None
                     ) -> Optional[int]:
-        """Cached title -> MAL id (fuzzy match against AniList names)."""
+        """Cached title -> MAL id. MAL search first, AniList as fallback."""
         cache = _read(self.cfg.mal_ids, {})
         for k, v in cache.items():
             if k.casefold() == title.casefold():
                 return v
+        # MAL (primary)
+        if not self.down('mal'):
+            try:
+                mid, slug = self._mal_search(title)
+                self._mark_up('mal')
+                if mid:
+                    self._remember(title, mid, slug)
+                    return mid
+            except Exception:
+                self._mark_down('mal')
+        # AniList (fallback)
         if self.down('anilist'):
             return None
         try:
@@ -120,25 +196,40 @@ class Metadata:
             return None
         top = scored[0]
         if top[0] >= 0.85 or (len(scored) == 1 and top[0] >= 0.6):
-            cache[title] = top[1]
-            _write(self.cfg.mal_ids, cache)
+            self._remember(title, top[1])
             return top[1]
         if ask and prompt:
             pick = prompt(scored)
             if pick is not None:
-                cache[title] = pick
-                _write(self.cfg.mal_ids, cache)
+                self._remember(title, pick)
                 return pick
         return None
 
+    def _post(self, query, variables):
+        req = self.http.request(ANILIST, method='POST',
+                                headers={'Content-Type': 'application/json',
+                                         'Accept': 'application/json'},
+                                data=json.dumps(
+                                    {'query': query, 'variables': variables}
+                                ).encode())
+        r = self.http.open(req)
+        try:
+            return json.load(r)
+        finally:
+            _quiet_close(r)
+
+    # --- episode titles ----------------------------------------------------
     def ep_title(self, mal_id, ep, title: Optional[str] = None,
                  anilist_id=None) -> Optional[str]:
-        """MAL/Jikan title first, then Simkl (which has many donghua titles)."""
-        t = self._jikan_title(mal_id, ep)
-        if t:
-            return t
-        # Simkl titles live under their own cache key so the two sources do not
-        # shadow each other (Jikan often has *no* entry for donghua).
+        """MAL episode name first, then Simkl."""
+        if mal_id and not self.down('mal'):
+            try:
+                t = self._mal_title(mal_id, ep)
+                self._mark_up('mal')
+                if t and not _GENERIC_EP.match(t):
+                    return t
+            except Exception:
+                self._mark_down('mal')
         key = f'simkl:{mal_id}' if mal_id else f'simkl:anilist:{anilist_id}'
         cache = _read(self.cfg.ep_titles, {})
         st = cache.get(key, {}).get(str(ep))
@@ -159,49 +250,41 @@ class Metadata:
                 return st
         return None
 
-    def _jikan_title(self, mal_id, ep: int) -> Optional[str]:
-        if self.down('jikan'):
-            return None
+    def _mal_title(self, mal_id, ep: int) -> Optional[str]:
         cache = _read(self.cfg.ep_titles, {})
-        shows = cache.setdefault(str(mal_id), {})
-        key = str(ep)
-        if key in shows:
-            t = shows[key]
-            return None if t == _MISS else t
-        if not shows:
-            for n, t in self._fetch_titles(mal_id).items():
-                shows[str(n)] = t
+        shows = cache.get(str(mal_id))
+        if shows is None:
+            shows = {str(n): t for n, t in self._mal_titles(mal_id).items()}
             shows.setdefault('_done', '1')
+            cache[str(mal_id)] = shows
             _write(self.cfg.ep_titles, cache)
-        t = shows.get(key)
-        return None if not t or t == _MISS else t
+        return shows.get(str(ep))
 
-    def _fetch_titles(self, mal_id: int) -> Dict[int, str]:
-        """Short-timeout Jikan fetch; trips the breaker when it is unreachable."""
+    def _mal_titles(self, mal_id: int) -> Dict[int, str]:
+        """Scrape MAL's episode list (raises when MAL is unreachable)."""
+        base = f'https://myanimelist.net/anime/{mal_id}'
+        slug = self._mal_slug(mal_id)
+        if slug:
+            base += f'/{slug}'
         titles: Dict[int, str] = {}
         page = 1
         while True:
-            url = f'https://api.jikan.moe/v4/anime/{mal_id}/episodes?page={page}'
-            d = None
-            for attempt in range(2):
-                r = subprocess.run(['curl', '-sS', '-m', '12', url],
-                                   capture_output=True, text=True)
-                try:
-                    d = json.loads(r.stdout)
-                    if d.get('data') is not None:
-                        break
-                except Exception:
-                    d = None
-                time.sleep(1.0 * (attempt + 1))
-            if d is None:
-                self._mark_down('jikan')
-                return titles
-            self._mark_up('jikan')
-            for e in (d.get('data') or []):
-                t = e.get('title') or ''
-                if e.get('mal_id') and t and not t.startswith('Episode '):
-                    titles[e['mal_id']] = t
-            if not (d.get('pagination') or {}).get('has_next_page'):
+            doc = self._curl(f'{base}/episode?page={page}')
+            if 'episode-number' not in doc:
+                break
+            for row in doc.split('<tr'):
+                mn = re.search(r'episode-number[^>]*>\s*([\d.]+)\s*<', row)
+                if not mn:
+                    continue
+                mt = re.search(r'episode-title[^>]*>\s*(?:<a[^>]*>)?([^<]+)',
+                               row)
+                t = _html.unescape(mt.group(1)).strip() if mt else ''
+                if t and not _GENERIC_EP.match(t):
+                    try:
+                        titles[int(float(mn.group(1)))] = t
+                    except ValueError:
+                        pass
+            if f'page={page + 1}' not in doc:
                 break
             page += 1
         return titles
