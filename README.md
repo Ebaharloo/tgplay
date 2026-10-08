@@ -37,7 +37,9 @@ agp  tg  tgp      thin entry points
 ## Auth (same as before)
 - **AnimeGate**: reads your Firefox cookies for `animegate.ir` (log in there).
 - **Telegram**: real-phone login once with `./tgp login` (or `./tg login`);
-  the session is stored at `~/.config/tgp/tg.session` (override with `$TG_SESSION`).
+  the session file is `~/.config/tgp/tg.session` (base name `tg`, override with
+  `$TG_SESSION`). An existing session from the old project is reused by copying
+  it there: `cp ../tg_playlist/.tg_session.session ~/.config/tgp/tg.session`.
 
 ## Run
 ```

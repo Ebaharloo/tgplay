@@ -51,7 +51,9 @@ class Config:
 
     @property
     def tg_session(self):
-        return os.environ.get('TG_SESSION') or self._p('tg.session')
+        # NB: no '.session' suffix - telethon appends it, and would otherwise
+        # treat the path as the literal file.
+        return os.environ.get('TG_SESSION') or os.path.join(self.conf, 'tg')
 
     # --- cache -------------------------------------------------------------
     def cache_path(self, name):

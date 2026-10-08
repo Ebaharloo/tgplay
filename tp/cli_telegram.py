@@ -27,7 +27,11 @@ tg (tgplay) - stream one Telegram video via a local range proxy.
   tg <t.me link>            e.g. tg "https://t.me/SomeChannel/2598"
   tg <channel> <msg_id>
   tg login                  one-time Telegram login (phone + code)
+  tg logout                 forget the session (so you can log in again)
   [opts]                    -q/-f SUB  --skip[=MODE]  --skip-toggle  --cut N
+
+  login is single-shot: it does NOT retry. Do not attempt it repeatedly -
+  Telegram rate-limits (FloodWait) and can temporarily block the account.
 """
 
 TGP_HELP = """\
@@ -37,7 +41,11 @@ tgp (tgplay) - stream the last 50 mkv files of a Telegram channel.
   tgp <channel> -e 2-5,9    play picks directly (no menu)
   tgp <channel> -a          play all 50
   tgp <channel> -f 720      filter by name substring
-  tgp login                 one-time Telegram login
+  tgp login                 one-time Telegram login (phone + code)
+  tgp logout                forget the session (so you can log in again)
+
+  login is single-shot: it does NOT retry. Do not attempt it repeatedly -
+  Telegram rate-limits (FloodWait) and can temporarily block the account.
 """
 
 
@@ -61,8 +69,15 @@ def _run(provider, episodes, opts, mpv):
 
 def _maybe_login(argv) -> bool:
     if argv and argv[0] in ('login', 'tg-login'):
+        from .providers.telegram import login
         me = login(Config().tg_session)
-        print('logged in as', getattr(me, 'first_name', me))
+        if me is not None:
+            print('logged in as', getattr(me, 'first_name', me))
+        return True
+    if argv and argv[0] in ('logout', 'tg-logout'):
+        from .providers.telegram import logout
+        print('telegram: logged out' if logout(Config().tg_session)
+              else 'telegram: no session to remove')
         return True
     return False
 

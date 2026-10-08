@@ -14,7 +14,8 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 
 from tp.providers import animegate as ag  # noqa: E402
-from tp.providers.telegram import TelegramSource, fetch_exact  # noqa: E402
+from tp.providers.telegram import (TelegramSource, fetch_exact, _retryable,  # noqa: E402
+                                   logout)
 from tp.sources import HttpSource  # noqa: E402
 
 PAGE = ('<!DOCTYPE html><html><head>'
@@ -92,10 +93,30 @@ def test_telegram_source():
     print('PASS telegram source + fetch_exact')
 
 
+def test_retry_and_logout():
+    # only transient/flood errors are retried; auth errors are NOT (rate-limit)
+    assert _retryable(OSError('reset')) and _retryable(TimeoutError())
+
+    class Flood(Exception):
+        seconds = 5
+    assert _retryable(Flood())
+    assert not _retryable(ValueError('auth')) and \
+        not _retryable(RuntimeError('AuthKeyUnregistered'))
+
+    # logout removes the session so a fresh login is possible
+    import tempfile
+    base = os.path.join(tempfile.mkdtemp(prefix='tgplay-sess-'), 'tg')
+    open(base + '.session', 'wb').write(b'x')
+    assert logout(base) is True and not os.path.exists(base + '.session')
+    assert logout(base) is False
+    print('PASS telegram retry rules + logout')
+
+
 def main():
     test_parse()
     test_provider()
     test_telegram_source()
+    test_retry_and_logout()
     print('PROVIDERS OK')
 
 

@@ -18,20 +18,60 @@ API_HASH = 'API_HASH_NOW_IN_ENV'
 
 
 def default_session() -> str:
+    # No '.session' suffix: telethon appends it. A path that already ends in
+    # '.session' is used literally, which would silently pick the wrong file.
     return (os.environ.get('TG_SESSION')
-            or os.path.join(os.path.expanduser('~'), '.config', 'tgp',
-                            'tg.session'))
+            or os.path.join(os.path.expanduser('~'), '.config', 'tgp', 'tg'))
+
+
+def logout(session: Optional[str] = None) -> bool:
+    """Delete the Telethon session (so a fresh `login` can run)."""
+    base = session or default_session()
+    removed = False
+    for suffix in ('', '.session', '.session-journal', '.session-wal'):
+        for p in {base + suffix, base.replace('.session', '') + suffix}:
+            if p.endswith(suffix) and os.path.exists(p):
+                try:
+                    os.remove(p)
+                    removed = True
+                except OSError:
+                    pass
+    return removed
 
 
 def login(session: Optional[str] = None, api_id: int = API_ID,
           api_hash: str = API_HASH):
-    """One-time Telegram login (real phone account). Prompts for phone/code."""
+    """One-time Telegram login (real phone account). Prompts for phone/code.
+
+    Deliberately single-shot: it does NOT retry. Repeated failed attempts can
+    get the account temporarily blocked (Telegram FloodWait), so failures are
+    reported plainly and the caller must choose to try again later."""
     from telethon import TelegramClient
     session = session or default_session()
     os.makedirs(os.path.dirname(session), exist_ok=True)
-    with TelegramClient(session, api_id, api_hash) as c:
-        me = c.loop.run_until_complete(c.get_me())
-    return me
+    try:
+        with TelegramClient(session, api_id, api_hash) as c:
+            me = c.loop.run_until_complete(c.get_me())
+        return me
+    except Exception as e:
+        name = type(e).__name__
+        if hasattr(e, 'seconds') or 'FloodWait' in name:
+            print(f'telegram: rate-limited ({e}) - WAIT before trying again')
+        elif 'Password' in name:
+            print(f'telegram: 2FA password needed/failed ({e})')
+        elif 'Auth' in name or 'Unauthorized' in name:
+            print(f'telegram: login rejected ({e})')
+        else:
+            print(f'telegram: login error ({name}: {e})')
+        print('telegram: do NOT retry repeatedly - Telegram may block the account')
+        return None
+
+
+def _retryable(ex: BaseException) -> bool:
+    """Transient only: FloodWait (has .seconds) or a connection error. Auth
+    errors must NOT be retried (they only add to rate-limit risk)."""
+    return hasattr(ex, 'seconds') or isinstance(
+        ex, (ConnectionError, TimeoutError, OSError))
 
 
 async def fetch_exact(client, msg, offset: int, length: int,
@@ -58,6 +98,8 @@ async def fetch_exact(client, msg, offset: int, length: int,
                 data += part[:req]
                 break
             except Exception as e:
+                if not _retryable(e):
+                    raise  # auth/other permanent error: never retry (rate-limit)
                 await asyncio.sleep(getattr(e, 'seconds', 1) + 1)
         else:
             return None if not data else bytes(data[trim:][:length])
