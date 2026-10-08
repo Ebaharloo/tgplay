@@ -2,6 +2,7 @@
 import difflib
 import json
 import os
+import re
 import subprocess
 import time
 from typing import Dict, List, Optional
@@ -12,6 +13,7 @@ ANILIST = 'https://graphql.anilist.co'
 _SEARCH = ('query($s:String){Page(page:1,perPage:8){media(search:$s,type:ANIME){'
            'idMal title{romaji english native} synonyms}}}')
 _MISS = '?'
+_GENERIC_EP = re.compile(r'^\s*episode\s*\d+\s*$', re.I)
 
 
 def _read(path, default):
@@ -151,7 +153,7 @@ class Metadata:
             except Exception:
                 st = None
                 self._mark_down('simkl')
-            if st:
+            if st and not _GENERIC_EP.match(st):
                 cache.setdefault(key, {})[str(ep)] = st
                 _write(self.cfg.ep_titles, cache)
                 return st
