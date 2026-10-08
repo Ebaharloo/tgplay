@@ -93,11 +93,32 @@ def test_metadata_title_merge():
     print('PASS metadata title merge (fetch once, never overwrite, sync new)')
 
 
+def test_retry_missing_each_run():
+    from tp.metadata import Metadata
+    cfg = Config(home=tempfile.mkdtemp(prefix='tgplay-retry-')).ensure()
+    src = {'list': {1: 'A'}}
+
+    def fake(mal_id):
+        return dict(src['list'])
+
+    m = Metadata(cfg)
+    m._mal_titles = fake
+    assert m._mal_title(7, 1) == 'A'
+    assert m._mal_title(7, 2) is None          # name not available yet
+    src['list'][2] = 'B'                        # it appears later (or site back)
+    m2 = Metadata(cfg)                          # next run
+    m2._mal_titles = fake
+    assert m2._mal_title(7, 2) == 'B'           # retried and found
+    assert m2._mal_title(7, 1) == 'A'           # known one untouched
+    print('PASS titles retry missing each run')
+
+
 def main():
     test_instant_then_bg()
     test_breaker()
     test_upto()
     test_metadata_title_merge()
+    test_retry_missing_each_run()
     print('TITLES OK')
 
 

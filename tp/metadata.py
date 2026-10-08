@@ -43,10 +43,12 @@ def _write(path, d):
 
 class Metadata:
     def __init__(self, config, http: Optional[HttpClient] = None, simkl=None,
-                 cooldown: float = 1800.0):
+                 cooldown: float = 900.0):
         self.cfg = config
         self.http = http or HttpClient(timeout=20)
-        self.cooldown = cooldown
+        # how long a failed source is skipped before we try it again each run
+        self.cooldown = float(os.environ.get(
+            'AGP_META_COOLDOWN', cooldown))
         self._down = self._load_down()
         self._refreshed = set()  # mal ids already refreshed this run
         if simkl is None:
