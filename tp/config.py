@@ -38,6 +38,10 @@ class Config:
         return self._p('ep_titles.json')
 
     @property
+    def translations(self):
+        return self._p('translations.json')
+
+    @property
     def recent(self):
         return self._p('recent.json')
 

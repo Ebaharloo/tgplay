@@ -72,8 +72,20 @@ def test_retry_missing_each_run():
     print('PASS titles retry missing each run')
 
 
+def test_labels_translated():
+    from tp.titles import TitleService
+    cfg = Config(home=tempfile.mkdtemp(prefix='tgplay-trlab-')).ensure()
+    json.dump({'59953': {'1': '天黑别出门'}}, open(cfg.ep_titles, 'w'))
+    json.dump({'天黑别出门': "Don't go outside when it's dark"},
+              open(cfg.translations, 'w'))
+    ts = TitleService(Metadata(cfg), cfg)
+    assert ts.labels(59953, {1: 'x'})[1] == "Don't go outside when it's dark"
+    print('PASS labels translated to English')
+
+
 def main():
     test_labels_instant()
+    test_labels_translated()
     test_metadata_title_merge()
     test_retry_missing_each_run()
     print('TITLES OK')

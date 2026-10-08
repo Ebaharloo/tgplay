@@ -21,6 +21,7 @@ from typing import Dict, Optional
 
 from .http import HttpClient, _quiet_close
 from .bangumi import Bangumi, cjk_title as _cjk
+from .translate import Translator, has_cjk
 
 ANILIST = 'https://graphql.anilist.co'
 _SEARCH = ('query($s:String){Page(page:1,perPage:8){media(search:$s,type:ANIME){'
@@ -58,6 +59,7 @@ class Metadata:
         self.simkl = simkl
         self.bangumi = Bangumi()
         self._bgm_done = set()
+        self.translator = Translator(config.translations, self.http)
 
     # --- circuit breakers --------------------------------------------------
     @property
@@ -294,6 +296,7 @@ class Metadata:
             shows.setdefault('_done', '1')
             cache[str(mal_id)] = shows
             _write(self.cfg.ep_titles, cache)
+        self.translator.ensure(list(eps.values()))  # zh -> en (cached)
         return shows
 
     def _mal_title(self, mal_id, ep: int,
