@@ -48,6 +48,7 @@ class Metadata:
         self.http = http or HttpClient(timeout=20)
         self.cooldown = cooldown
         self._down = self._load_down()
+        self._refreshed = set()  # mal ids already refreshed this run
         if simkl is None:
             from .simkl import Simkl
             simkl = Simkl(http=self.http)
@@ -252,13 +253,40 @@ class Metadata:
 
     def _mal_title(self, mal_id, ep: int) -> Optional[str]:
         cache = _read(self.cfg.ep_titles, {})
-        shows = cache.get(str(mal_id))
-        if shows is None:
-            shows = {str(n): t for n, t in self._mal_titles(mal_id).items()}
+        shows = cache.get(str(mal_id)) or {}
+        key = str(ep)
+        if key in shows:
+            return shows[key]
+        # unknown episode -> refresh the series ONCE this run (picks up new,
+        # still-airing episodes; never overwrites/costs on known ones)
+        if mal_id not in self._refreshed:
+            self._refreshed.add(mal_id)
+            self.refresh_titles(mal_id)
+            shows = _read(self.cfg.ep_titles, {}).get(str(mal_id)) or {}
+        return shows.get(key)
+
+    def refresh_titles(self, mal_id) -> None:
+        """Scrape MAL and MERGE - existing episode names are never overwritten,
+        so we fetch each once and keep it forever (a new aired ep is added)."""
+        if not mal_id or self.down('mal'):
+            return
+        try:
+            fetched = self._mal_titles(mal_id)
+            self._mark_up('mal')
+        except Exception:
+            self._mark_down('mal')
+            return
+        if not fetched:
+            return
+        cache = _read(self.cfg.ep_titles, {})
+        shows = cache.get(str(mal_id)) or {}
+        before = len(shows)
+        for n, t in fetched.items():
+            shows.setdefault(str(n), t)   # keep the first name we ever saw
+        if len(shows) != before:
             shows.setdefault('_done', '1')
             cache[str(mal_id)] = shows
             _write(self.cfg.ep_titles, cache)
-        return shows.get(str(ep))
 
     def _mal_titles(self, mal_id: int) -> Dict[int, str]:
         """Scrape MAL's episode list (raises when MAL is unreachable)."""

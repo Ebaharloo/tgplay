@@ -67,10 +67,37 @@ def test_upto():
     print('PASS titles upto limit')
 
 
+def test_metadata_title_merge():
+    from tp.metadata import Metadata
+    cfg = Config(home=tempfile.mkdtemp(prefix='tgplay-mtitles-')).ensure()
+    m = Metadata(cfg)
+    calls = {'n': 0}
+    state = {'list': {1: 'A', 2: 'B'}}
+
+    def fake(mal_id):
+        calls['n'] += 1
+        return dict(state['list'])
+
+    m._mal_titles = fake
+    assert m._mal_title(999, 1) == 'A' and calls['n'] == 1
+    assert m._mal_title(999, 2) == 'B' and calls['n'] == 1   # known: no refetch
+    state['list'][3] = 'C'                                   # a new episode aired
+    m2 = Metadata(cfg)                                       # next run
+    m2._mal_titles = fake
+    assert m2._mal_title(999, 3) == 'C' and calls['n'] == 2   # synced the new ep
+    state['list'][1] = 'CHANGED'                             # source rewritten
+    m3 = Metadata(cfg)
+    m3._mal_titles = fake
+    assert m3._mal_title(999, 4) is None                     # triggers a refresh
+    assert m3._mal_title(999, 1) == 'A'                      # never overwritten
+    print('PASS metadata title merge (fetch once, never overwrite, sync new)')
+
+
 def main():
     test_instant_then_bg()
     test_breaker()
     test_upto()
+    test_metadata_title_merge()
     print('TITLES OK')
 
 
