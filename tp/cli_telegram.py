@@ -21,6 +21,7 @@ from .providers.telegram import SingleFileProvider, TelegramProvider, login
 from .proxy import RangeProxy
 from .skip import SkipService
 from .cli import parse
+from . import setup
 from . import log
 
 TG_HELP = """\
@@ -189,11 +190,13 @@ def main_tgp(argv: Optional[List[str]] = None) -> int:
     qs = provider.qualities()
     quality_groups = [{'label': q} for q in qs]
     if interactive:
+        opts, mpv = setup.apply(opts, mpv, setup.load(cfg.ui))
         res = ui.gather(opts, quality_groups, mpv, show_eps=False)
         if res is None:
             print('menu: cancelled')
             return 0
         opts, mpv = res
+        setup.save(cfg.ui, opts, mpv)  # remember for next time
         if qs:
             provider.set_quality(opts.get('f'))
         eps = provider.episodes()

@@ -201,11 +201,20 @@ class TelegramProvider(_TelegramBase, Provider):
         return list(self._qualities)
 
     def set_quality(self, q) -> 'TelegramProvider':
-        """Narrow the episode list to one quality variant."""
+        """Narrow the episode list to one quality variant (tolerant match)."""
         if not self._loaded:
             self.load()
-        if q and self._byq.get(q):
-            want = set(self._byq[q])
+        key = None
+        if q:
+            ql = str(q).lower()
+            if ql in self._byq:
+                key = ql
+            else:
+                key = next((k for k in self._byq
+                            if ql in k.lower() or k.lower().startswith(ql)),
+                           None)
+        if key and self._byq.get(key):
+            want = set(self._byq[key])
             self._view = [it for it in self._items if it[1] in want]
         else:
             self._view = list(self._items)

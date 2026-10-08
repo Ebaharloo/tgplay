@@ -42,6 +42,10 @@ class Config:
         return self._p('recent.json')
 
     @property
+    def ui(self):
+        return self._p('ui.json')
+
+    @property
     def anilist_auth(self):
         return self._p('anilist.json')
 

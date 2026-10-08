@@ -21,6 +21,7 @@ from .titles import TitleService
 from .providers.animegate import AnimeGateProvider
 from . import episodes as epmod
 from .episodes import Episode
+from . import setup
 from . import log
 
 HELP = """\
@@ -270,6 +271,8 @@ def main(argv: Optional[List[str]] = None):
     planned = None
     resume_pt = None
     if interactive:
+        # prefill the menu from last time (CLI flags still win)
+        opts, mpv = setup.apply(opts, mpv, setup.load(cfg.ui))
         # 1) show the whole playlist first (titles from cache - instant; the
         #    rest is filled in the background, never blocking)
         provider.fetch_groups()
@@ -289,6 +292,7 @@ def main(argv: Optional[List[str]] = None):
             print('menu: cancelled')
             return 0
         opts, mpv = res
+        setup.save(cfg.ui, opts, mpv)  # remember for next time
         provider.select(opts['f'])
         eps = provider.episodes()
         planned = [Episode(k, eps[k]) for k in chosen if k in eps]
