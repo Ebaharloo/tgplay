@@ -78,15 +78,22 @@ this file = behaviour + to-do.)
 
 - Titles are **cosmetic and never on the critical path**: read instantly from
   cache; missing ones filled by a **background thread**.
-- Source chain: **MAL/Jikan → Simkl**. Generic `"Episode N"` titles are dropped
-  (fall back to the plain label).
-- **Circuit breakers** per source (AniList/Jikan/Simkl): after a failure the
+- **Primary = MyAnimeList directly** (Jikan's API is often down):
+  - title → MAL id via `myanimelist.net/search/prefix.json` (fuzzy over names)
+  - MAL id → episode names by scraping `/anime/<id>/<slug>/episode` (slug from
+    the search URL / canonical link; paginated)
+  - fallbacks: **AniList** (title → MAL id), **Simkl** (episode names)
+- Generic `"Episode N"` titles are dropped (plain label fallback).
+- **Circuit breakers** per source (mal/anilist/simkl): after a failure the
   source is skipped ~30 min (persisted in `meta_down.json`).
-- **Show link** printed at load: `📺 show: https://simkl.com/anime/…`
-  (keyless; cached in `links.json`).
-- Simkl: **keyless** `/redirect` (MAL/AniList → Simkl id) and `/anime/{id}`
-  record; the key is only needed for the episode-title list.
-- Known: some donghua (Zhe Tian, Mu Shen Ji) have **no titles on any source**.
+- **Log line at load, always** (found or not):
+  `🅼 mal:  https://myanimelist.net/anime/<id>` /
+  `📺 show: https://simkl.com/anime/<id>/<slug>` / `show: not found`.
+  Cached in `mal_ids.json`, `mal_slugs.json`, `links.json`.
+- Simkl: **keyless** `/redirect` (MAL → Simkl id) and `/anime/{id}` record.
+  NOTE: this account's client_id requires a user token for `/search`, so we do
+  not rely on Simkl search.
+- Known: a few titles still have no episode names on any source.
 
 ---
 
