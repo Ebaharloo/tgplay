@@ -69,14 +69,17 @@ CLIs build the real one. No module-level singletons.
 ## Migration phases
 
 1. **Pure core** (done): `tp/log`, `tp/config`, `tp/http`, `tp/chapters`,
-   `tp/episodes` + tests. `agp` delegates chapter skip + episode selection;
-   `tg_server` delegates HTTP retries. Behaviour unchanged, tests stay green.
-2. **Unify the range server**: `tp/cache.Mirror` + `tp/proxy.RangeProxy`, used
-   by `tg_server.py`, `tg` and `tgp` (delete the duplicates).
+   `tp/episodes` + tests.
+2. **Unified range server** (done): `tp/sources` (MediaSource + BytesSource +
+   HttpSource), `tp/cache.Cache` (mirror geometry + LRU eviction) and
+   `tp/proxy.RangeProxy` — one source-agnostic server with a RAM head/tail, an
+   on-disk mirror window and live gap reads. Tested with an in-memory source.
+   This is the single implementation that replaces `tg_server.py` and the two
+   inline Telegram handlers.
 3. **`MediaSource`**: `AnimeGateSource` + `TelegramSource`; `RangeProxy` and
    `Playlist` become source-agnostic.
 4. **`Prefetcher` + `Player` + `Playlist`** classes replace `agp.play()`'s body
-   and its globals; `agp`/`tg`/`tgp` become thin `cli.main()` calls.
+   and its globals; thin `cli.main()` entry points.
 5. **Tracking + UI** as injectable services.
 
 Each phase keeps every `tests/test_*.py` green; no phase changes user-visible

@@ -10,19 +10,29 @@ player is easy to test, reuse and tune. See `ARCHITECTURE.md`.
 
 ## Status
 
-Early. Phase 1 (pure core) is in `tp/`:
+Early. Phases 1–2 (pure core + unified range server) are in `tp/`:
 
 ```
 tp/log.py        colour/emoji logging
 tp/config.py     Config: paths + tunables (injectable)
-tp/http.py       HttpClient: retries + exact byte-range fetches
-tp/chapters.py   SkipResolver: mkv chapters (and later ani-skip) -> skip flags
+tp/http.py       HttpClient: retries + exact byte-range fetches + parallel chunk
+tp/chapters.py   SkipResolver: mkv chapters -> skip flags
 tp/episodes.py   Episode + select()/resume()  (the only place the play list is built)
+tp/sources.py    MediaSource ABC + BytesSource + HttpSource
+tp/cache.py      Cache: mirror geometry + LRU eviction
+tp/proxy.py      RangeProxy: one source-agnostic range server (RAM head/tail +
+                 disk mirror + live gaps)
 ```
 
-Later phases (`ARCHITECTURE.md`): unified `RangeProxy` + `Mirror`/`Cache`,
-`MediaSource` (animegate/telegram), `Prefetcher`, `Player`, `Playlist`,
-`Tracker`, `MenuUI`, then thin CLIs.
+Tests:
+
+```
+python3 tests/test_core.py     # config/http/chapters/episodes
+python3 tests/test_proxy.py    # proxy + cache (in-memory source)
+```
+
+Later phases (`ARCHITECTURE.md`): `AnimeGateSource`/`TelegramSource`,
+`Prefetcher`, `Player`, `Playlist`, `Tracker`, `MenuUI`, then thin CLIs.
 
 ## Tests
 
