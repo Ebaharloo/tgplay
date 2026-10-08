@@ -71,10 +71,25 @@ def test_metadata_fallback():
     print('PASS metadata simkl fallback + cache')
 
 
+def test_info_and_page():
+    s = Simkl(client_id='x')
+    s._redirect = lambda **p: 2158326
+    s._get = lambda path, **params: {
+        'ids': {'simkl': 2158326, 'slug': 'zhe-tian', 'mal': '51289'},
+        'title': 'Zhe Tian', 'year': 2023, 'total_episodes': 190,
+        'status': 'airing'}
+    info = s.info(mal=51289)
+    assert info and info['title'] == 'Zhe Tian'
+    assert Simkl.page_url(info) == 'https://simkl.com/anime/2158326/zhe-tian'
+    assert Simkl.page_url({}) is None
+    print('PASS simkl info + page url')
+
+
 def main():
     test_dig()
     test_resolve_episodes()
     test_metadata_fallback()
+    test_info_and_page()
     print('SIMKL OK')
 
 

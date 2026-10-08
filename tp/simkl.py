@@ -133,6 +133,24 @@ class Simkl:
             return None
         return self.episodes(sid).get(int(ep))
 
+    # --- anime record + page link (keyless) --------------------------------
+    def info(self, mal=None, anilist=None, query=None) -> Optional[dict]:
+        sid = self.resolve(mal=mal, anilist=anilist, query=query)
+        if not sid:
+            return None
+        try:
+            return self._get(f'/anime/{sid}')
+        except Exception:
+            return None
+
+    @staticmethod
+    def page_url(info: dict) -> Optional[str]:
+        ids = (info or {}).get('ids') or {}
+        sid, slug = ids.get('simkl'), ids.get('slug')
+        if not sid:
+            return None
+        return f'https://simkl.com/anime/{sid}/{slug or ""}'.rstrip('/')
+
 
 def save_client_id(client_id: str):
     os.makedirs(os.path.dirname(CONF), exist_ok=True)
