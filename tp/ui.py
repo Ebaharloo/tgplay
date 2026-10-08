@@ -134,6 +134,39 @@ def choose_url() -> Optional[str]:
 
 
 # --- options form -----------------------------------------------------------
+def prompt(text: str) -> Optional[str]:
+    """Single-line text entry (curses if possible, else input())."""
+    if not available():
+        try:
+            return input(text + ': ').strip() or None
+        except EOFError:
+            return None
+    import curses
+
+    def run(stdscr):
+        curses.curs_set(1)
+        curses.echo()
+        try:
+            stdscr.erase()
+            h, w = stdscr.getmaxyx()
+            stdscr.addnstr(0, 0, ' tgplay · ' + text, max(0, w - 1),
+                           curses.A_REVERSE)
+            stdscr.addnstr(2, 2, text + ': ', max(0, w - 3))
+            stdscr.move(2, 3 + len(text))
+            stdscr.refresh()
+            v = stdscr.getstr(2, 3 + len(text), 300).decode('utf-8', 'replace')
+        except Exception:
+            v = ''
+        finally:
+            curses.noecho()
+            curses.curs_set(0)
+        return v.strip() or None
+    try:
+        return curses.wrapper(run)
+    except Exception:
+        return None
+
+
 def _help_lines(f, width) -> List[str]:
     out = textwrap.wrap(f.get('help', ''), width) or ['']
     if f['kind'] == 'radio':
@@ -159,15 +192,18 @@ def gather(opts, groups, mpv):
 
 def _curses_form(opts, groups, mpv):
     import curses
-    labels = [str(g['label']) for g in groups] or ['default']
+    labels = [str(g['label']) for g in groups]
     skip_modes = ['off', 'all', 'names', 'auto']
     skip_cur = opts.get('skip') if isinstance(opts.get('skip'), str) else (
         'all' if opts.get('skip') else 'off')
     qidx = next((i for i, l in enumerate(labels)
                  if opts.get('f') and str(opts['f']).lower() in l.lower()), 0)
-    fields = [
-        {'k': 'quality', 'label': 'Quality', 'kind': 'radio', 'opts': labels,
-         'i': qidx, 'help': "Which release to stream (higher = larger/slower)."},
+    fields = []
+    if labels:  # Telegram has no quality groups -> omit this row
+        fields.append({'k': 'quality', 'label': 'Quality', 'kind': 'radio',
+                       'opts': labels, 'i': qidx,
+                       'help': "Which release to stream (higher = larger/slower)."})
+    fields += [
         {'k': 'eps', 'label': 'Episodes  (1-12, 2-5,9, a = all)', 'kind': 'text',
          'val': opts.get('e') or 'a', 'help': 'Episodes to play, back-to-back.'},
         {'k': 'skip', 'label': 'Skip intro / outro', 'kind': 'radio',
@@ -285,7 +321,8 @@ def _curses_form(opts, groups, mpv):
         return None
     by = {f['k']: f for f in fs}
     out = dict(opts)
-    out['f'] = labels[by['quality']['i']]
+    if labels:
+        out['f'] = labels[by['quality']['i']]
     e = (by['eps']['val'] or '').strip().lower()
     if e in ('', 'a', 'all'):
         out['a'], out['e'] = True, None
@@ -305,16 +342,17 @@ def _curses_form(opts, groups, mpv):
 
 
 def _plain_form(opts, groups, mpv):
-    labels = [str(g['label']) for g in groups] or ['default']
-    print('Quality:')
-    for i, l in enumerate(labels, 1):
-        print(f'  {i}) {l}')
-    try:
-        q = input(f'quality [1]: ').strip()
-    except EOFError:
-        return None
-    if q.isdigit() and 1 <= int(q) <= len(labels):
-        opts['f'] = labels[int(q) - 1]
+    labels = [str(g['label']) for g in groups]
+    if labels:
+        print('Quality:')
+        for i, l in enumerate(labels, 1):
+            print(f'  {i}) {l}')
+        try:
+            q = input('quality [1]: ').strip()
+        except EOFError:
+            return None
+        if q.isdigit() and 1 <= int(q) <= len(labels):
+            opts['f'] = labels[int(q) - 1]
     try:
         e = input('eps [a|2-5,9]: ').strip().lower()
         c = input('cut last N sec [blank]: ').strip()
