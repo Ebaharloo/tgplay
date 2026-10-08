@@ -10,13 +10,24 @@ Flow: MAL/AniList id (or a title) -> Simkl id via /search/id -> episode list via
 """
 import json
 import os
+import re
+import urllib.error
 import urllib.parse
+import urllib.request
 from typing import Dict, Optional
 
 from .http import HttpClient, _quiet_close
 
 API = 'https://api.simkl.com'
 CONF = os.path.expanduser('~/.config/tgp/simkl.json')
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
 
 
 def _dig(obj, key):
@@ -60,6 +71,22 @@ class Simkl:
         finally:
             _quiet_close(r)
 
+    def _redirect(self, **params) -> Optional[int]:
+        """Resolve via GET /redirect (works WITHOUT a client_id): read the
+        Location header, e.g. .../anime/2158326/zhe-tian -> 2158326."""
+        params['to'] = 'anime'
+        url = f'{API}/redirect?{urllib.parse.urlencode(params)}'
+        try:
+            _OPENER.open(url, timeout=15)
+        except urllib.error.HTTPError as e:
+            loc = (e.headers.get('Location') or '') if e.headers else ''
+            m = re.search(r'/(?:anime|tv)/(\d+)', loc)
+            if m:
+                return int(m.group(1))
+        except Exception:
+            pass
+        return None
+
     def resolve(self, mal=None, anilist=None, query=None) -> Optional[int]:
         key = ('mal', mal) if mal else (('anilist', anilist) if anilist
                                         else ('q', query))
@@ -68,12 +95,16 @@ class Simkl:
         sid = None
         try:
             if mal or anilist:
-                d = self._get('/search/id',
-                              **({'mal': mal} if mal else {'anilist': anilist}))
-                sid = _dig(d, 'simkl')
-            elif query:
-                d = self._get('/search/anime', q=query)
-                sid = _dig(d, 'simkl')
+                # /redirect needs no key; /search/id is the keyed fallback
+                sid = self._redirect(**({'mal': mal} if mal
+                                        else {'anilist': anilist}))
+                if sid is None and self.client_id:
+                    d = self._get('/search/id',
+                                  **({'mal': mal} if mal
+                                     else {'anilist': anilist}))
+                    sid = _dig(d, 'simkl')
+            elif query and self.client_id:
+                sid = _dig(self._get('/search/anime', q=query), 'simkl')
         except Exception:
             sid = None
         self._ids[key] = sid

@@ -17,6 +17,7 @@ from .prefetch import Prefetcher
 from .proxy import RangeProxy
 from .skip import SkipService
 from .metadata import Metadata
+from .titles import TitleService
 from .providers.animegate import AnimeGateProvider
 from . import episodes as epmod
 from .episodes import Episode
@@ -72,25 +73,6 @@ def _resume_pos(cfg, title):
         return int(d.get(title, {}).get('pos') or 0)
     except Exception:
         return 0
-
-
-def _titled(meta, title, eps):
-    """Episode labels enriched with MAL/AniList titles (best effort, cached)."""
-    labels = dict(eps)
-    try:
-        mal = meta.resolve_mal(title, ask=False)
-    except Exception:
-        mal = None
-    if mal:
-        log.cprint('episodes: fetching titles...')
-        for n in sorted(eps):
-            try:
-                t = meta.ep_title(mal, n, title=title)
-            except Exception:
-                t = None
-            if t:
-                labels[n] = t
-    return labels
 
 
 def cache_command(args: List[str]) -> int:
@@ -242,17 +224,19 @@ def main(argv: Optional[List[str]] = None):
     cfg = Config().ensure()
     http = HttpClient()
     meta = Metadata(cfg, http)
+    titles = TitleService(meta, cfg)
     provider = AnimeGateProvider(url, quality=opts['f'], http=http)
 
     planned = None
     resume_pt = None
     if interactive:
-        # 1) show the whole playlist first (with MAL/AniList titles) and let
-        #    the user pick a start / single episode / all
+        # 1) show the whole playlist first (titles from cache - instant; the
+        #    rest is filled in the background, never blocking)
         provider.fetch_groups()
         provider.select(opts['f'])
         eps = provider.episodes()
-        labels = _titled(meta, provider.title, eps)
+        labels = titles.labels(meta.cached_mal(provider.title), eps)
+        titles.start(provider.title, list(eps))
         res_ep = _resume_ep(cfg, provider.title)
         resume_pt = (res_ep, _resume_pos(cfg, provider.title))
         chosen = ui.pick_start(labels, res_ep)

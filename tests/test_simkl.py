@@ -32,12 +32,16 @@ def test_resolve_episodes():
         return None
 
     s._get = fake_get
+    s._redirect = lambda **params: 42          # keyless resolution
     assert s.resolve(mal=60522) == 42
     assert s.resolve(mal=60522) == 42          # cached
     assert s.episode_title(2, mal=60522) == 'The Journey'
     assert s.episode_title(9, mal=60522) is None
-    assert sum(1 for p, _ in calls if p == '/search/id') == 1
-    print('PASS simkl resolve + episodes')
+    # resolution needs no client_id at all
+    s2 = Simkl(client_id=None)
+    s2._redirect = lambda **p: 99
+    assert s2.resolve(mal=1) == 99
+    print('PASS simkl resolve (keyless) + episodes')
 
 
 def test_metadata_fallback():

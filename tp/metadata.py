@@ -27,13 +27,54 @@ def _write(path, d):
 
 
 class Metadata:
-    def __init__(self, config, http: Optional[HttpClient] = None, simkl=None):
+    def __init__(self, config, http: Optional[HttpClient] = None, simkl=None,
+                 cooldown: float = 1800.0):
         self.cfg = config
         self.http = http or HttpClient(timeout=20)
+        self.cooldown = cooldown
+        self._down = self._load_down()
         if simkl is None:
             from .simkl import Simkl
             simkl = Simkl(http=self.http)
         self.simkl = simkl
+
+    # --- circuit breakers (a dead API must not be retried every run) --------
+    @property
+    def _down_file(self):
+        return os.path.join(os.path.dirname(self.cfg.ep_titles), 'meta_down.json')
+
+    def _load_down(self):
+        try:
+            return json.load(open(self._down_file))
+        except Exception:
+            return {}
+
+    def _save_down(self):
+        try:
+            os.makedirs(os.path.dirname(self._down_file), exist_ok=True)
+            json.dump(self._down, open(self._down_file, 'w'))
+        except Exception:
+            pass
+
+    def down(self, source: str) -> bool:
+        return time.time() < self._down.get(source, 0)
+
+    def _mark_down(self, source: str):
+        self._down[source] = time.time() + self.cooldown
+        self._save_down()
+
+    def _mark_up(self, source: str):
+        if source in self._down:
+            self._down.pop(source, None)
+            self._save_down()
+
+    def cached_mal(self, title: str):
+        """MAL id from cache only - never blocks (for the menu)."""
+        cache = _read(self.cfg.mal_ids, {})
+        for k, v in cache.items():
+            if k.casefold() == title.casefold():
+                return v
+        return None
 
     def _post(self, query, variables):
         req = self.http.request(ANILIST, method='POST',
@@ -55,9 +96,13 @@ class Metadata:
         for k, v in cache.items():
             if k.casefold() == title.casefold():
                 return v
+        if self.down('anilist'):
+            return None
         try:
             media = self._post(_SEARCH, {'s': title})['data']['Page']['media']
+            self._mark_up('anilist')
         except Exception:
+            self._mark_down('anilist')
             return None
         scored = []
         for m in media:
@@ -97,12 +142,15 @@ class Metadata:
         st = cache.get(key, {}).get(str(ep))
         if st:
             return st
-        if self.simkl is not None and self.simkl.available():
+        if self.simkl is not None and self.simkl.available() \
+                and not self.down('simkl'):
             try:
                 st = self.simkl.episode_title(ep, mal=mal_id, anilist=anilist_id,
                                               query=title)
+                self._mark_up('simkl')
             except Exception:
                 st = None
+                self._mark_down('simkl')
             if st:
                 cache.setdefault(key, {})[str(ep)] = st
                 _write(self.cfg.ep_titles, cache)
@@ -110,6 +158,8 @@ class Metadata:
         return None
 
     def _jikan_title(self, mal_id, ep: int) -> Optional[str]:
+        if self.down('jikan'):
+            return None
         cache = _read(self.cfg.ep_titles, {})
         shows = cache.setdefault(str(mal_id), {})
         key = str(ep)
@@ -125,13 +175,14 @@ class Metadata:
         return None if not t or t == _MISS else t
 
     def _fetch_titles(self, mal_id: int) -> Dict[int, str]:
+        """Short-timeout Jikan fetch; trips the breaker when it is unreachable."""
         titles: Dict[int, str] = {}
         page = 1
         while True:
             url = f'https://api.jikan.moe/v4/anime/{mal_id}/episodes?page={page}'
             d = None
-            for attempt in range(4):
-                r = subprocess.run(['curl', '-sS', '-m', '25', url],
+            for attempt in range(2):
+                r = subprocess.run(['curl', '-sS', '-m', '12', url],
                                    capture_output=True, text=True)
                 try:
                     d = json.loads(r.stdout)
@@ -139,14 +190,16 @@ class Metadata:
                         break
                 except Exception:
                     d = None
-                time.sleep(2 * (attempt + 1))
-            if not d or not d.get('data'):
+                time.sleep(1.0 * (attempt + 1))
+            if d is None:
+                self._mark_down('jikan')
                 return titles
-            for e in d['data']:
+            self._mark_up('jikan')
+            for e in (d.get('data') or []):
                 t = e.get('title') or ''
-                if e['mal_id'] and t and not t.startswith('Episode '):
+                if e.get('mal_id') and t and not t.startswith('Episode '):
                     titles[e['mal_id']] = t
-            if not d['pagination']['has_next_page']:
+            if not (d.get('pagination') or {}).get('has_next_page'):
                 break
             page += 1
         return titles
