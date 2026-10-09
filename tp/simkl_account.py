@@ -26,6 +26,13 @@ API = 'https://api.simkl.com'
 APP = 'tgplay'
 VER = '1.0'
 
+# One public client_id for the whole app, so users never register their own.
+# A client_id is public (safe to commit); each user still authorizes their OWN
+# account via the device/PIN link. Register the app ONCE at
+# https://simkl.com/settings/developer/ (client type "TV, devices & command
+# line"), then paste its client_id here to share it with every user.
+BUILTIN_CLIENT_ID = ''
+
 
 def _read(path, default):
     try:
@@ -40,14 +47,11 @@ def _write(path, d):
 
 
 def _client_id(cfg) -> Optional[str]:
-    cid = os.environ.get('AGP_SIMKL_CLIENT_ID')
-    if cid:
-        return cid
-    try:
-        return json.load(open(os.path.join(os.path.dirname(cfg.progress),
-                                           'simkl.json'))).get('client_id')
-    except Exception:
-        return None
+    cid = (os.environ.get('AGP_SIMKL_CLIENT_ID')
+           or _read(os.path.join(os.path.dirname(cfg.progress), 'simkl.json'),
+                    {}).get('client_id')
+           or BUILTIN_CLIENT_ID)
+    return cid or None
 
 
 class SimklAccount:
@@ -112,9 +116,15 @@ class SimklAccount:
     # --- login (device / PIN) ------------------------------------------
     def login(self, poll_limit: int = 180) -> Optional[dict]:
         if not self.client_id:
-            print('simkl: no client_id. Register a V2 app at '
-                  'https://simkl.com/settings/developer/ then run:\n'
-                  '  agp simkl <CLIENT_ID>')
+            print('simkl: no client_id configured.')
+            print('  Maintainer (once): register a V2 app at '
+                  'https://simkl.com/settings/developer/')
+            print('  client type "TV, devices & command line" '
+                  '(no redirect URI needed), then share it:')
+            print('    agp simkl <CLIENT_ID>   '
+                  '(or AGP_SIMKL_CLIENT_ID, or BUILTIN_CLIENT_ID in '
+                  'tp/simkl_account.py)')
+            print('  Users then only run: tgplay simkl login')
             return None
         d = self._form('/oauth2/device',
                        {'client_id': self.client_id,

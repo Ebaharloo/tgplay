@@ -200,7 +200,13 @@ title cache.
 - **Connect** — `tgplay simkl login` uses Simkl **AUTH V2 device / PIN** flow
   (no browser redirect): it prints `simkl.com/pin?user_code=…`, you approve on
   your phone, and tokens (7-day access / 180-day refresh) are stored in
-  `simkl_auth.json`. Requires a **V2** client_id (`agp simkl <CLIENT_ID>`).
+  `simkl_auth.json`.
+- **One shared client_id** — the app ships **one public client_id** so users
+  never register anything. The maintainer registers the app once
+  (`tgplay simkl setup` prints the exact steps) and sets it via
+  `agp simkl <CLIENT_ID>` or `BUILTIN_CLIENT_ID` in `tp/simkl_account.py`;
+  after that every user just runs `tgplay simkl login`. (A client_id is public;
+  each user still authorizes their own account.)
 - **Read** — `GET /sync/all-items/anime/{watching,plantowatch}` gives your list
   with progress + `next_to_watch`.
 - **Feed / up-next** — watching entries that still have a next episode.

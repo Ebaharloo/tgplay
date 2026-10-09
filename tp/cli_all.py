@@ -18,6 +18,7 @@ tgplay - one launcher for every source.
   tgplay <url>            auto-detect the source from the link
   tgplay simkl login      connect your Simkl account (watch-list sync + feed)
   tgplay simkl status|library|logout
+  tgplay simkl setup      one-time app registration (maintainer)
 
   One field does it all:
     • type a title      -> results from AnimeGate AND AnimeX, pick one
@@ -122,6 +123,23 @@ def _simkl_cmd(args: List[str]) -> int:
     cfg = Config().ensure()
     acc = SimklAccount(cfg, HttpClient())
     cmd = (args[0] if args else 'status').lower()
+    if cmd in ('setup', 'register'):
+        cid = next((a for a in args[1:] if not a.startswith('-')), None)
+        if cid:
+            from .simkl import save_client_id
+            save_client_id(cid)
+            print('simkl: client_id saved — users can now just run '
+                  '`tgplay simkl login`')
+            return 0
+        print('simkl: one-time app registration (maintainer, once):')
+        print('  1) https://simkl.com/settings/developer/  -> new app')
+        print('  2) client type: "TV, devices & command line" (no redirect)')
+        print('  3) scope: media:read media:write')
+        print('  4) copy the client_id, then either:')
+        print('       agp simkl <CLIENT_ID>')
+        print('     or set BUILTIN_CLIENT_ID in tp/simkl_account.py to ship it')
+        print('  Users then only run:  tgplay simkl login')
+        return 0
     if cmd == 'login':
         return 0 if acc.login() else 1
     if cmd == 'logout':
