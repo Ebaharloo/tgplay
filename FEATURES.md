@@ -32,6 +32,13 @@ this file = behaviour + to-do.)
 - `-e RANGE` / `-a`, `--dub` / `--sub` / `--auto`, plus the shared
   `--skip` / `--cut` / `--next` / mpv flags.
 
+**Unified (`tgplay`)**
+- `tgplay` — one window, **one field**: search AnimeGate + AnimeX together
+  (results tagged `agp`/`axp`), or paste any link (animegate / animex / t.me),
+  or `@channel`; the right source opens automatically.
+- `tgplay agp|axp|tg|tgp …` — run one source directly. The **desktop icon
+  launches `tgplay`**.
+
 ---
 
 ## Playback
@@ -109,6 +116,9 @@ title cache.
 - The desktop link picker doubles as a **search box**: `tp/search.search_all()`
   fans out to each provider's `search()` and returns `[{'title','url','source'}]`
   (`source` = `agp`/`axp`).
+- The unified **`tgplay`** window uses **one field** and searches **both at
+  once**, tagging each result with its source; picking one dispatches to that
+  source's CLI (`tp/cli_all.route()` handles pasted links and `@channel` too).
 - **animegate**: `GET /global-search?s=<q>` (grouped results, title + url).
 - **animex**: GraphQL `searchAnime(query:)` → the internal slug, handed back as
   an `axp:<slug>` id the provider resolves directly (no page scrape).
@@ -192,7 +202,7 @@ tp/config  tp/http  tp/sources  tp/cache  tp/proxy
 tp/providers/{base,animegate,telegram,animex}
 tp/chapters  tp/skip  tp/metadata  tp/simkl  tp/titles
 tp/prefetch  tp/player  tp/playlist  tp/setup  tp/ui  tp/tracking
-tp/episodes  tp/log  tp/cli  tp/cli_telegram  tp/cli_animex  tp/gui_qt  tp/gui  tp/icon  tp/search  tp/app
+tp/episodes  tp/log  tp/cli  tp/cli_telegram  tp/cli_animex  tp/cli_all  tp/gui_qt  tp/gui  tp/icon  tp/search  tp/app
 ```
 Thin entry points: `agp`, `tg`, `tgp` (symlinked into `~/.local/bin`; scripts use
 `realpath(__file__)` so symlinks work). Tests: `tests/test_*.py`.

@@ -492,3 +492,137 @@ def choose_url(recent: List[str], search_fn=None) -> Optional[str]:
         pass
     win.exec()
     return res.get('url')
+
+
+def launcher(sources=None):
+    """One field: search AnimeGate + AnimeX, or paste any link (animegate /
+    animex / t.me), or `@channel`. Returns ``(source_id, target)`` or None."""
+    from PySide6 import QtWidgets as W, QtCore as C, QtGui as G
+    from .search import search_all
+    from .http import HttpClient
+    from .cli_all import route
+    app = _app()
+    http = HttpClient()
+    res: dict = {}
+
+    win = W.QDialog()
+    win.setWindowTitle('tgplay - watch')
+    win.resize(820, 600)
+    _wi = _app_icon(G)
+    if _wi is not None:
+        win.setWindowIcon(_wi)
+    v = W.QVBoxLayout(win)
+    lbl = W.QLabel('What do you want to watch?')
+    f = lbl.font(); f.setPointSize(f.pointSize() + 1); lbl.setFont(f)
+    v.addWidget(lbl)
+
+    box = W.QLineEdit()
+    box.setClearButtonEnabled(True)
+    box.setPlaceholderText('Search animegate + animex…  or paste a link '
+                           '(animegate / animex / t.me), or @channel')
+    v.addWidget(box)
+
+    status = W.QLabel('')
+    v.addWidget(status)
+
+    lst = W.QListWidget()
+    lst.setAlternatingRowColors(True)
+    v.addWidget(lst, 1)
+
+    def fill(entries):
+        lst.clear()
+        for e in entries:
+            if isinstance(e, dict):
+                it = W.QListWidgetItem(
+                    f"{e.get('title', '')}     ·     {e.get('source', '')}")
+                it.setData(C.Qt.UserRole, e.get('url'))
+                it.setData(C.Qt.UserRole + 1, e.get('source'))
+            else:
+                it = W.QListWidgetItem(str(e))
+                it.setData(C.Qt.UserRole, str(e))
+            lst.addItem(it)
+        if lst.count():
+            lst.setCurrentRow(0)
+
+    results: 'queue.Queue' = queue.Queue()
+    debounce = C.QTimer()
+    debounce.setSingleShot(True)
+    debounce.setInterval(350)
+    poll = C.QTimer()
+    poll.setInterval(150)
+
+    def run_search(text):
+        def work():
+            try:
+                results.put(search_all(text, http=http,
+                                       sources=('agp', 'axp')) or [])
+            except Exception:
+                results.put([])
+        threading.Thread(target=work, daemon=True).start()
+
+    def on_text():
+        t = box.text().strip()
+        if not t:
+            fill([])
+            status.setText('')
+            return
+        r = route(t)
+        if r:
+            fill([{'title': t, 'url': r[1], 'source': r[0]}])
+            status.setText(f'link · {r[0]}')
+            return
+        status.setText('searching…')
+        debounce.start()
+
+    def drain():
+        try:
+            items = results.get_nowait()
+        except queue.Empty:
+            return
+        fill(items)
+        status.setText(f'{len(items)} result(s)' if items else 'no results')
+
+    box.textChanged.connect(on_text)
+    debounce.timeout.connect(lambda: run_search(box.text().strip()))
+    poll.timeout.connect(drain)
+    poll.start()
+
+    def ok():
+        it = lst.currentItem()
+        if it is not None and it.data(C.Qt.UserRole):
+            src = it.data(C.Qt.UserRole + 1)
+            res['src'] = str(src) if src else 'agp'
+            res['target'] = str(it.data(C.Qt.UserRole))
+        else:
+            r = route(box.text().strip())
+            if r:
+                res['src'], res['target'] = r
+        win.accept()
+
+    def cleanup(*_):
+        for t in (debounce, poll):
+            try:
+                t.stop()
+            except Exception:
+                pass
+
+    lst.itemDoubleClicked.connect(lambda _i: ok())
+    box.returnPressed.connect(ok)
+    win.destroyed.connect(cleanup)
+
+    bar = W.QHBoxLayout()
+    b_ok = W.QPushButton('Open'); b_ok.clicked.connect(ok)
+    b_cancel = W.QPushButton('Cancel'); b_cancel.clicked.connect(win.reject)
+    bar.addWidget(b_ok)
+    bar.addStretch(1)
+    bar.addWidget(b_cancel)
+    v.addLayout(bar)
+
+    box.setFocus()
+    try:
+        win.raise_()
+        win.activateWindow()
+    except Exception:
+        pass
+    win.exec()
+    return (res['src'], res['target']) if 'src' in res else None

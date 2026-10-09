@@ -40,7 +40,7 @@ def desktop_text(exec_path: str) -> str:
         'Type=Application\n'
         'Name=tgplay\n'
         'GenericName=Anime Streaming\n'
-        'Comment=Stream animegate links and Telegram channels with mpv\n'
+        'Comment=Search and stream AnimeGate, AnimeX and Telegram with mpv\n'
         f'Exec={exec_path}\n'
         f'Icon={APP_ID}\n'
         'Terminal=false\n'
@@ -85,8 +85,8 @@ def install(exec_path: Optional[str] = None) -> List[str]:
 
     apps = os.path.join(data, 'applications')
     os.makedirs(apps, exist_ok=True)
-    exec_path = exec_path or shutil.which('agp') or os.path.join(
-        os.path.expanduser('~'), '.local', 'bin', 'agp')
+    exec_path = exec_path or shutil.which('tgplay') or shutil.which('agp') or os.path.join(
+        os.path.expanduser('~'), '.local', 'bin', 'tgplay')
     desk = os.path.join(apps, f'{APP_ID}.desktop')
     with open(desk, 'w') as f:
         f.write(desktop_text(exec_path))

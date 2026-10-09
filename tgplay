@@ -1,0 +1,12 @@
+#!/home/user/coding/python/tgplay/.venv/bin/python
+"""tgplay - one launcher for every source (AnimeGate + AnimeX + Telegram)."""
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+
+from tp.app import run             # noqa: E402
+from tp.cli_all import main_all    # noqa: E402
+
+if __name__ == '__main__':
+    sys.exit(run(main_all, 'tgplay'))

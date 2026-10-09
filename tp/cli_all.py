@@ -1,0 +1,151 @@
+"""tp.cli_all - the unified `tgplay` launcher: fill it in, we route it.
+
+One app, one field: type to search AnimeGate + AnimeX together, or paste any
+link (animegate / animex / t.me), or `@channel` for a Telegram channel. The
+chosen target is handed to the matching per-source CLI, which owns the
+provider, menus and playback. This module is only the front door - the OOP
+split keeps each source's logic in its own provider/CLI.
+"""
+import re
+import sys
+from typing import List, Optional, Tuple
+
+ALL_HELP = """\
+tgplay - one launcher for every source.
+
+  tgplay                  one field: search (AnimeGate + AnimeX) or paste a link
+  tgplay agp|axp|tg|tgp …  run that source directly (same as its own command)
+  tgplay <url>            auto-detect the source from the link
+
+  One field does it all:
+    • type a title      -> results from AnimeGate AND AnimeX, pick one
+    • paste a link       -> animegate.ir / animex.one / t.me links
+    • @channel           -> browse a Telegram channel
+
+  The per-source commands (agp, axp, tg, tgp) still work on their own.
+"""
+
+
+def route(text: str) -> Optional[Tuple[str, str]]:
+    """Route one input -> (source_id, target), or None if it's a search query.
+
+    Handles: axp:<slug>, animegate/animex links, t.me links (file vs channel),
+    and `@channel`.
+    """
+    t = (text or '').strip()
+    if not t:
+        return None
+    tl = t.lower()
+    if tl.startswith('axp:'):
+        return ('axp', t)
+    if 'animegate' in tl:
+        return ('agp', t)
+    if 'animex' in tl:
+        return ('axp', t)
+    m = re.search(r't\.me/([A-Za-z0-9_]+)(?:/(\d+))?', t)
+    if m:
+        if m.group(2):
+            return ('tg', t)                 # a single-file message link
+        return ('tgp', m.group(1))           # a channel link
+    if t.startswith('@'):
+        return ('tgp', t)
+    return None
+
+
+def detect(url: str) -> Optional[str]:
+    """The source id for a link (else None)."""
+    r = route(url)
+    return r[0] if r else None
+
+
+def dispatch(src: str, target: Optional[str], extra=()) -> int:
+    """Run the per-source CLI with the chosen target."""
+    if src == 'search':
+        src = detect(target) or 'agp'
+    args = list(extra)
+    if target:
+        if src == 'tg' and 't.me/' not in target and ' ' in target:
+            args += ['--menu'] + target.split()
+        else:
+            args += ['--menu', target]
+    if src == 'agp':
+        from .cli import main
+        return main(args) or 0
+    if src == 'axp':
+        from .cli_animex import main_axp
+        return main_axp(args) or 0
+    if src == 'tgp':
+        from .cli_telegram import main_tgp
+        return main_tgp(args) or 0
+    if src == 'tg':
+        from .cli_telegram import main_tg
+        return main_tg(args or ['--menu']) or 0
+    return 2
+
+
+def _choose_plain() -> Optional[Tuple[str, str]]:
+    try:
+        text = input('search, link, or @channel: ').strip()
+    except EOFError:
+        return None
+    if not text:
+        return None
+    r = route(text)
+    if r:
+        return r
+    try:
+        q = input('search animegate + animex [enter]: ').strip() or text
+    except EOFError:
+        return None
+    from .search import search_all
+    got = search_all(q, sources=('agp', 'axp'))
+    for i, item in enumerate(got, 1):
+        print(f'  {i}) [{item["source"]}] {item["title"]}')
+    if not got:
+        return None
+    try:
+        v = input('pick [1]: ').strip()
+    except EOFError:
+        return None
+    if v.isdigit() and 1 <= int(v) <= len(got):
+        it = got[int(v) - 1]
+        return (it['source'], it['url'])
+    return None
+
+
+def main_all(argv: Optional[List[str]] = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if any(a in ('-h', '--help') for a in argv):
+        print(ALL_HELP)
+        return 0
+
+    # explicit source: `tgplay axp <args...>`
+    if argv and argv[0].lower() in ('agp', 'axp', 'tg', 'tgp'):
+        return dispatch(argv[0].lower(), None, argv[1:])
+
+    flags = [a for a in argv if a.startswith('-')]
+    pos = [a for a in argv if not a.startswith('-')]
+
+    # a link given -> route it
+    if pos:
+        r = route(pos[0])
+        if r:
+            return dispatch(r[0], r[1], flags)
+        print(f'tgplay: could not tell the source of "{pos[0]}"')
+        print(ALL_HELP)
+        return 2
+
+    # interactive: one field
+    from .cli import _pick_gui
+    from . import ui
+    gui = _pick_gui()
+    res = None
+    if gui.available():
+        res = gui.launcher()
+    elif ui.available():
+        res = _choose_plain()
+    if not res:
+        if not gui.available() and not ui.available():
+            print(ALL_HELP)
+        return 0
+    return dispatch(res[0], res[1], flags)
