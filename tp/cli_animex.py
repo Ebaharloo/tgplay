@@ -12,7 +12,7 @@ from typing import List, Optional
 
 from .cache import Cache
 from .config import Config
-from .episodes import Episode, parse_range, select
+from .episodes import Episode
 from .http import HttpClient
 from .metadata import Metadata
 from .player import Player
@@ -22,7 +22,7 @@ from .providers.animex import AnimeXProvider
 from .proxy import RangeProxy
 from .skip import SkipService
 from .titles import TitleService
-from .cli import parse, _resume_ep, _resume_pos, _link_get, _log_show
+from .cli import parse, _resume_ep, _resume_pos, _link_get, _log_show, _plan
 from . import setup
 from . import log
 
@@ -200,13 +200,7 @@ def main_axp(argv: Optional[List[str]] = None) -> int:
         planned = [Episode(k, eps[k]) for k in chosen if k in eps]
 
     if not interactive:
-        eps = provider.episodes()
-        if opts['a']:
-            planned = select(eps, all=True)
-        elif opts['e']:
-            planned = select(eps, nums=parse_range(opts['e']))
-        else:
-            planned = select(eps, all=True)
+        planned = _plan(provider, opts, playlist)
     if not planned:
         proxy.stop()
         print('nothing to play')
@@ -216,8 +210,9 @@ def main_axp(argv: Optional[List[str]] = None) -> int:
     if opts['next']:
         next_frac = 'cut' if (opts['nowait'] and opts['cut']) else opts['next']
     start = None
-    if resume_pt and planned and planned[0].num == resume_pt[0]:
-        start = resume_pt[1]
+    rp = getattr(playlist, '_resume', None) or resume_pt
+    if rp and planned and planned[0].num == rp[0]:
+        start = rp[1]
     if start:
         _m, _s = divmod(int(start), 60)
         log.cprint(f'resume: ep{planned[0].num} at {_m:d}:{_s:02d} '
