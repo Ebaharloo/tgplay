@@ -62,11 +62,17 @@ this file = behaviour + to-do.)
 
 ## Menu (desktop GUI, curses terminal, or plain)
 
-Preferred on a desktop: a **Tkinter window** (`tp/gui.py`) — episode list with
-names, resume marker, quality, all options, and **Play from here / Only
-selected / All / Cancel**. Falls back to the **curses** terminal form, then
-plain prompts. `--gui` / `--curses` force one (auto = GUI when a display
-exists). Both remember the last setup (`ui.json`) and share the title cache.
+Preferred on a desktop: a **native Qt window** (`tp/gui_qt.py`, PySide6) —
+this follows the desktop's own theme automatically (on KDE Plasma: Breeze
+colours, widget style and icons; no hand-picked colours). It shows the episode
+list with names, resume marker, quality, all options, a **live log panel**, a
+clickable anime link, and **Play from here / Only selected / All / Stop /
+Close**; the window stays open while playback runs in the background. When Qt
+isn't available it falls back to the **Tkinter** window (`tp/gui.py`, which
+paints itself from `kdeglobals`/GTK settings), then the **curses** terminal
+form, then plain prompts. `--gui` / `--curses` force one (auto = GUI when a
+display exists). All menus remember the last setup (`ui.json`) and share the
+title cache.
 
 1. **Link picker** — recent links + `✎ Enter a new link…` (inline typing).
 2. **Episodes page** — whole playlist with titles, count, `<resume>` marker.
@@ -134,10 +140,13 @@ tp/config  tp/http  tp/sources  tp/cache  tp/proxy
 tp/providers/{base,animegate,telegram}
 tp/chapters  tp/skip  tp/metadata  tp/simkl  tp/titles
 tp/prefetch  tp/player  tp/playlist  tp/setup  tp/ui  tp/tracking
-tp/episodes  tp/log  tp/cli  tp/cli_telegram
+tp/episodes  tp/log  tp/cli  tp/cli_telegram  tp/gui_qt  tp/gui
 ```
 Thin entry points: `agp`, `tg`, `tgp` (symlinked into `~/.local/bin`; scripts use
-`realpath(__file__)` so symlinks work). Tests: `tests/test_*.py` (12 files).
+`realpath(__file__)` so symlinks work). Tests: `tests/test_*.py`.
+`tp/cli._pick_gui()` prefers `tp/gui_qt` (PySide6, native theming) then
+`tp/gui` (Tkinter). The venv has `include-system-site-packages = true` in
+`.venv/pyvenv.cfg` so it can use the system PySide6 + KDE integration.
 
 ---
 

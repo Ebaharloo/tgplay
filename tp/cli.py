@@ -40,8 +40,9 @@ agp (tgplay) - stream animegate.ir mkv links, no downloads.
   --start N       start each episode at N seconds
   any other --flag goes to mpv verbatim
 
-  agp --menu                open a menu: a desktop window (Tkinter) when a
-                            display is present, else the terminal menu
+  agp --menu                open a menu: a native desktop window (Qt/PySide6
+                            when available, else Tkinter) when a display is
+                            present, else the terminal menu
   --gui / --curses          force the desktop window / the terminal menu
   agp cache [clean [--days N]]  show / clean the download cache
   agp simkl <CLIENT_ID>     set the Simkl key for episode titles (donghua)
@@ -49,6 +50,18 @@ agp (tgplay) - stream animegate.ir mkv links, no downloads.
                             AniList progress sync + new-episode notices
   Telegram: use ./tg (one file) and ./tgp (channel); log in with `tgp login`.
 """
+
+
+def _pick_gui():
+    """Prefer the native Qt window (follows KDE/GNOME theming), then Tkinter."""
+    try:
+        from . import gui_qt
+        if gui_qt.available():
+            return gui_qt
+    except Exception:
+        pass
+    from . import gui
+    return gui
 
 
 def _notify(tracker):
@@ -251,7 +264,7 @@ def main(argv: Optional[List[str]] = None):
         return 0
 
     from . import ui
-    from . import gui
+    gui = _pick_gui()
     force_gui = '--gui' in argv
     force_curses = '--curses' in argv
     argv = [a for a in argv if a not in ('--gui', '--curses')]
