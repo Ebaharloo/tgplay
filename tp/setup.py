@@ -35,6 +35,7 @@ def save(path, opts: dict, mpv: List[str]) -> dict:
         'fullscreen': '--fullscreen' in mpv,
         'extra': ' '.join(x for x in mpv if x != '--fullscreen'),
         'quality': _quality_key(opts.get('f')),
+        'audio': opts.get('audio') or 'dub',
     }
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -62,6 +63,8 @@ def apply(opts: dict, mpv: List[str], saved: dict) -> Tuple[dict, List[str]]:
         opts['cut'] = saved['cut']
     if not opts.get('f') and saved.get('quality'):
         opts['f'] = saved['quality']
+    if not opts.get('audio') and saved.get('audio'):
+        opts['audio'] = saved['audio']
     if not mpv and saved.get('extra'):  # user passed no flags -> restore theirs
         mpv += saved['extra'].split()
     if saved.get('fullscreen') and '--fullscreen' not in mpv:

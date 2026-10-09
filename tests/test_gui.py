@@ -41,6 +41,12 @@ def test_controller():
                        one_shot=True)
         assert got['chosen'] == [1, 2, 3], got
 
+        # audio dropdown -> opts['audio']
+        os.environ['AGP_GUI_TEST'] = 'all'
+        gui.controller('Test', '', groups, labels, None, _opts(), [], play,
+                       one_shot=True, audio=True)
+        assert got['opts'].get('audio') == 'dub', got
+
         os.environ['AGP_GUI_TEST'] = 'close'     # Close without playing
         gui.controller('Test', '', groups, labels, None, _opts(), [], play,
                        one_shot=True)

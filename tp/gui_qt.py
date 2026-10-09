@@ -58,7 +58,7 @@ def _app_icon(G):
 def controller(title: str, link: Optional[str], groups: List[dict],
                labels: Dict[int, str], resume: Optional[int], opts: dict,
                mpv: List[str], play_fn: Callable, stop_fn=None, status_fn=None,
-               one_shot: bool = False):
+               one_shot: bool = False, audio: bool = False):
     """Open the window and keep it until the user closes it (or, with
     `one_shot`, until the first Play). `play_fn(chosen, opts, mpv)` runs in a
     background thread."""
@@ -107,6 +107,15 @@ def controller(title: str, link: Optional[str], groups: List[dict],
                     glabels[0])
         quality.setCurrentText(want)
 
+    audio_box = None
+    if audio:
+        audio_box = W.QComboBox()
+        audio_box.addItems(['dub', 'sub', 'auto'])
+        audio_box.setEditable(False)
+        audio_box.setCurrentText(opts.get('audio')
+                                 if opts.get('audio') in ('dub', 'sub', 'auto')
+                                 else 'dub')
+
     skip = W.QComboBox()
     skip.addItems(SKIP_MODES)
     skip.setEditable(False)
@@ -119,8 +128,12 @@ def controller(title: str, link: Optional[str], groups: List[dict],
 
     r = 0
     if glabels:
-        form.addWidget(W.QLabel('Quality'), r, 0)
+        form.addWidget(W.QLabel('Server' if audio else 'Quality'), r, 0)
         form.addWidget(quality, r, 1, 1, 3)
+        r += 1
+    if audio_box is not None:
+        form.addWidget(W.QLabel('Audio'), r, 0)
+        form.addWidget(audio_box, r, 1, 1, 3)
         r += 1
     form.addWidget(W.QLabel('Skip'), r, 0)
     form.addWidget(skip, r, 1)
@@ -206,6 +219,8 @@ def controller(title: str, link: Optional[str], groups: List[dict],
         o = dict(opts)
         if glabels:
             o['f'] = quality.currentText()
+        if audio_box is not None:
+            o['audio'] = audio_box.currentText()
         sm = skip.currentText()
         o['skip'] = False if sm == 'off' else sm
         o['skip_toggle'] = bool(toggle.isChecked())

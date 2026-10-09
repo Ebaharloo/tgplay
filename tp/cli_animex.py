@@ -33,7 +33,8 @@ axp (tgplay) - stream animex.one with English sub/dub, via mpv.
   axp --menu [<url>]        pick audio/server, options and START episode
   axp                       (a display) opens the app window with a link picker
   -e RANGE / -a             episode selection (no menu)
-  --dub / --sub             audio track (default: dub)
+  --dub / --sub / --auto    audio (default: dub; auto = dub if available,
+                            else sub). The menu has an Audio row too.
   --skip[=MODE] --skip-toggle --cut N --start N --next[=P] [mpv flags]
   --gui / --curses          force the desktop window / the terminal menu
 
@@ -63,8 +64,8 @@ def main_axp(argv: Optional[List[str]] = None) -> int:
     force_gui = '--gui' in argv
     force_curses = '--curses' in argv
     argv = [a for a in argv if a not in ('--gui', '--curses')]
-    audio = 'sub' if '--sub' in argv else 'dub'
-    argv = [a for a in argv if a not in ('--sub', '--dub')]
+    audio = 'sub' if '--sub' in argv else ('auto' if '--auto' in argv else 'dub')
+    argv = [a for a in argv if a not in ('--sub', '--dub', '--auto')]
 
     interactive = bool(force_gui)
     gui = _pick_gui()
@@ -81,6 +82,7 @@ def main_axp(argv: Optional[List[str]] = None) -> int:
                                     (not force_curses and gui.available())))
 
     opts, pos, mpv = parse(argv)
+    opts['audio'] = audio
     url = next((a for a in pos if 'animex' in a), pos[0]) if pos else None
     if interactive and url is None:
         if use_gui:
@@ -113,6 +115,7 @@ def main_axp(argv: Optional[List[str]] = None) -> int:
 
     if interactive:
         opts, mpv = setup.apply(opts, mpv, setup.load(cfg.ui))
+        provider.set_audio(opts.get('audio') or audio)
         provider.fetch_groups()
         provider.select(opts['f'])
     else:
@@ -135,12 +138,14 @@ def main_axp(argv: Optional[List[str]] = None) -> int:
             if chosen is None:
                 print('menu: cancelled')
                 return 0
-            res = ui.gather(opts, provider.groups, mpv, show_eps=False)
+            res = ui.gather(opts, provider.groups, mpv, show_eps=False,
+                            audio=True)
             if res is None:
                 print('menu: cancelled')
                 return 0
             opts, mpv = res
             setup.save(cfg.ui, opts, mpv)
+            provider.set_audio(opts.get('audio') or audio)
             provider.select(opts['f'])
             eps = provider.episodes()
             planned = [Episode(k, eps[k]) for k in chosen if k in eps]
@@ -156,6 +161,7 @@ def main_axp(argv: Optional[List[str]] = None) -> int:
     if use_gui and interactive:
         def _play(c, o, m):
             player.stop()
+            provider.set_audio(o.get('audio') or audio)
             provider.select(o['f'])
             e2 = provider.episodes()
             pl = [Episode(k, e2[k]) for k in c if k in e2]
@@ -184,7 +190,8 @@ def main_axp(argv: Optional[List[str]] = None) -> int:
         try:
             gui.controller(provider.title, _link_get(cfg, provider.title),
                            provider.groups, labels, res_ep, opts, mpv,
-                           _play, stop_fn=player.stop, status_fn=_status)
+                           _play, stop_fn=player.stop, status_fn=_status,
+                           audio=True)
         except Exception as ex:
             log.cprint(f'gui: {ex} - using the terminal menu')
         else:
@@ -195,12 +202,13 @@ def main_axp(argv: Optional[List[str]] = None) -> int:
             proxy.stop()
             print('menu: cancelled')
             return 0
-        res = ui.gather(opts, provider.groups, mpv, show_eps=False)
+        res = ui.gather(opts, provider.groups, mpv, show_eps=False, audio=True)
         if res is None:
             proxy.stop()
             print('menu: cancelled')
             return 0
         opts, mpv = res
+        provider.set_audio(opts.get('audio') or audio)
         provider.select(opts['f'])
         eps = provider.episodes()
         planned = [Episode(k, eps[k]) for k in chosen if k in eps]

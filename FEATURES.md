@@ -29,7 +29,7 @@ this file = behaviour + to-do.)
 - `axp <animex-url>` — stream animex.one with English **sub/dub**.
 - `axp` / `axp --menu` — the same desktop/terminal menus; the option list is
   every audio type × every server AnimeX reports (dub pre-selected).
-- `-e RANGE` / `-a`, `--dub` / `--sub`, plus the shared
+- `-e RANGE` / `-a`, `--dub` / `--sub` / `--auto`, plus the shared
   `--skip` / `--cut` / `--next` / mpv flags.
 
 ---
@@ -157,8 +157,10 @@ title cache.
   gives the internal slug + AniList/MAL ids; then `pp.animex.one/rest/api/`
   `episodes` · `servers` · `sources` gives the episode list, the **sub/dub
   server list**, and a fresh **HLS** url + subtitle tracks.
-- **Every audio × server AnimeX reports becomes a menu option** (dub first);
-  the list is dynamic, nothing hardcoded.
+- The menu has an **Audio** row (dub / sub / auto) and a **Server** row listing
+  every server AnimeX reports (dynamic, tagged `dub`/`sub` — nothing hardcoded).
+  If the picked audio isn't available for a title, it logs a warning and starts
+  in the other one (e.g. no dub → sub); `auto` = dub when present, else sub.
 - HLS is played by **mpv directly** (`tp.sources.DirectSource`) with
   `Referer: https://megaplay.buzz/`; the range proxy/cache is bypassed (HLS is
   segmented and tokens are short-lived).

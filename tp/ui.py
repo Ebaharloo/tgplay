@@ -267,17 +267,17 @@ def _help_lines(f, width) -> List[str]:
     return out
 
 
-def gather(opts, groups, mpv, show_eps=True):
+def gather(opts, groups, mpv, show_eps=True, audio=False):
     """Show the option boxes; return updated (opts, mpv), or None if cancelled."""
     if _curses_ok():
         try:
-            return _curses_form(opts, groups, mpv, show_eps)
+            return _curses_form(opts, groups, mpv, show_eps, audio)
         except Exception:
             pass
-    return _plain_form(opts, groups, mpv, show_eps)
+    return _plain_form(opts, groups, mpv, show_eps, audio)
 
 
-def _curses_form(opts, groups, mpv, show_eps=True):
+def _curses_form(opts, groups, mpv, show_eps=True, audio=False):
     import curses
     labels = [str(g['label']) for g in groups]
     skip_modes = ['off', 'all', 'names', 'auto']
@@ -287,9 +287,20 @@ def _curses_form(opts, groups, mpv, show_eps=True):
                  if opts.get('f') and str(opts['f']).lower() in l.lower()), 0)
     fields = []
     if labels:  # Telegram has no quality groups -> omit this row
-        fields.append({'k': 'quality', 'label': 'Quality', 'kind': 'radio',
-                       'opts': labels, 'i': qidx,
-                       'help': "Which release to stream (higher = larger/slower)."})
+        fields.append({'k': 'quality',
+                       'label': 'Server' if audio else 'Quality',
+                       'kind': 'radio', 'opts': labels, 'i': qidx,
+                       'help': ("Which AnimeX server to stream from."
+                                if audio else
+                                "Which release to stream (higher = larger/slower).")})
+    if audio:
+        amodes = ['dub', 'sub', 'auto']
+        acur = opts.get('audio') if opts.get('audio') in amodes else 'dub'
+        fields.append({'k': 'audio', 'label': 'Audio  (dub / sub / auto)',
+                       'kind': 'radio', 'opts': amodes, 'i': amodes.index(acur),
+                       'help': 'dub = English dub (default); sub = original '
+                               'audio + subtitles; auto = dub when available, '
+                               'else sub.'})
     if show_eps:
         fields.append({'k': 'eps', 'label': 'Episodes  (1-12, 2-5,9, a = all)',
                        'kind': 'text', 'val': opts.get('e') or 'a',
@@ -416,6 +427,8 @@ def _curses_form(opts, groups, mpv, show_eps=True):
     out = dict(opts)
     if labels:
         out['f'] = labels[by['quality']['i']]
+    if audio:
+        out['audio'] = by['audio']['opts'][by['audio']['i']]
     if show_eps:
         e = (by['eps']['val'] or '').strip().lower()
         if e in ('', 'a', 'all'):
@@ -435,18 +448,26 @@ def _curses_form(opts, groups, mpv, show_eps=True):
     return out, m
 
 
-def _plain_form(opts, groups, mpv, show_eps=True):
+def _plain_form(opts, groups, mpv, show_eps=True, audio=False):
     labels = [str(g['label']) for g in groups]
     if labels:
-        print('Quality:')
+        print('Server:' if audio else 'Quality:')
         for i, l in enumerate(labels, 1):
             print(f'  {i}) {l}')
         try:
-            q = input('quality [1]: ').strip()
+            q = input('server [1]: ' if audio else 'quality [1]: ').strip()
         except EOFError:
             return None
         if q.isdigit() and 1 <= int(q) <= len(labels):
             opts['f'] = labels[int(q) - 1]
+    if audio:
+        amodes = ['dub', 'sub', 'auto']
+        cur = opts.get('audio') if opts.get('audio') in amodes else 'dub'
+        try:
+            a = input(f'audio dub/sub/auto [{cur}]: ').strip().lower()
+        except EOFError:
+            return None
+        opts['audio'] = a if a in amodes else cur
     try:
         if show_eps:
             e = input('eps [a|2-5,9]: ').strip().lower()

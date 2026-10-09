@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""test_animex - AnimeX provider parsing, group/audio selection, direct source.
+"""test_animex - AnimeX provider parsing, audio/server selection, direct source.
 
 Network-free: a fake backend returns canned JSON in the exact shapes observed.
 Run: .venv/bin/python tests/test_animex.py
@@ -42,9 +42,18 @@ class Fake(AnimeXProvider):
         return True   # accept everything in the test
 
 
+class FakeNoDub(Fake):
+    def _json(self, u):
+        if '/rest/api/servers' in u:
+            return {'dubProviders': [],
+                    'subProviders': [{'id': 'nero'}, {'id': 'zuna'}]}
+        return super()._json(u)
+
+
 def test_helpers():
     assert base_slug('https://animex.one/anime/foo-bar-123') == 'foo-bar-123'
     assert base_slug('https://animex.one/watch/foo-bar-123-episode-7') == 'foo-bar-123'
+    assert base_slug('axp:foo-bar-123') == 'foo-bar-123'
     assert pretty_title('foo-bar-123') == 'Foo Bar'
     data = [{}, 'sluggy', 5]
     assert _dv(data, 1) == 'sluggy' and _dv(data, 99) == 99
@@ -56,31 +65,46 @@ def test_catalog_and_audio():
     p = Fake()
     groups = p.fetch_groups()
     labels = [g['label'] for g in groups]
-    assert labels == ['DUB · nero', 'DUB · yuki', 'SUB · nero', 'SUB · zuna'], labels
+    assert labels == ['nero  (dub+sub)', 'yuki  (dub)', 'zuna  (sub)'], labels
     assert p.title.startswith('KONOSUBA'), p.title
     assert p.slug == 'konosuba-gods-blessing-on-this-wonderful-world-s4xov'
     assert p.mal_id == 30831 and p.anilist_id == 21202
 
-    # default -> dub, first provider
-    p.select('DUB')
+    p.set_audio('dub'); p.select('nero  (dub+sub)')
     assert (p._audio, p._pid) == ('dub', 'nero'), (p._audio, p._pid)
-    # explicit label
-    p.select('SUB · zuna')
-    assert (p._audio, p._pid) == ('sub', 'zuna')
-    # a non-animex quality string (remembered from ui.json) falls back safely
-    p.select('720')
-    assert p._audio == 'dub'
+
+    p.set_audio('sub'); p.select('zuna  (sub)')
+    assert (p._audio, p._pid) == ('sub', 'zuna'), (p._audio, p._pid)
+
+    # a remembered quality string (e.g. "720") -> the audio's default server
+    p.set_audio('dub'); p.select('720')
+    assert (p._audio, p._pid) == ('dub', 'nero')
+
+    # a sub-only server chosen while dub -> falls back to a dub server
+    p.set_audio('dub'); p.select('zuna  (sub)')
+    assert p._audio == 'dub' and p._pid in ('nero', 'yuki')
 
     eps = p.episodes()
     assert eps[1] == 'Ep One', eps
     assert eps[2] == 'nii', eps
-    print('PASS animex catalog + audio selection')
+    print('PASS animex catalog + audio/server selection')
+
+
+def test_audio_fallback_no_dub():
+    p = FakeNoDub()
+    p.fetch_groups()
+    assert p._providers['dub'] == [] and p._providers['sub'] == ['nero', 'zuna']
+    p.set_audio('dub'); p.select('nero')
+    assert p._audio == 'sub' and p._pid == 'nero', (p._audio, p._pid)
+    p.set_audio('auto'); p.select(None)
+    assert p._audio == 'sub'
+    print('PASS animex dub-missing fallback to sub')
 
 
 def test_stream_and_rotate():
     p = Fake()
     p.fetch_groups()
-    p.select('DUB · nero')
+    p.set_audio('dub'); p.select('nero  (dub+sub)')
     s = p.stream(1)
     assert isinstance(s, DirectSource) and s.direct
     assert s.url.endswith('master.m3u8')
@@ -89,7 +113,7 @@ def test_stream_and_rotate():
     assert p.rotate() is True and p._pid == 'yuki'
     assert p.rotate() is True and p._pid == 'nero'   # wraps
 
-    p.select('SUB · nero')
+    p.set_audio('sub'); p.select('nero  (dub+sub)')
     s = p.stream(1)
     assert s.subs and s.subs[0][0] == 'English'      # sub -> English track
     print('PASS animex direct source + rotate')
@@ -98,6 +122,7 @@ def test_stream_and_rotate():
 def main():
     test_helpers()
     test_catalog_and_audio()
+    test_audio_fallback_no_dub()
     test_stream_and_rotate()
     print('ANIMEX OK')
 

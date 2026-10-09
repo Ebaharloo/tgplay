@@ -16,8 +16,9 @@ stream is HLS, this provider returns a DirectSource for mpv to play itself
 """
 import json
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
+from .. import log
 from ..http import HttpClient, DEFAULT_UA, _quiet_close
 from ..sources import DirectSource
 from .base import Provider
@@ -86,6 +87,8 @@ class AnimeXProvider(Provider):
         self._eps: Dict[int, str] = {}
         self._audio = self.audio
         self._pid: Optional[str] = provider
+        self._pref: Optional[str] = provider
+        self._chosen = False
         self._resolved = False
         self._loaded = False
 
@@ -163,26 +166,64 @@ class AnimeXProvider(Provider):
                 if pid not in self._providers[audio]:
                     self._providers[audio].append(pid)
                 self._tips.setdefault(pid, str(p.get('tip') or ''))
-        groups: List[dict] = []
-        seen = set()
-        for audio in ('dub', 'sub'):          # dub first = the default
+        order: List[str] = []
+        for audio in ('dub', 'sub'):          # dub-capable servers first
             for pid in self._providers[audio]:
-                lab = f'{audio.upper()} · {pid}'
-                if lab in seen:
-                    continue
-                seen.add(lab)
-                groups.append({'id': lab, 'label': lab, 'audio': audio,
-                               'provider': pid})
+                if pid not in order:
+                    order.append(pid)
+        groups: List[dict] = []
+        for pid in order:
+            tags = [a for a in ('dub', 'sub') if pid in self._providers[a]]
+            groups.append({'id': pid, 'provider': pid,
+                           'label': f"{pid}  ({'+'.join(tags)})"})
         self.groups = groups
         return groups
+
+    def set_audio(self, audio):
+        """Preferred audio: 'dub' (default), 'sub', or 'auto' (dub if present)."""
+        a = (audio or 'dub').lower()
+        self.audio = a if a in ('dub', 'sub', 'auto') else 'dub'
+        self._chosen = False
+        self._loaded = False
+        return self
 
     def select(self, quality=None):
         self._resolve()
         if not self.groups:
             self.fetch_groups()
-        self._audio, self._pid = self._parse_choice(quality)
+        self._pref = self._parse_server(quality)
+        self._resolve_audio()
+        self._chosen = True
         self._loaded = False
         return self
+
+    def _parse_server(self, choice) -> Optional[str]:
+        """Map a menu label ('nero  (dub+sub)' / 'nero' / None) to a server id."""
+        if not choice:
+            return None
+        s = str(choice).strip()
+        for pid in (self._providers.get('dub', []) + self._providers.get('sub', [])):
+            if s == pid or s.startswith(pid + ' ') or s.startswith(pid + '('):
+                return pid
+        m = re.match(r'([A-Za-z0-9_]+)', s)
+        return m.group(1) if m else None
+
+    def _resolve_audio(self):
+        """Pick the final (audio, server); warn + fall back when an audio
+        isn't available (e.g. a title with no dub starts in sub)."""
+        want = self.audio
+        provs = self._providers
+        if want == 'auto':
+            want = 'dub' if provs.get('dub') else 'sub'
+        if not provs.get(want):
+            other = 'sub' if want == 'dub' else 'dub'
+            if provs.get(other):
+                log.cprint(f'animex: no {want} for "{self.title}" '
+                           f'— starting with {other}')
+                want = other
+        order = [p for p in provs.get(want, []) if p]
+        pid = self._pref if self._pref in order else (order[0] if order else None)
+        self._audio, self._pid = want, pid
 
     def rotate(self) -> bool:
         """Advance to the next server of the current audio (used when mpv
@@ -197,23 +238,11 @@ class AnimeXProvider(Provider):
         self._pid = order[(i + 1) % len(order)]
         return True
 
-    def _parse_choice(self, choice) -> Tuple[str, str]:
-        if choice:
-            m = re.match(r'\s*(SUB|DUB)\s*[·:.\-]*\s*([A-Za-z0-9_]+)',
-                         str(choice), re.I)
-            if m:
-                audio, pid = m.group(1).lower(), m.group(2)
-                if pid in self._providers.get(audio, []):
-                    return audio, pid
-        audio = self.audio if self._providers.get(self.audio) else (
-            'dub' if self._providers.get('dub') else 'sub')
-        return audio, (self._providers.get(audio) or [None])[0]
-
     def load(self):
         self._resolve()
         if not self.groups:
             self.fetch_groups()
-        if self._pid is None:
+        if not self._chosen:
             self.select(self.quality)
         self._load_eps()
         self._loaded = True

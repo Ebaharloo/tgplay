@@ -158,7 +158,7 @@ def available() -> bool:
 def controller(title: str, link: Optional[str], groups: List[dict],
                labels: Dict[int, str], resume: Optional[int], opts: dict,
                mpv: List[str], play_fn: Callable, stop_fn=None, status_fn=None,
-               one_shot: bool = False):
+               one_shot: bool = False, audio: bool = False):
     """Open the window and keep it until the user closes it (or, with
     `one_shot`, until the first Play). `play_fn(chosen, opts, mpv)` is called
     in a background thread."""
@@ -196,12 +196,21 @@ def controller(title: str, link: Optional[str], groups: List[dict],
     quality_var = tk.StringVar()
     if glabels:
         row = ttk.Frame(opt); row.pack(fill='x', pady=1)
-        ttk.Label(row, text='Quality', width=12).pack(side='left')
+        ttk.Label(row, text='Server' if audio else 'Quality', width=12).pack(side='left')
         ttk.Combobox(row, textvariable=quality_var, values=glabels,
                      state='readonly', width=40).pack(side='left')
         quality_var.set(next((l for l in glabels
                               if opts.get('f') and str(opts['f']).lower() in l.lower()),
                              glabels[0]))
+    audio_var = None
+    if audio:
+        audio_var = tk.StringVar(value=opts.get('audio')
+                                 if opts.get('audio') in ('dub', 'sub', 'auto')
+                                 else 'dub')
+        row = ttk.Frame(opt); row.pack(fill='x', pady=1)
+        ttk.Label(row, text='Audio', width=12).pack(side='left')
+        ttk.Combobox(row, textvariable=audio_var, values=['dub', 'sub', 'auto'],
+                     state='readonly', width=8).pack(side='left')
     skip_var = tk.StringVar(value=opts.get('skip') if isinstance(
         opts.get('skip'), str) else ('all' if opts.get('skip') else 'off'))
     toggle_var = tk.BooleanVar(value=bool(opts.get('skip_toggle')))
@@ -251,6 +260,8 @@ def controller(title: str, link: Optional[str], groups: List[dict],
         o = dict(opts)
         if glabels:
             o['f'] = quality_var.get()
+        if audio_var is not None:
+            o['audio'] = audio_var.get()
         sm = skip_var.get()
         o['skip'] = False if sm == 'off' else sm
         o['skip_toggle'] = bool(toggle_var.get())
