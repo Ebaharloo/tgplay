@@ -40,8 +40,9 @@ agp (tgplay) - stream animegate.ir mkv links, no downloads.
   --start N       start each episode at N seconds
   any other --flag goes to mpv verbatim
 
-  agp --menu                pick the link, then the episodes page (with MAL/
-                            AniList titles) and the options, in terminal forms
+  agp --menu                open a menu: a desktop window (Tkinter) when a
+                            display is present, else the terminal menu
+  --gui / --curses          force the desktop window / the terminal menu
   agp cache [clean [--days N]]  show / clean the download cache
   agp simkl <CLIENT_ID>     set the Simkl key for episode titles (donghua)
   agp login <CLIENT_ID> | logout | sync [--dry] | new | tracking
@@ -250,9 +251,13 @@ def main(argv: Optional[List[str]] = None):
         return 0
 
     from . import ui
-    interactive = False
-    if not argv:  # bare `agp`: open the menu when we have a terminal
-        if ui.available():
+    from . import gui
+    force_gui = '--gui' in argv
+    force_curses = '--curses' in argv
+    argv = [a for a in argv if a not in ('--gui', '--curses')]
+    interactive = bool(force_gui)
+    if not argv:  # bare `agp`: open a menu when we can
+        if ui.available() or gui.available():
             interactive = True
         else:
             print(HELP)
@@ -260,10 +265,12 @@ def main(argv: Optional[List[str]] = None):
     if any(a in ('--menu', '--tui') for a in argv):
         interactive = True
         argv = [a for a in argv if a not in ('--menu', '--tui')]
+    use_gui = bool(interactive and (force_gui or
+                                    (not force_curses and gui.available())))
     opts, pos, mpv = parse(argv)
     url = next((a for a in pos if 'animegate' in a), pos[0]) if pos else None
     if interactive and url is None:
-        url = ui.choose_url()
+        url = gui.choose_url(ui.recent_list()) if use_gui else ui.choose_url()
         if not url:
             return 0
     if url is None:
@@ -313,16 +320,33 @@ def main(argv: Optional[List[str]] = None):
         labels = titles.labels(mal, {n: f'Episode {n}' for n in eps})
         res_ep = _resume_ep(cfg, provider.title)
         resume_pt = (res_ep, _resume_pos(cfg, provider.title))
-        chosen = ui.pick_start(labels, res_ep)
-        if chosen is None:
-            print('menu: cancelled')
-            return 0
-        # 2) then the options form (quality + skip/cut/...)
-        res = ui.gather(opts, provider.groups, mpv, show_eps=False)
-        if res is None:
-            print('menu: cancelled')
-            return 0
-        opts, mpv = res
+
+        chosen = None
+        if use_gui:
+            try:
+                out = gui.configure(provider.title,
+                                    _link_get(cfg, provider.title),
+                                    provider.groups, labels, res_ep, opts, mpv)
+            except Exception as ex:
+                log.cprint(f'gui: {ex} - using the terminal menu')
+                out = 'fallback'
+            if out == 'fallback':
+                use_gui = False
+            elif out is None:
+                print('menu: cancelled')
+                return 0
+            else:
+                chosen, opts, mpv = out
+        if not use_gui:  # terminal menu
+            chosen = ui.pick_start(labels, res_ep)
+            if chosen is None:
+                print('menu: cancelled')
+                return 0
+            res = ui.gather(opts, provider.groups, mpv, show_eps=False)
+            if res is None:
+                print('menu: cancelled')
+                return 0
+            opts, mpv = res
         setup.save(cfg.ui, opts, mpv)  # remember for next time
         provider.select(opts['f'])
         eps = provider.episodes()

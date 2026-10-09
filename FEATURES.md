@@ -60,7 +60,13 @@ this file = behaviour + to-do.)
 
 ---
 
-## Menu (curses; shared by `agp` and `tgp`)
+## Menu (desktop GUI, curses terminal, or plain)
+
+Preferred on a desktop: a **Tkinter window** (`tp/gui.py`) — episode list with
+names, resume marker, quality, all options, and **Play from here / Only
+selected / All / Cancel**. Falls back to the **curses** terminal form, then
+plain prompts. `--gui` / `--curses` force one (auto = GUI when a display
+exists). Both remember the last setup (`ui.json`) and share the title cache.
 
 1. **Link picker** — recent links + `✎ Enter a new link…` (inline typing).
 2. **Episodes page** — whole playlist with titles, count, `<resume>` marker.

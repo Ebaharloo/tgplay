@@ -28,6 +28,8 @@ tp/skip.py        SkipService: file chapters, then ani-skip
 tp/prefetch.py    Prefetcher: cancellable mirroring into the Cache
 tp/player.py      Player: mpv command + IPC PosWatcher
 tp/playlist.py    Playlist: resume / retry / skip / cut / --next
+tp/setup.py       MenuUI: remembers last setup        tp/ui.py  terminal form
+tp/gui.py         desktop window (Tkinter): playlist + options + Play
 tp/tracking.py    Tracker: AniList progress sync + new-episode notices
 tp/ui.py          MenuUI: curses option form + recent-link picker
 tp/cli.py         agp wiring        tp/cli_telegram.py  tg/tgp wiring
