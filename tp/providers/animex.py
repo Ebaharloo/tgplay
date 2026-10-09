@@ -24,16 +24,22 @@ from .base import Provider
 
 SITE = 'https://animex.one'
 API = 'https://pp.animex.one'
+GRAPHQL = 'https://graphql.animex.one/graphql'
 # The media CDN whitelists this referer for the m3u8/segments.
 MEDIA_REFERER = 'https://megaplay.buzz/'
 
 
 def base_slug(url: str) -> str:
-    """`.../anime/<slug>` or `.../watch/<slug>-episode-N` -> `<slug>`."""
-    m = re.search(r'/(?:anime|watch)/([^/?#]+)', url or '')
-    if not m:
-        raise ValueError(f'not an animex link: {url}')
-    return re.sub(r'-episode-\d+.*$', '', m.group(1))
+    """Accept a watch/anime URL, an `axp:<slug>` id, or a bare internal slug."""
+    s = (url or '').strip()
+    if s.lower().startswith('axp:'):
+        return s[4:]
+    m = re.search(r'/(?:anime|watch)/([^/?#]+)', s)
+    if m:
+        return re.sub(r'-episode-\d+.*$', '', m.group(1))
+    if re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]+', s):
+        return s
+    raise ValueError(f'not an animex link: {url}')
 
 
 def pretty_title(slug: str) -> str:
@@ -95,16 +101,53 @@ class AnimeXProvider(Provider):
     def _resolve(self):
         if self._resolved:
             return
-        d = self._json(f'{SITE}/anime/{base_slug(self.url)}/__data.json')
-        data = d.get('nodes', [None, {}])[1].get('data', [])
-        rec = _find_anime(data) or {}
-        self.slug = _dv(data, rec.get('slug')) or base_slug(self.url)
-        self.anilist_id = _dv(data, rec.get('anilistId'))
-        self.mal_id = _dv(data, rec.get('malId'))
-        t = _dv(data, rec.get('titleEnglish')) or _dv(data, rec.get('titleRomaji'))
-        if t:
-            self.title = str(t)
+        cand = base_slug(self.url)
+        rec, data = None, []
+        try:
+            d = self._json(f'{SITE}/anime/{cand}/__data.json')
+            data = d.get('nodes', [None, {}])[1].get('data', [])
+            rec = _find_anime(data)
+        except Exception:
+            rec = None
+        if rec:
+            self.slug = _dv(data, rec.get('slug')) or cand
+            self.anilist_id = _dv(data, rec.get('anilistId'))
+            self.mal_id = _dv(data, rec.get('malId'))
+            t = _dv(data, rec.get('titleEnglish')) or _dv(data, rec.get('titleRomaji'))
+            if t:
+                self.title = str(t)
+        else:
+            # came from search: the id IS the internal slug
+            self.slug = cand
+            meta = self._anime(cand)
+            if meta:
+                self.anilist_id = meta.get('anilistId')
+                self.mal_id = meta.get('malId')
+                t = meta.get('titleEnglish') or meta.get('titleRomaji')
+                if t:
+                    self.title = str(t)
         self._resolved = True
+
+    def _anime(self, slug: str) -> Optional[dict]:
+        q = ('{ anime(id:%s){ id titleEnglish titleRomaji anilistId malId } }'
+             % json.dumps(slug))
+        try:
+            d = self._graphql(q)
+            return ((d.get('data') or {}).get('anime')) or None
+        except Exception:
+            return None
+
+    def _graphql(self, query: str) -> dict:
+        body = json.dumps({'query': query}).encode()
+        r = self.http.open(self.http.request(
+            GRAPHQL, headers={'Referer': SITE + '/',
+                              'Content-Type': 'application/json',
+                              'Accept': 'application/json'},
+            method='POST', data=body))
+        try:
+            return json.loads(r.read().decode('utf-8', 'replace'))
+        finally:
+            _quiet_close(r)
 
     # --- catalog --------------------------------------------------------
     def fetch_groups(self) -> List[dict]:
@@ -250,4 +293,35 @@ class AnimeXProvider(Provider):
                                          'User-Agent': DEFAULT_UA},
                                 subs=subs)
         raise RuntimeError(f'animex: no playable source for ep{num} ({last})')
+
+
+def search(query: str, http=None, limit: int = 12) -> List[dict]:
+    """AnimeX GraphQL search -> [{'title','url','source'}] (url = `axp:<slug>`)."""
+    q = (query or '').strip()
+    if not q:
+        return []
+    http = http or HttpClient()
+    gql = ('{ searchAnime(query:%s, limit:%d){ items '
+           '{ id titleEnglish titleRomaji anilistId malId } } }'
+           % (json.dumps(q), int(limit)))
+    body = json.dumps({'query': gql}).encode()
+    r = http.open(http.request(
+        GRAPHQL, headers={'Referer': SITE + '/',
+                          'Content-Type': 'application/json',
+                          'Accept': 'application/json'},
+        method='POST', data=body))
+    try:
+        d = json.loads(r.read().decode('utf-8', 'replace'))
+    finally:
+        _quiet_close(r)
+    items = (((d.get('data') or {}).get('searchAnime') or {}).get('items')) or []
+    out: List[dict] = []
+    for it in items:
+        sid = it.get('id')
+        if not sid:
+            continue
+        out.append({'title': it.get('titleEnglish') or it.get('titleRomaji') or sid,
+                    'url': f'axp:{sid}', 'source': 'axp',
+                    'malId': it.get('malId'), 'anilistId': it.get('anilistId')})
+    return out
 

@@ -83,7 +83,13 @@ def main_axp(argv: Optional[List[str]] = None) -> int:
     opts, pos, mpv = parse(argv)
     url = next((a for a in pos if 'animex' in a), pos[0]) if pos else None
     if interactive and url is None:
-        url = gui.choose_url(ui.recent_list()) if use_gui else ui.choose_url()
+        if use_gui:
+            from .search import search_all
+            shp = HttpClient()
+            sfn = lambda q: search_all(q, http=shp, sources=('axp',))
+            url = gui.choose_url(ui.recent_list(), sfn)
+        else:
+            url = ui.choose_url()
         if not url:
             return 0
     if url is None:

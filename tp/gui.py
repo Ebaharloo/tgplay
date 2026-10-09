@@ -425,38 +425,80 @@ def _center(root, w=780, h=660):
         pass
 
 
-def choose_url(recent: List[str]) -> Optional[str]:
-    """Small window to pick a recent link or paste a new one."""
+def choose_url(recent: List[str], search_fn=None) -> Optional[str]:
+    """Pick a recent link, search (when `search_fn` is given), or paste one."""
     import tkinter as tk
     from tkinter import ttk
     root = tk.Tk()
     root.title('tgplay - which anime?')
     res: dict = {}
-    items = list(dict.fromkeys(recent))[:15] + ['✎  Enter a new link…']
+    recents = list(dict.fromkeys(recent))[:15]
     ttk.Label(root, text='Which anime do you want to watch?',
               font=('TkDefaultFont', 12, 'bold')).pack(anchor='w', padx=10, pady=(10, 4))
-    lb = tk.Listbox(root, width=90, height=min(16, len(items)))
-    for it in items:
-        lb.insert('end', it)
+    box = ttk.Entry(root, width=90)
+    box.pack(padx=10, pady=(0, 4), fill='x')
+    status = ttk.Label(root, text='')
+    status.pack(anchor='w', padx=10)
+    lb = tk.Listbox(root, width=90, height=min(16, max(6, len(recents))))
     lb.pack(padx=10, pady=4, fill='both', expand=True)
-    lb.selection_set(0)
-    entry = ttk.Entry(root, width=90)
-    entry.pack(padx=10, pady=(0, 4), fill='x')
+    urls: list = []
 
-    def ok():
-        val = entry.get().strip()
+    def fill(entries):
+        lb.delete(0, 'end')
+        urls.clear()
+        for e in entries:
+            if isinstance(e, dict):
+                lb.insert('end', f"{e.get('title', '')}  ·  {e.get('source', '')}")
+                urls.append(e.get('url'))
+            else:
+                lb.insert('end', str(e))
+                urls.append(str(e))
+        if urls:
+            lb.selection_clear(0, 'end')
+            lb.selection_set(0)
+            lb.activate(0)
+
+    fill(recents)
+    status.configure(text=f'{len(recents)} recent' if recents else
+                     ('type to search' if search_fn else ''))
+
+    def do_search(*_):
+        t = box.get().strip()
+        if not t:
+            fill(recents)
+            return
+        if '://' in t or t.lower().startswith('axp:'):
+            fill([t])
+            status.configure(text='press OK to use this link')
+            return
+        if not search_fn:
+            return
+        status.configure(text='searching…')
+        root.update_idletasks()
+        try:
+            got = search_fn(t) or []
+        except Exception:
+            got = []
+        fill(got)
+        status.configure(text=f'{len(got)} result(s)' if got else 'no results')
+
+    def ok(*_):
         sel = lb.curselection()
-        if val:
-            res['url'] = val
-        elif sel:
-            it = items[sel[0]]
-            res['url'] = None if it.startswith('✎') else it
+        if sel and urls[sel[0]]:
+            res['url'] = urls[sel[0]]
+        else:
+            t = box.get().strip()
+            if t:
+                res['url'] = t
         root.destroy()
 
-    lb.bind('<Double-1>', lambda e: ok())
-    entry.bind('<Return>', lambda e: ok())
-    bar = ttk.Frame(root); bar.pack(fill='x', padx=10, pady=(0, 10))
-    ttk.Button(bar, text='OK', command=ok).pack(side='left')
+    box.bind('<Return>', do_search)
+    lb.bind('<Double-1>', ok)
+    bar = ttk.Frame(root)
+    bar.pack(fill='x', padx=10, pady=(0, 10))
+    ttk.Button(bar, text='Search', command=do_search).pack(side='left')
+    ttk.Button(bar, text='OK', command=ok).pack(side='left', padx=6)
     ttk.Button(bar, text='Cancel', command=root.destroy).pack(side='right')
+    box.focus_set()
     root.mainloop()
     return res.get('url')

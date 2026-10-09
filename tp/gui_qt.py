@@ -341,16 +341,17 @@ def controller(title: str, link: Optional[str], groups: List[dict],
     app.exec()
 
 
-def choose_url(recent: List[str]) -> Optional[str]:
-    """Small window to pick a recent link or paste a new one."""
+def choose_url(recent: List[str], search_fn=None) -> Optional[str]:
+    """Pick a recent link, search (when `search_fn(query)` is given), or paste
+    a link. `search_fn` returns ``[{'title','url','source'}]``."""
     from PySide6 import QtWidgets as W, QtCore as C, QtGui as G
     app = _app()
-    items = list(dict.fromkeys(recent))[:15]
     res: dict = {}
+    recents = list(dict.fromkeys(recent))[:15]
 
     win = W.QDialog()
     win.setWindowTitle('tgplay - which anime?')
-    win.resize(720, 460)
+    win.resize(760, 540)
     _wi = _app_icon(G)
     if _wi is not None:
         win.setWindowIcon(_wi)
@@ -358,26 +359,103 @@ def choose_url(recent: List[str]) -> Optional[str]:
     lbl = W.QLabel('Which anime do you want to watch?')
     f = lbl.font(); f.setPointSize(f.pointSize() + 1); lbl.setFont(f)
     v.addWidget(lbl)
+
+    box = W.QLineEdit()
+    box.setPlaceholderText('Search anime…' if search_fn
+                           else 'Paste an anime link…')
+    box.setClearButtonEnabled(True)
+    v.addWidget(box)
+
+    status = W.QLabel('')
+    v.addWidget(status)
+
     lst = W.QListWidget()
-    for it in items:
-        lst.addItem(it)
-    lst.setCurrentRow(0)
+    lst.setAlternatingRowColors(True)
     v.addWidget(lst, 1)
-    entry = W.QLineEdit()
-    entry.setPlaceholderText('…or paste a new animegate link here')
-    v.addWidget(entry)
+
+    def fill(entries):
+        lst.clear()
+        for e in entries:
+            if isinstance(e, dict):
+                it = W.QListWidgetItem(
+                    f"{e.get('title', '')}     ·     {e.get('source', '')}")
+                it.setData(C.Qt.UserRole, e.get('url'))
+            else:
+                it = W.QListWidgetItem(str(e))
+                it.setData(C.Qt.UserRole, str(e))
+            lst.addItem(it)
+        if lst.count():
+            lst.setCurrentRow(0)
+
+    def show_recents():
+        fill(recents)
+        status.setText(f'{len(recents)} recent' if recents else 'type to search')
+
+    show_recents()
+
+    results: 'queue.Queue' = queue.Queue()
+
+    def run_search(text):
+        def work():
+            try:
+                results.put(search_fn(text) or [])
+            except Exception:
+                results.put([])
+        threading.Thread(target=work, daemon=True).start()
+
+    debounce = C.QTimer()
+    debounce.setSingleShot(True)
+    debounce.setInterval(350)
+    poll = C.QTimer()
+    poll.setInterval(150)
+
+    def on_text():
+        t = box.text().strip()
+        if not t:
+            show_recents()
+            return
+        if '://' in t or t.lower().startswith('axp:'):
+            fill([t])
+            status.setText('press OK to use this link')
+            return
+        if search_fn:
+            status.setText('searching…')
+            debounce.start()
+
+    def drain():
+        try:
+            items = results.get_nowait()
+        except queue.Empty:
+            return
+        fill(items)
+        status.setText(f'{len(items)} result(s)' if items else 'no results')
+
+    box.textChanged.connect(on_text)
+    debounce.timeout.connect(lambda: run_search(box.text().strip()))
+    poll.timeout.connect(drain)
+    poll.start()
 
     def ok():
-        val = entry.text().strip()
-        if val:
-            res['url'] = val
+        it = lst.currentItem()
+        if it is not None and it.data(C.Qt.UserRole):
+            res['url'] = str(it.data(C.Qt.UserRole))
         else:
-            it = lst.currentItem()
-            res['url'] = it.text() if it is not None else None
+            t = box.text().strip()
+            if t:
+                res['url'] = t
         win.accept()
 
+    def cleanup(*_):
+        for t in (debounce, poll):
+            try:
+                t.stop()
+            except Exception:
+                pass
+
     lst.itemDoubleClicked.connect(lambda _i: ok())
-    entry.returnPressed.connect(ok)
+    box.returnPressed.connect(ok)
+    win.destroyed.connect(cleanup)
+
     bar = W.QHBoxLayout()
     b_ok = W.QPushButton('OK'); b_ok.clicked.connect(ok)
     b_cancel = W.QPushButton('Cancel'); b_cancel.clicked.connect(win.reject)
@@ -386,6 +464,6 @@ def choose_url(recent: List[str]) -> Optional[str]:
     bar.addWidget(b_cancel)
     v.addLayout(bar)
 
-    entry.setFocus()
+    box.setFocus()
     win.exec()
     return res.get('url')

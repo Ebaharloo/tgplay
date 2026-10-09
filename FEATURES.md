@@ -82,7 +82,9 @@ form, then plain prompts. `--gui` / `--curses` force one (auto = GUI when a
 display exists). All menus remember the last setup (`ui.json`) and share the
 title cache.
 
-1. **Link picker** — recent links + `✎ Enter a new link…` (inline typing).
+1. **Link picker / search** — type to **search** the source live (debounced,
+   in the background) and pick a result; or use a recent link / paste a URL.
+   Results show their source (`agp` = animegate, `axp` = animex).
 2. **Episodes page** — whole playlist with titles, count, `<resume>` marker.
    Keys: `Enter`=play from here, `o`=only this, `a`=all, `q`=cancel.
 3. **Options form** — Quality, Episodes, Skip mode, Skip-toggle, `--next`,
@@ -95,6 +97,18 @@ title cache.
   icon grouped correctly on Wayland. Both windows show the icon.
 - Stale typeahead flushed at each screen (no accidental auto-advance).
 - Non-TTY falls back to plain prompts; scripts never prompt.
+
+---
+
+## Search (in-app)
+
+- The desktop link picker doubles as a **search box**: `tp/search.search_all()`
+  fans out to each provider's `search()` and returns `[{'title','url','source'}]`
+  (`source` = `agp`/`axp`).
+- **animegate**: `GET /global-search?s=<q>` (grouped results, title + url).
+- **animex**: GraphQL `searchAnime(query:)` → the internal slug, handed back as
+  an `axp:<slug>` id the provider resolves directly (no page scrape).
+- Runs debounced in a background thread, so typing never blocks the window.
 
 ---
 
@@ -172,7 +186,7 @@ tp/config  tp/http  tp/sources  tp/cache  tp/proxy
 tp/providers/{base,animegate,telegram,animex}
 tp/chapters  tp/skip  tp/metadata  tp/simkl  tp/titles
 tp/prefetch  tp/player  tp/playlist  tp/setup  tp/ui  tp/tracking
-tp/episodes  tp/log  tp/cli  tp/cli_telegram  tp/cli_animex  tp/gui_qt  tp/gui  tp/icon
+tp/episodes  tp/log  tp/cli  tp/cli_telegram  tp/cli_animex  tp/gui_qt  tp/gui  tp/icon  tp/search
 ```
 Thin entry points: `agp`, `tg`, `tgp` (symlinked into `~/.local/bin`; scripts use
 `realpath(__file__)` so symlinks work). Tests: `tests/test_*.py`.

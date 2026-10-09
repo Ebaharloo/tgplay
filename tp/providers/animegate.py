@@ -182,3 +182,33 @@ class AnimeGateProvider(Provider):
             raise KeyError(f'no link for episode {num}')
         return HttpSource(link, hdrs(self._cs, {'Referer': BASE + '/'}),
                           self.http)
+
+
+def search(query: str, http=None, cookies=None, limit: int = 12) -> List[dict]:
+    """AnimeGate search -> [{'title','url','source'}]. Works logged-out too."""
+    q = (query or '').strip()
+    if not q:
+        return []
+    http = http or HttpClient()
+    try:
+        cs = cookies if cookies is not None else firefox_cookies()
+    except Exception:
+        cs = {}
+    extra = {'Accept': 'application/json',
+             'X-Requested-With': 'XMLHttpRequest'}
+    u = f'{BASE}/global-search?s={urllib.parse.quote(q)}'
+    r = http.open(http.request(u, headers=hdrs(cs, extra)))
+    try:
+        d = json.loads(r.read().decode('utf-8', 'replace'))
+    finally:
+        _quiet_close(r)
+    out: List[dict] = []
+    for grp in d.get('types') or []:
+        for it in (grp.get('items') or []):
+            url, title = it.get('url'), it.get('title')
+            if url and title:
+                out.append({'title': str(title), 'url': str(url),
+                            'source': 'agp'})
+            if len(out) >= limit:
+                return out
+    return out
