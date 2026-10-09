@@ -461,9 +461,12 @@ def choose_url(recent: List[str], search_fn=None) -> Optional[str]:
             res['url'] = str(it.data(C.Qt.UserRole))
         else:
             t = box.text().strip()
-            if t:
+            if '://' in t or t.lower().startswith('axp:'):
                 res['url'] = t
-        win.accept()
+        if 'url' in res:
+            win.accept()
+        else:                        # no result yet -> don't close
+            status.setText('no result yet — press Cancel to close')
 
     def cleanup(*_):
         for t in (debounce, poll):
@@ -597,7 +600,11 @@ def launcher(sources=None):
             r = route(box.text().strip())
             if r:
                 res['src'], res['target'] = r
-        win.accept()
+        if 'target' in res:
+            win.accept()
+        else:                        # nothing to open yet -> keep the window
+            status.setText('no result yet — type a title or paste a link '
+                           '(Cancel to close)')
 
     def cleanup(*_):
         for t in (debounce, poll):

@@ -62,6 +62,7 @@ def test_controller():
 def main():
     test_controller()
     test_launcher_route_link()
+    test_launcher_enter_without_result_keeps_open()
     print('GUI-QT OK')
 
 
@@ -84,6 +85,41 @@ def test_launcher_route_link():
     res = gui_qt.launcher()
     assert res == ('axp', 'https://animex.one/anime/foo-1'), res
     print('PASS gui_qt launcher routes a pasted link')
+
+
+def test_launcher_enter_without_result_keeps_open():
+    if not gui_qt.available():
+        print('SKIP gui_qt launcher (no display / PySide6)')
+        return
+    from PySide6 import QtWidgets as W, QtCore as C
+    import tp.search as searchmod
+    old = searchmod.search_all
+    searchmod.search_all = lambda *a, **k: []     # no results, no network
+    app = W.QApplication.instance() or W.QApplication([])
+    st = {'win': None, 'stayed': False}
+
+    def drive():
+        for w in app.topLevelWidgets():
+            if isinstance(w, W.QDialog) and w.isVisible():
+                st['win'] = w
+                box = w.findChild(W.QLineEdit)
+                box.setText('zzz-no-such-title')
+                C.QTimer.singleShot(1200, lambda: box.returnPressed.emit())
+
+                def check():
+                    st['stayed'] = w.isVisible()
+                    w.reject()
+                C.QTimer.singleShot(1500, check)
+                return
+        C.QTimer.singleShot(200, drive)
+    try:
+        C.QTimer.singleShot(200, drive)
+        res = gui_qt.launcher()
+    finally:
+        searchmod.search_all = old
+    assert res is None, res
+    assert st['stayed'], 'window must stay open when Enter has no result'
+    print('PASS gui_qt launcher: empty Enter keeps the window open')
 
 
 if __name__ == '__main__':

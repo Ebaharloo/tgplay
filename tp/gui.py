@@ -499,9 +499,12 @@ def choose_url(recent: List[str], search_fn=None) -> Optional[str]:
             res['url'] = urls[sel[0]]
         else:
             t = box.get().strip()
-            if t:
+            if '://' in t or t.lower().startswith('axp:'):
                 res['url'] = t
-        root.destroy()
+        if 'url' in res:
+            root.destroy()
+        else:
+            status.configure(text='no result yet — press Cancel to close')
 
     box.bind('<Return>', do_search)
     lb.bind('<Double-1>', ok)
@@ -591,7 +594,11 @@ def launcher(sources=None):
             r = route(box.get().strip())
             if r:
                 res['src'], res['target'] = r
-        root.destroy()
+        if 'target' in res:
+            root.destroy()
+        else:
+            status.configure(text='no result yet — type a title or paste a '
+                                  'link (Cancel to close)')
 
     box.bind('<Return>', do_it)
     lb.bind('<Double-1>', ok)
