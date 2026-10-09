@@ -152,8 +152,11 @@ def main_axp(argv: Optional[List[str]] = None) -> int:
     skip = SkipService(metadata=meta)
     prefetch = Prefetcher(cache)
     player = Player(referer='https://animex.one/')
+    from .tracking import make_tracker
+    play_tracker = make_tracker(cfg, http,
+                                sync=(opts.get('sync', 'auto') != 'off'))
     playlist = Playlist(provider, proxy, cache, player, cfg,
-                        skip=skip, prefetcher=prefetch)
+                        skip=skip, prefetcher=prefetch, tracker=play_tracker)
 
     if use_gui and interactive:
         def _play(c, o, m):

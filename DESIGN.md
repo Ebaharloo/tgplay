@@ -150,7 +150,7 @@ window (`tp/gui_all`) uses `tp/session.open_session()` instead.
 | Feed of new episodes | watching entries with `next_to_watch` | `tp/library.py` (`up_next`) |
 | Feed / calendar + history rails | `next_to_watch_info.date` → **Feed · calendar** (right sidebar, top); `last_watched_at` → **History** (bottom) | `tp/library.py` (`upcoming`/`recent`), `tp/gui_all.py` |
 | Play straight from the list | `find_source()` resolves the title on our sources → `session.open_session` → player at the next episode | `tp/library.py`, `tp/gui_all.py` |
-| Sync progress back | on episode finish, `POST /sync/history` via a Playlist-compatible `SimklTracker` | `tp/simkl_account.py`, `tp/session.py` |
+| Sync progress back | on episode finish, `POST /sync/history` via a Playlist-compatible tracker; Simkl **and** AniList; toggle off with the Options checkbox / `--no-sync` | `tp/tracking.make_tracker`, `tp/simkl_account.py`, `tp/session.py`, `tp/cli*.py` |
 | (legacy) AniList tracking | Auth-Pin login + save/sync + notices | `tp/tracking.py` |
 
 ### Safety / correctness rules (invariants)

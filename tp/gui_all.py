@@ -110,6 +110,9 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
     full = W.QCheckBox('fullscreen')
     nxt = W.QCheckBox('Pre-download next episode')
     nowait = W.QCheckBox('start it at cut point')
+    sync_cb = W.QCheckBox('Sync progress to Simkl')
+    sync_cb.setChecked(True)
+    sync_cb.setToolTip('Off = never push watch progress to Simkl for this run')
     cut = W.QLineEdit(); cut.setFixedWidth(70)
     extra = W.QLineEdit()
     r = 0
@@ -118,6 +121,7 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
     form.addWidget(W.QLabel('Skip'), r, 0); form.addWidget(skip, r, 1)
     form.addWidget(toggle, r, 2); form.addWidget(full, r, 3); r += 1
     form.addWidget(nxt, r, 0, 1, 2); form.addWidget(nowait, r, 2, 1, 2); r += 1
+    form.addWidget(sync_cb, r, 0, 1, 4); r += 1
     form.addWidget(W.QLabel('Cut last N s'), r, 0); form.addWidget(cut, r, 1)
     form.addWidget(W.QLabel('Extra mpv flags'), r, 2); form.addWidget(extra, r, 3)
     root.addWidget(obox)
@@ -205,6 +209,7 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
         o['skip_toggle'] = bool(toggle.isChecked())
         o['next'] = 0.60 if nxt.isChecked() else False
         o['nowait'] = bool(nowait.isChecked())
+        o['sync'] = 'auto' if sync_cb.isChecked() else 'off'
         c = cut.text().strip()
         o['cut'] = int(c) if c.isdigit() else None
         m = extra.text().split()
@@ -287,6 +292,7 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
         toggle.setChecked(bool(o.get('skip_toggle')))
         nxt.setChecked(bool(o.get('next')))
         nowait.setChecked(bool(o.get('nowait')))
+        sync_cb.setChecked(o.get('sync', 'auto') != 'off')
         cut.setText(str(o.get('cut') or ''))
         extra.setText(' '.join(x for x in s.mpv if x != '--fullscreen'))
         full.setChecked('--fullscreen' in s.mpv)

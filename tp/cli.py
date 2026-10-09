@@ -38,6 +38,7 @@ agp (tgplay) - stream animegate.ir mkv links, no downloads.
   --nowait        start that download at the cut point (needs --cut)
   --cut N         stop N seconds before each episode's end
   --start N       start each episode at N seconds
+  --no-sync       don't push watch progress to Simkl/AniList
   any other --flag goes to mpv verbatim
 
   agp --menu                open a menu: a native desktop window (Qt/PySide6
@@ -169,7 +170,8 @@ def cache_command(args: List[str]) -> int:
 
 def parse(argv: List[str]) -> Tuple[dict, List[str], List[str]]:
     opts = {'a': False, 'skip': False, 'skip_toggle': False, 'e': None,
-            'f': None, 'cut': None, 'next': False, 'nowait': False}
+            'f': None, 'cut': None, 'next': False, 'nowait': False,
+            'sync': 'auto'}
     pos: List[str] = []
     mpv: List[str] = []
     env = os.environ.get('TG_PLAYER_FLAGS')
@@ -198,6 +200,8 @@ def parse(argv: List[str]) -> Tuple[dict, List[str], List[str]]:
             if i + 1 < len(argv):
                 opts['f'] = argv[i + 1]
                 i += 1
+        elif a == '--no-sync':
+            opts['sync'] = 'off'
         elif a == '--cut':
             if i + 1 < len(argv):
                 opts['cut'] = int(argv[i + 1])
@@ -366,17 +370,19 @@ def main(argv: Optional[List[str]] = None):
             eps = provider.episodes()
             planned = [Episode(k, eps[k]) for k in chosen if k in eps]
 
-    from .tracking import Tracker
+    from .tracking import Tracker, make_tracker
     tracker = Tracker(cfg, http)
     if tracker.enabled():
         threading.Thread(target=lambda: _notify(tracker), daemon=True).start()
+    play_tracker = make_tracker(cfg, http,
+                                sync=(opts.get('sync', 'auto') != 'off'))
     proxy = RangeProxy(port=cfg.proxy_port).start()
     cache = Cache(cfg.cache_dir, cfg.cache_budget)
     skip = SkipService(metadata=meta)
     prefetch = Prefetcher(cache)
     player = Player()
     playlist = Playlist(provider, proxy, cache, player, cfg,
-                        skip=skip, prefetcher=prefetch, tracker=tracker)
+                        skip=skip, prefetcher=prefetch, tracker=play_tracker)
 
     if use_gui and interactive:
         # persistent window: Play runs in a background thread, so the window

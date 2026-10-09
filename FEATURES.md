@@ -220,8 +220,11 @@ title cache.
   calendar** on top (your shows' next air dates, soonest first, from
   `next_to_watch_info.date`) and **History** below (recently watched, from
   `last_watched_at`). Double-click any row to play it; `↻ refresh` reloads.
-- **Sync back** — finishing an episode pushes progress to Simkl
-  (`POST /sync/history`) through a Playlist-compatible `SimklTracker`.
+- **Sync back** — finishing an episode pushes progress to **Simkl** (the hub)
+  *and* AniList, through a Playlist-compatible composite tracker
+  (`tp/tracking.make_tracker`). Turn it off per run with the **"Sync progress
+  to Simkl"** checkbox in Options, or `--no-sync` on the CLI; the choice is
+  remembered (`ui.json`).
 - CLI: `tgplay simkl login | status | library | logout`.
 
 ---

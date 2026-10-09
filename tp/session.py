@@ -67,8 +67,9 @@ class Session:
         if self._proxy is None:
             self._proxy = RangeProxy(port=self.cfg.proxy_port).start()
         try:
-            from .simkl_account import SimklTracker
-            tracker = SimklTracker(self.cfg, self.http)
+            from .tracking import make_tracker
+            tracker = make_tracker(self.cfg, self.http,
+                                   sync=(o.get('sync', 'auto') != 'off'))
         except Exception:
             tracker = None
         playlist = Playlist(self.provider, self._proxy, self._cache,

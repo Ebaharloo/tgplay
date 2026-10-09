@@ -297,3 +297,48 @@ class Tracker:
                 print('track: nothing new')
             return rows
         return self.status()
+
+
+class MultiTracker:
+    """Fan progress out to every enabled tracker (AniList + Simkl hub)."""
+
+    def __init__(self, trackers):
+        self.trackers = [t for t in (trackers or []) if t is not None]
+
+    def enabled(self) -> bool:
+        for t in self.trackers:
+            try:
+                if t.enabled():
+                    return True
+            except Exception:
+                pass
+        return False
+
+    def mark_watched(self, title, num, ask=False):
+        out = []
+        for t in self.trackers:
+            try:
+                if t.enabled():
+                    out.append(t.mark_watched(title, num))
+            except Exception:
+                pass
+        return out
+
+
+def make_tracker(cfg, http=None, sync: bool = True):
+    """Build the progress trackers: Simkl (the hub) + AniList. Returns None
+    when syncing is turned off."""
+    if not sync:
+        return None
+    trackers = []
+    try:
+        from .simkl_account import SimklTracker
+        trackers.append(SimklTracker(cfg, http))
+    except Exception:
+        pass
+    try:
+        trackers.append(Tracker(cfg, http))
+    except Exception:
+        pass
+    mt = MultiTracker(trackers)
+    return mt if mt.trackers else None
