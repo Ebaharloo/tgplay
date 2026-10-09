@@ -310,7 +310,7 @@ def main(argv: Optional[List[str]] = None):
                            '(they will show next time)')
             if mal:
                 meta._refreshed.add(mal)  # no per-episode search this run
-        labels = titles.labels(mal, eps)
+        labels = titles.labels(mal, {n: f'Episode {n}' for n in eps})
         res_ep = _resume_ep(cfg, provider.title)
         resume_pt = (res_ep, _resume_pos(cfg, provider.title))
         chosen = ui.pick_start(labels, res_ep)

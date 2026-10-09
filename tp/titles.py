@@ -5,9 +5,17 @@ built (see cli). This class only READS the persistent cache, so building the
 menu never waits on a metadata API and nothing is searched during playback.
 """
 import json
+import re
 from typing import Dict, Optional
 
 from .translate import has_cjk
+
+_GENERIC = re.compile(
+    r'^\s*(episode\s*\d+|ep\s*\d+|第?\s*\d+\s*[集话話話])[\s.:。-]*$', re.I)
+
+
+def _generic(t: str) -> bool:
+    return bool(_GENERIC.match(t or ''))
 
 
 class TitleService:
@@ -31,12 +39,14 @@ class TitleService:
         c = self._cache()
         for key in (f'simkl:{series}', str(series)):
             t = c.get(key, {}).get(str(num))
-            if t and t != '?':
-                return self._english(t)
+            if t and t != '?' and not _generic(t):
+                en = self._trans().get(t, t) if has_cjk(t) else t
+                return en if not _generic(en) else None
         return None
 
     def labels(self, series, eps: Dict[int, str]) -> Dict[int, str]:
-        """Cached titles now (instant); translated to English when available."""
+        """Cached titles now (instant); generic 'Episode N' is ignored so the
+        caller's fallback shows instead; Chinese is translated when cached."""
         out = dict(eps)
         if series is None:
             return out
@@ -45,9 +55,9 @@ class TitleService:
         for n in eps:
             t = (c.get(f'simkl:{series}', {}).get(str(n))
                  or c.get(str(series), {}).get(str(n)))
-            if t and t != '?':
-                out[n] = tr.get(t, t) if has_cjk(t) else t
+            if not t or t == '?' or _generic(t):
+                continue
+            en = tr.get(t, t) if has_cjk(t) else t
+            if en and not _generic(en):
+                out[n] = en
         return out
-
-    def _english(self, t: str) -> str:
-        return self._trans().get(t, t) if has_cjk(t) else t

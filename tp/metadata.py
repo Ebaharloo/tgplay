@@ -291,7 +291,8 @@ class Metadata:
         shows = cache.get(str(mal_id)) or {}
         before = len(shows)
         for n, t in eps.items():
-            shows.setdefault(str(n), t)
+            if t and not _GENERIC_EP.match(t):
+                shows.setdefault(str(n), t)
         if len(shows) != before:
             shows.setdefault('_done', '1')
             cache[str(mal_id)] = shows
