@@ -210,9 +210,12 @@ title cache.
 - **Read** — `GET /sync/all-items/anime/{watching,plantowatch}` gives your list
   with progress + `next_to_watch`.
 - **Feed / up-next** — watching entries that still have a next episode.
-- **Play from the list** — the app's **📚 Library** panel lists "up next";
-  double-click resolves the title on our sources (axp dub / agp sub, via
-  `tp/library.find_source`) and jumps into the player at the next episode.
+- **Play from the list** — the sidebar **Feed · calendar** lists upcoming /
+  up-next episodes; **double-click** any row (feed, history, or a search
+  result) resolves the title on our sources (axp dub / agp sub, via
+  `tp/library.find_source`) and plays from the next episode.
+- **🕘 History button** (top) shows **your** recent links and searches
+  (`history.json`) — the app's own history, not Simkl's.
 - **Right sidebar** — the unified window has a dedicated sidebar: **Feed ·
   calendar** on top (your shows' next air dates, soonest first, from
   `next_to_watch_info.date`) and **History** below (recently watched, from

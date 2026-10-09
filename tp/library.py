@@ -35,11 +35,16 @@ def _all(cfg, http=None) -> List[dict]:
         return []
 
 
-def upcoming(cfg, http: Optional[HttpClient] = None, limit: int = 25) -> List[dict]:
-    """Your shows with an upcoming episode, soonest first (the feed/calendar)."""
-    rows = [e for e in _all(cfg, http) if e.get('air_date')]
-    rows.sort(key=lambda e: str(e['air_date']))
-    return rows[:limit]
+def feed(cfg, http: Optional[HttpClient] = None, limit: int = 25) -> List[dict]:
+    """The sidebar feed: dated upcoming episodes (soonest first), then the
+    shows with a next episode but no air date (the old 'library/up next')."""
+    rows = _all(cfg, http)
+    dated = [e for e in rows if e.get('air_date')]
+    dated.sort(key=lambda e: str(e['air_date']))
+    undated = [e for e in rows
+               if not e.get('air_date') and e.get('next_ep')
+               and e.get('status') == 'watching']
+    return (dated + undated)[:limit]
 
 
 def recent(cfg, http: Optional[HttpClient] = None, limit: int = 15) -> List[dict]:

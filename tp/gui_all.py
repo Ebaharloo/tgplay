@@ -76,23 +76,15 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
     box.setClearButtonEnabled(True)
     box.setPlaceholderText('Search animegate + animex…  or paste a link / @channel')
     srow.addWidget(box, 1)
-    lib_btn = W.QPushButton('📚 Library')
-    lib_btn.setToolTip('Your Simkl watch list (up next) — needs: tgplay simkl login')
-    srow.addWidget(lib_btn)
+    hist_btn = W.QPushButton('🕘 History')
+    hist_btn.setToolTip('Your recent links and searches in the app')
+    srow.addWidget(hist_btn)
     root.addLayout(srow)
 
     results = W.QListWidget()
-    results.setMaximumHeight(140)
+    results.setMaximumHeight(170)
     results.setVisible(False)
     root.addWidget(results)
-
-    lib = W.QListWidget()
-    lib.setMaximumHeight(190)
-    lib.setVisible(False)
-    root.addWidget(lib)
-    lib_hint = W.QLabel('')
-    lib_hint.setVisible(False)
-    root.addWidget(lib_hint)
 
     # --- header ---------------------------------------------------------
     head = W.QLabel('Search or paste a link to start')
@@ -417,35 +409,7 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
     results.itemActivated.connect(pick_result)
     box.returnPressed.connect(accept_typed)
 
-    # --- library (Simkl watch list) -------------------------------------
-    def _show_lib(rows):
-        lib.clear()
-        if not rows:
-            lib_hint.setText('library empty, or not connected — '
-                             'run:  tgplay simkl login')
-            return
-        for e in rows:
-            nx = f"ep {e['next_ep']}" if e.get('next_ep') else 'caught up'
-            it = W.QListWidgetItem(
-                f"{e['title']}     ·     {e['watched']}/{e['total']}  ·  next {nx}")
-            it.setData(C.Qt.UserRole, e)
-            lib.addItem(it)
-        lib_hint.setText(f'{len(rows)} up next — double-click to play')
-
-    def load_library():
-        lib.setVisible(True)
-        lib_hint.setVisible(True)
-        lib_hint.setText('loading library…')
-
-        def work():
-            try:
-                from .library import up_next
-                rows = up_next(cfg, http) if cfg is not None else []
-            except Exception:
-                rows = []
-            libq.put(('rows', rows))
-        threading.Thread(target=work, daemon=True).start()
-
+    # --- library / sidebar ----------------------------------------------
     def _goto_ep(ep):
         if not ep:
             return
@@ -461,7 +425,7 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
         e = item.data(C.Qt.UserRole)
         if not e:
             return
-        lib_hint.setText(f"finding “{e['title']}” on our sources…")
+        state['msg'] = f"finding “{e['title']}” on our sources…"
 
         def work():
             try:
@@ -495,8 +459,8 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
                 libq.put(('feed', None, None))
                 return
             try:
-                from .library import upcoming, recent
-                up = upcoming(cfg, http)
+                from .library import feed, recent
+                up = feed(cfg, http)
                 rc = recent(cfg, http)
             except Exception:
                 up, rc = [], []
@@ -509,9 +473,7 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
                 msg = libq.get_nowait()
             except queue.Empty:
                 return
-            if msg[0] == 'rows':
-                _show_lib(msg[1])
-            elif msg[0] == 'feed':
+            if msg[0] == 'feed':
                 _, up, rc = msg
                 feed.clear()
                 hist.clear()
@@ -522,8 +484,9 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
                 if not up:
                     feed.addItem('no upcoming episodes')
                 for e in up:
+                    when = _fmt_date(e['air_date']) if e.get('air_date') else 'up next'
                     it = W.QListWidgetItem(
-                        f"{_fmt_date(e.get('air_date'))}   ep {e.get('next_ep')}   {e['title']}")
+                        f"{when}   ep {e.get('next_ep')}   {e['title']}")
                     it.setData(C.Qt.UserRole, e)
                     feed.addItem(it)
                 if not rc:
@@ -537,17 +500,13 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
             elif msg[0] == 'play':
                 _, entry, res = msg
                 if res:
-                    lib.setVisible(False)
-                    lib_hint.setVisible(False)
                     load_target(res[0], res[1])
                     C.QTimer.singleShot(
                         80, lambda ep=entry.get('next_ep'): _goto_ep(ep))
                 else:
-                    lib_hint.setText(
-                        f"not found on our sources: {entry['title']}")
+                    state['msg'] = f"not found on our sources: {entry['title']}"
 
-    lib_btn.clicked.connect(load_library)
-    lib.itemDoubleClicked.connect(play_library)
+    hist_btn.clicked.connect(show_history)
     side_btn.clicked.connect(load_side)
     feed.itemDoubleClicked.connect(play_library)
     hist.itemDoubleClicked.connect(play_library)
