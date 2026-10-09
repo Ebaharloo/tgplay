@@ -8,6 +8,7 @@ import collections
 import os
 import re
 import sys
+import time
 
 _STYLES = [
     (r'(FAILED|no links|no episodes|^ERROR)', '❌ ', '1;31'),
@@ -28,27 +29,46 @@ _COLOR = sys.stdout.isatty() and not os.environ.get('NO_COLOR')
 
 real_print = print
 
-# Optional sink (used by the GUI to mirror log lines into a widget) and a
-# rolling history, so a GUI opened after startup can still show recent lines.
+# Optional sink (used by the GUI to mirror log lines into a widget), a rolling
+# history (so a GUI opened after startup still shows recent lines), and an
+# optional log file (so a launcher-started app leaves a trace on disk).
 SINK = None
 HISTORY = collections.deque(maxlen=1000)
+LOGFILE = None
+
+
+def open_logfile(path: str):
+    """Append our log to `path` (launcher-started apps have no terminal)."""
+    global LOGFILE
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        LOGFILE = open(path, 'a', buffering=1, encoding='utf-8')
+        LOGFILE.write(f'\n===== {time.strftime("%Y-%m-%d %H:%M:%S")} '
+                      f'{" ".join(sys.argv[1:])} =====\n')
+    except Exception:
+        LOGFILE = None
+    return LOGFILE
 
 
 def cprint(*args, **kw):
     line = args[0] if args and isinstance(args[0], str) else None
     plain = line
     ansi = None
-    emoji = ''
     if line is not None:
         for rx, e, s in _RULES:
             if rx.search(line):
-                emoji, ansi = e, s
+                ansi = s
                 plain = e + line
                 break
         HISTORY.append(plain)
         if SINK is not None:
             try:
                 SINK(plain)
+            except Exception:
+                pass
+        if LOGFILE is not None:
+            try:
+                LOGFILE.write(plain + '\n')
             except Exception:
                 pass
     if _COLOR and ansi:

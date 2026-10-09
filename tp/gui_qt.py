@@ -342,6 +342,11 @@ def controller(title: str, link: Optional[str], groups: List[dict],
     win.destroyed.connect(_cleanup)
 
     win.show()
+    try:
+        win.raise_()
+        win.activateWindow()
+    except Exception:
+        pass
 
     mode = os.environ.get('AGP_GUI_TEST')   # test hook
     if mode == 'play':
@@ -480,5 +485,10 @@ def choose_url(recent: List[str], search_fn=None) -> Optional[str]:
     v.addLayout(bar)
 
     box.setFocus()
+    try:
+        win.raise_()
+        win.activateWindow()
+    except Exception:
+        pass
     win.exec()
     return res.get('url')

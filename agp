@@ -5,12 +5,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 
-from tp import log          # noqa: E402
-from tp.cli import main     # noqa: E402
+from tp.app import run          # noqa: E402
+from tp.cli import main         # noqa: E402
 
 if __name__ == '__main__':
-    try:
-        main()
-    except KeyboardInterrupt:
-        log.real_print(log.style('⛔ interrupted - progress saved, bye'))
-        os._exit(130)
+    sys.exit(run(main, 'agp'))

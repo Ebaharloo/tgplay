@@ -95,6 +95,10 @@ title cache.
   into the hicolor theme plus a `tgplay.desktop` launcher entry;
   `StartupWMClass=tgplay` + `setDesktopFileName('tgplay')` keep the taskbar
   icon grouped correctly on Wayland. Both windows show the icon.
+- **No terminal needed** — started from the desktop icon, every CLI goes through
+  the shared `tp/app.run()`: our log is appended to
+  `~/.config/tgp/<name>.log` (path shown in the in-app **Log** panel) and any
+  crash pops a dialog with the last error + log path, instead of vanishing.
 - Stale typeahead flushed at each screen (no accidental auto-advance).
 - Non-TTY falls back to plain prompts; scripts never prompt.
 
@@ -188,7 +192,7 @@ tp/config  tp/http  tp/sources  tp/cache  tp/proxy
 tp/providers/{base,animegate,telegram,animex}
 tp/chapters  tp/skip  tp/metadata  tp/simkl  tp/titles
 tp/prefetch  tp/player  tp/playlist  tp/setup  tp/ui  tp/tracking
-tp/episodes  tp/log  tp/cli  tp/cli_telegram  tp/cli_animex  tp/gui_qt  tp/gui  tp/icon  tp/search
+tp/episodes  tp/log  tp/cli  tp/cli_telegram  tp/cli_animex  tp/gui_qt  tp/gui  tp/icon  tp/search  tp/app
 ```
 Thin entry points: `agp`, `tg`, `tgp` (symlinked into `~/.local/bin`; scripts use
 `realpath(__file__)` so symlinks work). Tests: `tests/test_*.py`.

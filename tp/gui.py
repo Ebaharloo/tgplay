@@ -511,5 +511,12 @@ def choose_url(recent: List[str], search_fn=None) -> Optional[str]:
     ttk.Button(bar, text='OK', command=ok).pack(side='left', padx=6)
     ttk.Button(bar, text='Cancel', command=root.destroy).pack(side='right')
     box.focus_set()
+    try:
+        root.lift()
+        root.attributes('-topmost', True)
+        root.after(250, lambda: root.attributes('-topmost', False))
+        root.focus_force()
+    except Exception:
+        pass
     root.mainloop()
     return res.get('url')
