@@ -33,9 +33,11 @@ this file = behaviour + to-do.)
   `--skip` / `--cut` / `--next` / mpv flags.
 
 **Unified (`tgplay`)**
-- `tgplay` — one window, **one field**: search AnimeGate + AnimeX together
-  (results tagged `agp`/`axp`), or paste any link (animegate / animex / t.me),
-  or `@channel`; the right source opens automatically.
+- `tgplay` — **one window, one page**: a search field (AnimeGate + AnimeX
+  together, results tagged `agp`/`axp`), the episode list, options and the log.
+  Paste any link (animegate / animex / t.me) or `@channel` too.
+- Picking a result **loads it in place** — no new window and no app restart;
+  the field also shows **recent links and searches** when empty.
 - `tgplay agp|axp|tg|tgp …` — run one source directly. The **desktop icon
   launches `tgplay`**.
 
@@ -121,6 +123,11 @@ title cache.
 - The unified **`tgplay`** window uses **one field** and searches **both at
   once**, tagging each result with its source; picking one dispatches to that
   source's CLI (`tp/cli_all.route()` handles pasted links and `@channel` too).
+- **History** (`tp/history.py`): recent links + past searches are remembered
+  (`history.json`) and shown in the field when it's empty; picking a past
+  search replays it.
+- A picked target becomes a **Session** (`tp/session.py`) loaded into the same
+  window (`tp/gui_all.py`), so switching titles never restarts the app.
 - **animegate**: `GET /global-search?s=<q>` (grouped results, title + url).
 - **animex**: GraphQL `searchAnime(query:)` → the internal slug, handed back as
   an `axp:<slug>` id the provider resolves directly (no page scrape).
@@ -204,7 +211,7 @@ tp/config  tp/http  tp/sources  tp/cache  tp/proxy
 tp/providers/{base,animegate,telegram,animex}
 tp/chapters  tp/skip  tp/metadata  tp/simkl  tp/titles
 tp/prefetch  tp/player  tp/playlist  tp/setup  tp/ui  tp/tracking
-tp/episodes  tp/log  tp/cli  tp/cli_telegram  tp/cli_animex  tp/cli_all  tp/gui_qt  tp/gui  tp/icon  tp/search  tp/app
+tp/episodes  tp/log  tp/cli  tp/cli_telegram  tp/cli_animex  tp/cli_all  tp/gui_qt  tp/gui_all  tp/gui  tp/session  tp/icon  tp/search  tp/history  tp/app
 ```
 Thin entry points: `agp`, `tg`, `tgp` (symlinked into `~/.local/bin`; scripts use
 `realpath(__file__)` so symlinks work). Tests: `tests/test_*.py`.

@@ -104,7 +104,25 @@ class AnimeXProvider(Provider):
     def _resolve(self):
         if self._resolved:
             return
-        cand = base_slug(self.url)
+        raw = (self.url or '').strip()
+        internal = (raw.lower().startswith('axp:')
+                    or ('://' not in raw and '/' not in raw
+                        and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]+', raw)
+                        is not None))
+        cand = base_slug(raw)
+        if internal:
+            # Already the AnimeX internal slug (from search): trust it. Asking
+            # the site's /anime/<slug>/__data.json for an internal slug returns
+            # a *different* show, so metadata comes from GraphQL instead.
+            self.slug = cand
+            meta = self._anime(cand) or {}
+            self.anilist_id = meta.get('anilistId')
+            self.mal_id = meta.get('malId')
+            t = meta.get('titleEnglish') or meta.get('titleRomaji')
+            if t:
+                self.title = str(t)
+            self._resolved = True
+            return
         rec, data = None, []
         try:
             d = self._json(f'{SITE}/anime/{cand}/__data.json')
@@ -120,15 +138,13 @@ class AnimeXProvider(Provider):
             if t:
                 self.title = str(t)
         else:
-            # came from search: the id IS the internal slug
             self.slug = cand
-            meta = self._anime(cand)
-            if meta:
-                self.anilist_id = meta.get('anilistId')
-                self.mal_id = meta.get('malId')
-                t = meta.get('titleEnglish') or meta.get('titleRomaji')
-                if t:
-                    self.title = str(t)
+            meta = self._anime(cand) or {}
+            self.anilist_id = meta.get('anilistId')
+            self.mal_id = meta.get('malId')
+            t = meta.get('titleEnglish') or meta.get('titleRomaji')
+            if t:
+                self.title = str(t)
         self._resolved = True
 
     def _anime(self, slug: str) -> Optional[dict]:

@@ -135,15 +135,31 @@ def main_all(argv: Optional[List[str]] = None) -> int:
         print(ALL_HELP)
         return 2
 
-    # interactive: one field
+    # interactive: one window (search + episodes/options in place)
     from .cli import _pick_gui
     from . import ui
+    force_curses = '--curses' in argv
     gui = _pick_gui()
-    res = None
-    if gui.available():
-        res = gui.launcher()
-    elif ui.available():
-        res = _choose_plain()
+    if (not force_curses and gui.available()
+            and str(getattr(gui, '__name__', '')).endswith('gui_qt')):
+        from .config import Config
+        from .http import HttpClient
+        from .session import open_session
+        from . import setup
+        from . import gui_all
+        cfg = Config().ensure()
+        http = HttpClient()
+
+        def loader(src, target):
+            o = {'a': False, 'skip': False, 'skip_toggle': False, 'e': None,
+                 'f': None, 'cut': None, 'next': False, 'nowait': False}
+            o, m = setup.apply(o, [], setup.load(cfg.ui, src))
+            return open_session(src, target, cfg, http, o, m)
+
+        gui_all.app(loader, cfg=cfg)
+        return 0
+
+    res = gui.launcher() if gui.available() else _choose_plain()
     if not res:
         if not gui.available() and not ui.available():
             print(ALL_HELP)
