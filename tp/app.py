@@ -21,7 +21,7 @@ def run(main, name: str = 'agp') -> int:
     path = log_path(name)
     log.open_logfile(path)
     try:
-        log.cprint(f'log file: {path}')
+        log.note(f'log file: {path}')
         result = main()
         return result if isinstance(result, int) else 0
     except KeyboardInterrupt:

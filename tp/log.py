@@ -50,6 +50,22 @@ def open_logfile(path: str):
     return LOGFILE
 
 
+def note(text: str):
+    """Record a line to history + logfile WITHOUT printing to the terminal
+    (e.g. the log-file path, which the GUI shows but the CLI shouldn't)."""
+    HISTORY.append(text)
+    if SINK is not None:
+        try:
+            SINK(text)
+        except Exception:
+            pass
+    if LOGFILE is not None:
+        try:
+            LOGFILE.write(text + '\n')
+        except Exception:
+            pass
+
+
 def cprint(*args, **kw):
     line = args[0] if args and isinstance(args[0], str) else None
     plain = line
