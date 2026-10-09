@@ -78,7 +78,7 @@ def test_device_login_and_library():
                           'scope': 'media:read media:write'},
         '/users/settings': {'user': {'name': 'tester'}},
         '/sync/all-items': WATCHING,
-        '/sync/history': {'added': []},
+        '/sync/history': {'added': {'episodes': 1}},
     }
     http = FakeHttp(routes)
     acc = simkl_account.SimklAccount(Cfg(d), http)
@@ -93,7 +93,7 @@ def test_device_login_and_library():
             == (1, 10, 3, 12, 4), a
         up = acc.up_next()
         assert [u['title'] for u in up] == ['Show A'], up   # Caught Up excluded
-        assert acc.mark_watched(a, 4) is True
+        assert acc.mark_watched(a, 4) == 1
         post = [c for c in http.calls if c[0] == 'POST'
                 and '/sync/history' in c[1]]
         body = json.loads(post[-1][2])

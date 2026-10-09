@@ -257,24 +257,22 @@ class SimklAccount:
                 if e.get('next_ep') and e['title']]
 
     # --- progress -------------------------------------------------------
-    def mark_watched(self, entry: dict, ep: int) -> bool:
-        """Best-effort: record episode `ep` watched for a library entry."""
+    def mark_watched(self, entry: dict, ep: int) -> int:
+        """Record episode `ep` watched; returns how many episodes Simkl added
+        (0 when it was already watched)."""
         if not self.logged_in():
-            return False
+            return 0
         ids = {}
         for k in ('mal', 'anilist', 'simkl'):
             if entry.get(k):
                 ids[k] = entry[k]
         if not ids:
-            return False
+            return 0
         body = {'anime': [{'ids': ids,
                            'seasons': [{'number': 1,
                                         'episodes': [{'number': int(ep)}]}]}]}
-        try:
-            self._api('/sync/history', method='POST', body=body)
-            return True
-        except Exception:
-            return False
+        d = self._api('/sync/history', method='POST', body=body)
+        return int(((d.get('added') or {}).get('episodes')) or 0)
 
 
 class SimklTracker:
@@ -294,16 +292,38 @@ class SimklTracker:
     def _match(self, title: str) -> Optional[dict]:
         if self._entries is None:
             self._entries = self.acc.library()
-        want = (title or '').casefold()
-        best, score = None, 0.0
         import difflib
+        import re
+
+        def norm(s):
+            return re.sub(r'[^a-z0-9 ]', ' ', (s or '').casefold()).strip()
+
+        want = norm(title)
+        if not want:
+            return None
+        best, score = None, 0.0
         for e in self._entries:
-            r = difflib.SequenceMatcher(None, want,
-                                        e['title'].casefold()).ratio()
+            got = norm(e['title'])
+            r = difflib.SequenceMatcher(None, want, got).ratio()
+            if want and (want in got or got in want):
+                r = max(r, 0.85)              # substring is a strong signal
             if r > score:
                 best, score = e, r
-        return best if score >= 0.6 else None
+        return best if score >= 0.55 else None
 
     def mark_watched(self, title, num, ask=False):
+        from . import log
         e = self._match(title)
-        return self.acc.mark_watched(e, num) if e else None
+        if not e:
+            log.cprint(f'simkl: no library match for "{title}" — not synced')
+            return None
+        try:
+            added = self.acc.mark_watched(e, num)
+        except Exception as ex:
+            log.cprint(f'simkl: sync failed for "{e["title"]}" ({ex})')
+            return None
+        if added:
+            log.cprint(f'simkl: marked ep {num} — {e["title"]}')
+        else:
+            log.cprint(f'simkl: ep {num} already watched — {e["title"]}')
+        return added

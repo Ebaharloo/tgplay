@@ -315,14 +315,18 @@ class MultiTracker:
         return False
 
     def mark_watched(self, title, num, ask=False):
-        out = []
+        from . import log
+        done = []
         for t in self.trackers:
             try:
-                if t.enabled():
-                    out.append(t.mark_watched(title, num))
-            except Exception:
-                pass
-        return out
+                if t.enabled() and t.mark_watched(title, num):
+                    name = type(t).__name__.replace('Tracker', '') or 'tracker'
+                    done.append(name)
+            except Exception as ex:
+                log.cprint(f'track: {type(t).__name__} failed ({ex})')
+        if done:
+            log.cprint(f'synced: ep {num} → {", ".join(done)}')
+        return done
 
 
 def make_tracker(cfg, http=None, sync: bool = True):
