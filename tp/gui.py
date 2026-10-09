@@ -330,6 +330,12 @@ def controller(title: str, link: Optional[str], groups: List[dict],
     except Exception:
         pass
     logbox.pack(fill='both', expand=True)
+    logbox.configure(state='normal')
+    for s in list(_log.HISTORY):
+        logbox.insert('end', s + '\n')
+    if _log.HISTORY:
+        logbox.see('end')
+    logbox.configure(state='disabled')
     q: 'queue.Queue' = queue.Queue()
     _prev_sink = _log.SINK
     _log.SINK = lambda s: q.put(str(s))

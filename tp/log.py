@@ -4,6 +4,7 @@ Known line prefixes get an emoji + colour; colour is auto-off when stdout is
 not a TTY or NO_COLOR is set. Nothing else in the package should touch
 sys.stdout or ANSI codes directly.
 """
+import collections
 import os
 import re
 import sys
@@ -27,22 +28,31 @@ _COLOR = sys.stdout.isatty() and not os.environ.get('NO_COLOR')
 
 real_print = print
 
-# Optional sink (used by the GUI to mirror log lines into a widget).
+# Optional sink (used by the GUI to mirror log lines into a widget) and a
+# rolling history, so a GUI opened after startup can still show recent lines.
 SINK = None
+HISTORY = collections.deque(maxlen=1000)
 
 
 def cprint(*args, **kw):
-    if _COLOR and args and isinstance(args[0], str):
-        line = args[0]
-        for rx, emoji, ansi in _RULES:
+    line = args[0] if args and isinstance(args[0], str) else None
+    plain = line
+    ansi = None
+    emoji = ''
+    if line is not None:
+        for rx, e, s in _RULES:
             if rx.search(line):
-                args = (f'\033[{ansi}m{emoji}{line}\033[0m',) + args[1:]
+                emoji, ansi = e, s
+                plain = e + line
                 break
-    if SINK is not None and args and isinstance(args[0], str):
-        try:
-            SINK(args[0])
-        except Exception:
-            pass
+        HISTORY.append(plain)
+        if SINK is not None:
+            try:
+                SINK(plain)
+            except Exception:
+                pass
+    if _COLOR and ansi:
+        args = (f'\033[{ansi}m{plain}\033[0m',) + args[1:]
     real_print(*args, **kw)
 
 

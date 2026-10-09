@@ -144,6 +144,7 @@ def controller(title: str, link: Optional[str], groups: List[dict],
     hdr = table.horizontalHeader()
     hdr.setSectionResizeMode(0, W.QHeaderView.ResizeToContents)
     hdr.setSectionResizeMode(1, W.QHeaderView.Stretch)
+    ev.addWidget(table)
     root.addWidget(ebox, 1)
 
     if resume in labels:
@@ -165,6 +166,10 @@ def controller(title: str, link: Optional[str], groups: List[dict],
     mono = G.QFontDatabase.systemFont(G.QFontDatabase.FixedFont)
     logbox.setFont(mono)
     lv.addWidget(logbox)
+    if _log.HISTORY:
+        logbox.setPlainText('\n'.join(list(_log.HISTORY)))
+        logbox.verticalScrollBar().setValue(
+            logbox.verticalScrollBar().maximum())
     root.addWidget(lbox)
 
     # --- behaviour -----------------------------------------------------
