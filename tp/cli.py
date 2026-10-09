@@ -45,6 +45,7 @@ agp (tgplay) - stream animegate.ir mkv links, no downloads.
                             present, else the terminal menu
   --gui / --curses          force the desktop window / the terminal menu
   agp cache [clean [--days N]]  show / clean the download cache
+  agp icon                  install the app icon + launcher entry
   agp simkl <CLIENT_ID>     set the Simkl key for episode titles (donghua)
   agp login <CLIENT_ID> | logout | sync [--dry] | new | tracking
                             AniList progress sync + new-episode notices
@@ -252,6 +253,12 @@ def main(argv: Optional[List[str]] = None):
         return 0
     if argv and argv[0].lower() == 'cache':
         return cache_command(argv[1:])
+    if argv and argv[0].lower() in ('icon', 'install-desktop'):
+        from .icon import install
+        paths = install()
+        print(f'icon: installed {len(paths)} file(s) under ~/.local/share '
+              '- look for "tgplay" in your app launcher')
+        return 0
     if argv and argv[0].lower() == 'simkl':
         from .simkl import Simkl, save_client_id
         if len(argv) > 1 and not argv[1].startswith('-'):

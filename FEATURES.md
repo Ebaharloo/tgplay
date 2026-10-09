@@ -17,6 +17,7 @@ this file = behaviour + to-do.)
   AniList progress + notices.
 - `agp simkl <CLIENT_ID>` — set the Simkl key (episode titles for donghua).
 - `agp cache` / `agp cache clean [--days N|--all] [--keep-partial]`.
+- `agp icon` — install the app icon + a `tgplay` launcher entry (KDE/GNOME).
 - `-h` / `--help` — full help.
 
 **Telegram**
@@ -81,6 +82,10 @@ title cache.
    `--nowait`, Cut, Fullscreen, Extra mpv flags. A help panel explains the
    highlighted option; a footer line shows the keys.
 - **Remembers the last setup** (`ui.json`); CLI flags always win.
+- **App icon** (`tp/assets/tgplay.svg` + PNGs 16–512). `agp icon` installs it
+  into the hicolor theme plus a `tgplay.desktop` launcher entry;
+  `StartupWMClass=tgplay` + `setDesktopFileName('tgplay')` keep the taskbar
+  icon grouped correctly on Wayland. Both windows show the icon.
 - Stale typeahead flushed at each screen (no accidental auto-advance).
 - Non-TTY falls back to plain prompts; scripts never prompt.
 
@@ -140,7 +145,7 @@ tp/config  tp/http  tp/sources  tp/cache  tp/proxy
 tp/providers/{base,animegate,telegram}
 tp/chapters  tp/skip  tp/metadata  tp/simkl  tp/titles
 tp/prefetch  tp/player  tp/playlist  tp/setup  tp/ui  tp/tracking
-tp/episodes  tp/log  tp/cli  tp/cli_telegram  tp/gui_qt  tp/gui
+tp/episodes  tp/log  tp/cli  tp/cli_telegram  tp/gui_qt  tp/gui  tp/icon
 ```
 Thin entry points: `agp`, `tg`, `tgp` (symlinked into `~/.local/bin`; scripts use
 `realpath(__file__)` so symlinks work). Tests: `tests/test_*.py`.

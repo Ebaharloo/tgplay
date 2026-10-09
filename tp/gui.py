@@ -129,6 +129,22 @@ def _make_icon(root, accent='#3daee9'):
     return img
 
 
+def _file_icon(root) -> bool:
+    """Use the packaged PNG icon if Tk can read it; return True on success."""
+    try:
+        import tkinter as tk
+        from . import icon as _icon
+        p = _icon.png(128)
+        if p and os.path.exists(p):
+            img = tk.PhotoImage(file=p)
+            root.iconphoto(True, img)
+            root._tgplay_icon = img   # keep a reference alive
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def available() -> bool:
     if not (os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY')):
         return False
@@ -159,7 +175,8 @@ def controller(title: str, link: Optional[str], groups: List[dict],
     except Exception:
         pass
     col = _apply_theme(root, style)
-    _make_icon(root, (col or {}).get('sel_bg', '#3daee9'))
+    if not _file_icon(root):
+        _make_icon(root, (col or {}).get('sel_bg', '#3daee9'))
 
     nums = sorted(labels)
     state: dict = {}

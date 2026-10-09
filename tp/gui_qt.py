@@ -28,13 +28,31 @@ def available() -> bool:
 
 
 def _app():
-    from PySide6 import QtWidgets as W
+    from PySide6 import QtWidgets as W, QtGui as G
     app = W.QApplication.instance()
     if app is None:
         app = W.QApplication([])
     app.setApplicationName('tgplay')
     app.setApplicationDisplayName('tgplay')
+    try:
+        app.setDesktopFileName('tgplay')   # taskbar/dock grouping on Wayland
+    except Exception:
+        pass
+    ic = _app_icon(G)
+    if ic is not None:
+        app.setWindowIcon(ic)
     return app
+
+
+def _app_icon(G):
+    try:
+        from . import icon as _icon
+        p = _icon.png(256)
+        if p and os.path.exists(p):
+            return G.QIcon(p)
+    except Exception:
+        pass
+    return None
 
 
 def controller(title: str, link: Optional[str], groups: List[dict],
@@ -57,6 +75,9 @@ def controller(title: str, link: Optional[str], groups: List[dict],
     win = W.QWidget()
     win.setWindowTitle('tgplay')
     win.resize(860, 760)
+    _wi = _app_icon(G)
+    if _wi is not None:
+        win.setWindowIcon(_wi)
     root = W.QVBoxLayout(win)
     root.setContentsMargins(12, 10, 12, 10)
     root.setSpacing(8)
@@ -322,7 +343,7 @@ def controller(title: str, link: Optional[str], groups: List[dict],
 
 def choose_url(recent: List[str]) -> Optional[str]:
     """Small window to pick a recent link or paste a new one."""
-    from PySide6 import QtWidgets as W, QtCore as C
+    from PySide6 import QtWidgets as W, QtCore as C, QtGui as G
     app = _app()
     items = list(dict.fromkeys(recent))[:15]
     res: dict = {}
@@ -330,6 +351,9 @@ def choose_url(recent: List[str]) -> Optional[str]:
     win = W.QDialog()
     win.setWindowTitle('tgplay - which anime?')
     win.resize(720, 460)
+    _wi = _app_icon(G)
+    if _wi is not None:
+        win.setWindowIcon(_wi)
     v = W.QVBoxLayout(win)
     lbl = W.QLabel('Which anime do you want to watch?')
     f = lbl.font(); f.setPointSize(f.pointSize() + 1); lbl.setFont(f)
