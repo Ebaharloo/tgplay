@@ -27,6 +27,9 @@ _COLOR = sys.stdout.isatty() and not os.environ.get('NO_COLOR')
 
 real_print = print
 
+# Optional sink (used by the GUI to mirror log lines into a widget).
+SINK = None
+
 
 def cprint(*args, **kw):
     if _COLOR and args and isinstance(args[0], str):
@@ -35,6 +38,11 @@ def cprint(*args, **kw):
             if rx.search(line):
                 args = (f'\033[{ansi}m{emoji}{line}\033[0m',) + args[1:]
                 break
+    if SINK is not None and args and isinstance(args[0], str):
+        try:
+            SINK(args[0])
+        except Exception:
+            pass
     real_print(*args, **kw)
 
 

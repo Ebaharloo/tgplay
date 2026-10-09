@@ -5,10 +5,128 @@ window keeps working: pick other episodes, change the setup, Stop, and the
 anime's Simkl/MAL link is shown and clickable. No extra dependencies.
 """
 import os
+import queue
 import threading
 from typing import Callable, Dict, List, Optional
 
 SKIP_MODES = ['off', 'all', 'names', 'auto']
+
+
+# --- OS theme (KDE/GNOME) ----------------------------------------------
+def _kde_colors():
+    """KDE Plasma stores its color scheme in ~/.config/kdeglobals."""
+    import configparser
+    p = os.path.expanduser('~/.config/kdeglobals')
+    if not os.path.exists(p):
+        return None
+    cp = configparser.ConfigParser(strict=False, interpolation=None)
+    try:
+        cp.read(p)
+    except Exception:
+        return None
+
+    def col(sec, key):
+        try:
+            r, g, b = [int(x) for x in cp.get(sec, key).split(',')[:3]]
+            return '#%02x%02x%02x' % (r, g, b)
+        except Exception:
+            return None
+
+    win = col('Colors:Window', 'BackgroundNormal')
+    if not win:
+        return None
+    return {'win_bg': win,
+            'win_fg': col('Colors:Window', 'ForegroundNormal') or '#000000',
+            'view_bg': col('Colors:View', 'BackgroundNormal') or win,
+            'view_fg': col('Colors:View', 'ForegroundNormal') or '#000000',
+            'btn_bg': col('Colors:Button', 'BackgroundNormal') or win,
+            'btn_fg': col('Colors:Button', 'ForegroundNormal') or '#000000',
+            'sel_bg': col('Colors:Selection', 'BackgroundNormal') or '#3daee9',
+            'sel_fg': col('Colors:Selection', 'ForegroundNormal') or '#ffffff'}
+
+
+def _gtk_colors():
+    """Fallback for GNOME: read gtk settings.ini for the dark preference."""
+    import configparser
+    for name in ('~/.config/gtk-3.0/settings.ini',
+                 '~/.config/gtk-4.0/settings.ini'):
+        p = os.path.expanduser(name)
+        if not os.path.exists(p):
+            continue
+        cp = configparser.ConfigParser(strict=False)
+        try:
+            cp.read(p)
+            dark = cp.get('Settings', 'gtk-application-prefer-dark-theme',
+                          fallback='0')
+            if dark.strip().lower() in ('1', 'true'):
+                return {'win_bg': '#232629', 'win_fg': '#eff0f1',
+                        'view_bg': '#1b1e20', 'view_fg': '#eff0f1',
+                        'btn_bg': '#2a2e32', 'btn_fg': '#eff0f1',
+                        'sel_bg': '#3daee9', 'sel_fg': '#ffffff'}
+        except Exception:
+            continue
+    return None
+
+
+def _apply_theme(root, style) -> Optional[dict]:
+    col = _kde_colors() or _gtk_colors()
+    if not col:
+        return None
+    try:
+        root.configure(bg=col['win_bg'])
+    except Exception:
+        pass
+
+    def cfg(w, **kw):
+        try:
+            style.configure(w, **kw)
+        except Exception:
+            pass
+    cfg('.', background=col['win_bg'], foreground=col['win_fg'],
+        fieldbackground=col['view_bg'])
+    for w in ('TFrame', 'TLabel', 'TLabelframe', 'TLabelframe.Label',
+              'TCheckbutton', 'TRadiobutton'):
+        cfg(w, background=col['win_bg'], foreground=col['win_fg'])
+    cfg('TButton', background=col['btn_bg'], foreground=col['btn_fg'])
+    try:
+        style.map('TButton', background=[('active', col['sel_bg'])],
+                  foreground=[('active', col['sel_fg'])])
+    except Exception:
+        pass
+    for w in ('TCombobox', 'TEntry'):
+        cfg(w, fieldbackground=col['view_bg'], foreground=col['view_fg'],
+            background=col['btn_bg'])
+    cfg('Treeview', background=col['view_bg'], fieldbackground=col['view_bg'],
+        foreground=col['view_fg'])
+    cfg('Treeview.Heading', background=col['btn_bg'], foreground=col['btn_fg'])
+    try:
+        style.map('Treeview',
+                  background=[('selected', col['sel_bg'])],
+                  foreground=[('selected', col['sel_fg'])])
+    except Exception:
+        pass
+    return col
+
+
+def _make_icon(root, accent='#3daee9'):
+    import tkinter as tk
+    size = 32
+    img = tk.PhotoImage(width=size, height=size)
+    img.put('#10131a', to=(0, 0, size, size))
+    for i in range(3, size - 3):
+        img.put(accent, to=(i, 3))
+        img.put(accent, to=(i, size - 4))
+        img.put(accent, to=(3, i))
+        img.put(accent, to=(size - 4, i))
+    for y in range(8, size - 8):
+        w = size // 2 - abs(y - size // 2) - 2
+        for x in range(12, 12 + max(1, w)):
+            img.put('#ffffff', to=(x, y))
+    try:
+        root.iconphoto(True, img)
+    except Exception:
+        pass
+    return img
 
 
 def available() -> bool:
@@ -35,13 +153,17 @@ def controller(title: str, link: Optional[str], groups: List[dict],
     except Exception as ex:
         raise RuntimeError(f'cannot open window ({ex})')
     root.title('tgplay')
+    style = ttk.Style()
     try:
-        ttk.Style().theme_use('clam')
+        style.theme_use('clam')
     except Exception:
         pass
+    col = _apply_theme(root, style)
+    _make_icon(root, (col or {}).get('sel_bg', '#3daee9'))
 
     nums = sorted(labels)
     state: dict = {}
+    after_ids: list = []
 
     top = ttk.Frame(root, padding=(10, 8, 10, 4))
     top.pack(fill='x')
@@ -149,7 +271,7 @@ def controller(title: str, link: Optional[str], groups: List[dict],
             return
         if one_shot:
             play_fn(chosen, o, flags)
-            root.destroy()
+            _close()
             return
 
         def run():
@@ -188,14 +310,64 @@ def controller(title: str, link: Optional[str], groups: List[dict],
             pass
 
     def _poll():
+        if state.get('closing'):
+            return
         if status_fn:
             try:
                 status_var.set(status_fn())
             except Exception:
                 pass
-        root.after(1000, _poll)
+        after_ids.append(root.after(1000, _poll))
 
-    root.bind('<Escape>', lambda e: root.destroy())
+    # in-app log panel (mirrors tp.log lines)
+    from tkinter.scrolledtext import ScrolledText
+    from . import log as _log
+    logframe = ttk.LabelFrame(root, text='Log', padding=(4, 2))
+    logframe.pack(fill='x', padx=10, pady=(0, 6))
+    logbox = ScrolledText(logframe, height=7, wrap='word', state='disabled')
+    try:
+        logbox.configure(font=('TkFixedFont',))
+    except Exception:
+        pass
+    logbox.pack(fill='both', expand=True)
+    q: 'queue.Queue' = queue.Queue()
+    _prev_sink = _log.SINK
+    _log.SINK = lambda s: q.put(str(s))
+
+    def _drain():
+        if state.get('closing'):
+            return
+        changed = False
+        while True:
+            try:
+                s = q.get_nowait()
+            except queue.Empty:
+                break
+            logbox.configure(state='normal')
+            logbox.insert('end', s + '\n')
+            changed = True
+        if changed:
+            logbox.see('end')
+            logbox.configure(state='disabled')
+        after_ids.append(root.after(250, _drain))
+
+    def _close():
+        state['closing'] = True
+        for i in after_ids:
+            try:
+                root.after_cancel(i)
+            except Exception:
+                pass
+        after_ids.clear()
+        try:
+            _log.SINK = _prev_sink
+        except Exception:
+            pass
+        root.destroy()
+
+    after_ids.append(root.after(250, _drain))
+    root.protocol('WM_DELETE_WINDOW', _close)
+    root.bind('<Escape>', lambda e: _close())
     tree.bind('<Double-1>', lambda e: _from_here())
     bar = ttk.Frame(root, padding=(10, 0, 10, 10))
     bar.pack(fill='x')
@@ -203,7 +375,7 @@ def controller(title: str, link: Optional[str], groups: List[dict],
     ttk.Button(bar, text='▶  Only selected', command=_only_sel).pack(side='left', padx=6)
     ttk.Button(bar, text='▶  All', command=_all).pack(side='left')
     ttk.Button(bar, text='■  Stop', command=_stop).pack(side='left', padx=(16, 0))
-    ttk.Button(bar, text='Close', command=root.destroy).pack(side='right')
+    ttk.Button(bar, text='Close', command=_close).pack(side='right')
 
     _center(root, 780, 660)
     mode = os.environ.get('AGP_GUI_TEST')   # test hook
@@ -214,9 +386,9 @@ def controller(title: str, link: Optional[str], groups: List[dict],
     elif mode == 'stop':
         root.after(300, _stop)
     elif mode == 'close':
-        root.after(300, root.destroy)
+        root.after(300, _close)
     if status_fn:
-        root.after(400, _poll)
+        after_ids.append(root.after(400, _poll))
     root.mainloop()
 
 
