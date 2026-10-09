@@ -16,6 +16,8 @@ tgplay - one launcher for every source.
   tgplay                  one field: search (AnimeGate + AnimeX) or paste a link
   tgplay agp|axp|tg|tgp …  run that source directly (same as its own command)
   tgplay <url>            auto-detect the source from the link
+  tgplay simkl login      connect your Simkl account (watch-list sync + feed)
+  tgplay simkl status|library|logout
 
   One field does it all:
     • type a title      -> results from AnimeGate AND AnimeX, pick one
@@ -113,11 +115,50 @@ def _choose_plain() -> Optional[Tuple[str, str]]:
     return None
 
 
+def _simkl_cmd(args: List[str]) -> int:
+    from .config import Config
+    from .http import HttpClient
+    from .simkl_account import SimklAccount
+    cfg = Config().ensure()
+    acc = SimklAccount(cfg, HttpClient())
+    cmd = (args[0] if args else 'status').lower()
+    if cmd == 'login':
+        return 0 if acc.login() else 1
+    if cmd == 'logout':
+        acc.logout()
+        return 0
+    if cmd in ('library', 'list'):
+        rows = acc.library()
+        if not rows:
+            print('simkl: library empty, or not connected '
+                  '(run: tgplay simkl login)')
+            return 0
+        for e in rows:
+            nx = f"ep {e['next_ep']}" if e.get('next_ep') else 'caught up'
+            print(f"  {str(e['status']):<11} {e['watched']}/{e['total']:<4} "
+                  f"{nx:<10} {e['title']}")
+        return 0
+    if acc.logged_in():
+        who = acc.user()
+        print(f"simkl: connected{(' as ' + who) if who else ''}")
+        rows = acc.up_next()
+        for e in rows:
+            print(f"  up next: {e['title']}  ->  ep {e['next_ep']}")
+        if not rows:
+            print('  all caught up')
+    else:
+        print('simkl: not connected (run: tgplay simkl login)')
+    return 0
+
+
 def main_all(argv: Optional[List[str]] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if any(a in ('-h', '--help') for a in argv):
         print(ALL_HELP)
         return 0
+
+    if argv and argv[0].lower() == 'simkl':
+        return _simkl_cmd(argv[1:])
 
     # explicit source: `tgplay axp <args...>`
     if argv and argv[0].lower() in ('agp', 'axp', 'tg', 'tgp'):

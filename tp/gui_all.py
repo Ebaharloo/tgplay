@@ -32,6 +32,8 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
     from . import history
 
     qapp = _app()
+    from .http import HttpClient
+    http = HttpClient()
     state: dict = {'session': None, 'closing': False, 'msg': ''}
 
     win = W.QWidget()
@@ -50,12 +52,23 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
     box.setClearButtonEnabled(True)
     box.setPlaceholderText('Search animegate + animex…  or paste a link / @channel')
     srow.addWidget(box, 1)
+    lib_btn = W.QPushButton('📚 Library')
+    lib_btn.setToolTip('Your Simkl watch list (up next) — needs: tgplay simkl login')
+    srow.addWidget(lib_btn)
     root.addLayout(srow)
 
     results = W.QListWidget()
     results.setMaximumHeight(140)
     results.setVisible(False)
     root.addWidget(results)
+
+    lib = W.QListWidget()
+    lib.setMaximumHeight(190)
+    lib.setVisible(False)
+    root.addWidget(lib)
+    lib_hint = W.QLabel('')
+    lib_hint.setVisible(False)
+    root.addWidget(lib_hint)
 
     # --- header ---------------------------------------------------------
     head = W.QLabel('Search or paste a link to start')
@@ -146,6 +159,7 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
     _log.SINK = lambda s: lq.put(str(s))
 
     rq: 'queue.Queue' = queue.Queue()
+    libq: 'queue.Queue' = queue.Queue()
 
     # --- behavior -------------------------------------------------------
     def current_sel():
@@ -378,6 +392,85 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
     results.itemClicked.connect(pick_result)
     results.itemActivated.connect(pick_result)
     box.returnPressed.connect(accept_typed)
+
+    # --- library (Simkl watch list) -------------------------------------
+    def _show_lib(rows):
+        lib.clear()
+        if not rows:
+            lib_hint.setText('library empty, or not connected — '
+                             'run:  tgplay simkl login')
+            return
+        for e in rows:
+            nx = f"ep {e['next_ep']}" if e.get('next_ep') else 'caught up'
+            it = W.QListWidgetItem(
+                f"{e['title']}     ·     {e['watched']}/{e['total']}  ·  next {nx}")
+            it.setData(C.Qt.UserRole, e)
+            lib.addItem(it)
+        lib_hint.setText(f'{len(rows)} up next — double-click to play')
+
+    def load_library():
+        lib.setVisible(True)
+        lib_hint.setVisible(True)
+        lib_hint.setText('loading library…')
+
+        def work():
+            try:
+                from .library import up_next
+                rows = up_next(cfg, http) if cfg is not None else []
+            except Exception:
+                rows = []
+            libq.put(('rows', rows))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _goto_ep(ep):
+        if not ep:
+            return
+        for r in range(table.rowCount()):
+            it = table.item(r, 0)
+            if it and int(it.data(C.Qt.UserRole)) == int(ep):
+                table.selectRow(r)
+                table.setCurrentCell(r, 1)
+                from_here()
+                return
+
+    def play_library(item):
+        e = item.data(C.Qt.UserRole)
+        if not e:
+            return
+        lib_hint.setText(f"finding “{e['title']}” on our sources…")
+
+        def work():
+            try:
+                from .library import find_source
+                res = find_source(e['title'], http)
+            except Exception:
+                res = None
+            libq.put(('play', e, res))
+        threading.Thread(target=work, daemon=True).start()
+
+    def drain_lib():
+        while True:
+            try:
+                msg = libq.get_nowait()
+            except queue.Empty:
+                return
+            if msg[0] == 'rows':
+                _show_lib(msg[1])
+            elif msg[0] == 'play':
+                _, entry, res = msg
+                if res:
+                    lib.setVisible(False)
+                    lib_hint.setVisible(False)
+                    load_target(res[0], res[1])
+                    C.QTimer.singleShot(
+                        80, lambda ep=entry.get('next_ep'): _goto_ep(ep))
+                else:
+                    lib_hint.setText(
+                        f"not found on our sources: {entry['title']}")
+
+    lib_btn.clicked.connect(load_library)
+    lib.itemDoubleClicked.connect(play_library)
+    poll.timeout.connect(drain_lib)
 
     def drain_log():
         if state['closing']:

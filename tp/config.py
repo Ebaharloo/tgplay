@@ -54,6 +54,10 @@ class Config:
         return self._p('anilist.json')
 
     @property
+    def simkl_auth(self):
+        return self._p('simkl_auth.json')
+
+    @property
     def anilist_ids(self):
         return self._p('anilist_ids.json')
 

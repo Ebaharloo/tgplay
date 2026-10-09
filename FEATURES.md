@@ -193,6 +193,26 @@ title cache.
 
 ---
 
+## Library (Simkl watch list) — `tgplay`
+
+- **Simkl is the hub**: Simkl two-way-syncs with MAL / AniList / Kitsu / Trakt,
+  so keeping Simkl current keeps every other platform current.
+- **Connect** — `tgplay simkl login` uses Simkl **AUTH V2 device / PIN** flow
+  (no browser redirect): it prints `simkl.com/pin?user_code=…`, you approve on
+  your phone, and tokens (7-day access / 180-day refresh) are stored in
+  `simkl_auth.json`. Requires a **V2** client_id (`agp simkl <CLIENT_ID>`).
+- **Read** — `GET /sync/all-items/anime/{watching,plantowatch}` gives your list
+  with progress + `next_to_watch`.
+- **Feed / up-next** — watching entries that still have a next episode.
+- **Play from the list** — the app's **📚 Library** panel lists "up next";
+  double-click resolves the title on our sources (axp dub / agp sub, via
+  `tp/library.find_source`) and jumps into the player at the next episode.
+- **Sync back** — finishing an episode pushes progress to Simkl
+  (`POST /sync/history`) through a Playlist-compatible `SimklTracker`.
+- CLI: `tgplay simkl login | status | library | logout`.
+
+---
+
 ## Telegram specifics
 
 - Session at `~/.config/tgp/tg.session` (base name must NOT end in `.session`;
@@ -211,7 +231,7 @@ tp/config  tp/http  tp/sources  tp/cache  tp/proxy
 tp/providers/{base,animegate,telegram,animex}
 tp/chapters  tp/skip  tp/metadata  tp/simkl  tp/titles
 tp/prefetch  tp/player  tp/playlist  tp/setup  tp/ui  tp/tracking
-tp/episodes  tp/log  tp/cli  tp/cli_telegram  tp/cli_animex  tp/cli_all  tp/gui_qt  tp/gui_all  tp/gui  tp/session  tp/icon  tp/search  tp/history  tp/app
+tp/episodes  tp/log  tp/cli  tp/cli_telegram  tp/cli_animex  tp/cli_all  tp/gui_qt  tp/gui_all  tp/gui  tp/session  tp/icon  tp/search  tp/history  tp/library  tp/simkl_account  tp/app
 ```
 Thin entry points: `agp`, `tg`, `tgp` (symlinked into `~/.local/bin`; scripts use
 `realpath(__file__)` so symlinks work). Tests: `tests/test_*.py`.

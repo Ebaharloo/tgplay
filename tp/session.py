@@ -36,6 +36,7 @@ class Session:
         self.src = src
         self.provider = provider
         self.cfg = cfg
+        self.http = http
         self.meta = meta
         self.titles = titles
         self.groups = groups
@@ -65,9 +66,14 @@ class Session:
             return
         if self._proxy is None:
             self._proxy = RangeProxy(port=self.cfg.proxy_port).start()
+        try:
+            from .simkl_account import SimklTracker
+            tracker = SimklTracker(self.cfg, self.http)
+        except Exception:
+            tracker = None
         playlist = Playlist(self.provider, self._proxy, self._cache,
                             self._player, self.cfg, skip=self._skip,
-                            prefetcher=self._prefetch)
+                            prefetcher=self._prefetch, tracker=tracker)
         start = self.resume[1] if (self.resume and planned[0].num == self.resume[0]) else None
         nf = ('cut' if (o.get('nowait') and o.get('cut')) else o.get('next')) \
             if o.get('next') else False

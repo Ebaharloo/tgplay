@@ -28,6 +28,7 @@ Sources     tp/sources (HttpSource ranged · DirectSource HLS · TelegramSource)
 Playback    tp/proxy (local range proxy) · tp/playlist (loop) · tp/player (mpv)
 Side        tp/metadata · tp/titles · tp/simkl · tp/bangumi · tp/translate
             tp/skip · tp/chapters · tp/cache · tp/prefetch · tp/tracking
+            tp/library · tp/simkl_account (Simkl watch-list hub)
 UI          tp/ui (curses) · tp/gui_qt / tp/gui (single-session) · tp/gui_all (unified)
 Front       tp/search · tp/history · tp/session · tp/icon · tp/setup · tp/config
 ```
@@ -139,6 +140,17 @@ window (`tp/gui_all`) uses `tp/session.open_session()` instead.
 | No terminal on launch | log to `~/.config/tgp/<name>.log`; crash dialog; window raises | `tp/app.py`, `tp/log.py` |
 | Remember last setup | `ui.json`, **namespaced per source** (`{agp,axp,tgp}`) | `tp/setup.py` |
 | English-only UI | all user-facing strings in English | everywhere |
+
+### Library / tracking (Simkl hub)
+
+| Need | Rule / method | Where |
+|---|---|---|
+| Login to a tracker | Simkl **AUTH V2 device / PIN** flow (no redirect); tokens in `simkl_auth.json`; refresh on demand | `tp/simkl_account.py` |
+| Watch list / create / sync lists | `GET /sync/all-items/anime/{watching,plantowatch}` — Simkl two-way-syncs MAL/AniList/Kitsu/Trakt, so one account covers them | `tp/simkl_account.py`, `tp/library.py` |
+| Feed of new episodes | watching entries with `next_to_watch` | `tp/library.py` (`up_next`) |
+| Play straight from the list | `find_source()` resolves the title on our sources → `session.open_session` → player at the next episode | `tp/library.py`, `tp/gui_all.py` |
+| Sync progress back | on episode finish, `POST /sync/history` via a Playlist-compatible `SimklTracker` | `tp/simkl_account.py`, `tp/session.py` |
+| (legacy) AniList tracking | Auth-Pin login + save/sync + notices | `tp/tracking.py` |
 
 ### Safety / correctness rules (invariants)
 
