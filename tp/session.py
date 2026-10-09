@@ -6,7 +6,7 @@ can load a fresh Session in place when the user searches or pastes a new link,
 without restarting the app. This is the OOP seam between "pick a source" and
 "the window".
 """
-from typing import Callable, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from .cache import Cache
 from .episodes import Episode

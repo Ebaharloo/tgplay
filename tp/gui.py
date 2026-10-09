@@ -525,7 +525,7 @@ def choose_url(recent: List[str], search_fn=None) -> Optional[str]:
     return res.get('url')
 
 
-def launcher(sources=None):
+def launcher():
     """Tk fallback: one field - search AnimeGate + AnimeX, or paste any link
     (animegate / animex / t.me), or `@channel`."""
     import tkinter as tk

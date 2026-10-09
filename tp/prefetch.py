@@ -7,8 +7,6 @@ available; the portable path uses the source's own ranged reads.
 """
 import json
 import os
-import shutil
-import subprocess
 import threading
 from typing import Callable, Dict, Optional
 
@@ -23,8 +21,6 @@ class Prefetcher:
         self.chunk = chunk
         self.aria2 = aria2
         self._stops: Dict[str, threading.Event] = {}
-        self._procs = set()
-        self._lock = threading.Lock()
 
     # --- lifecycle ---------------------------------------------------------
     def stop_event(self, name: str) -> threading.Event:
@@ -35,15 +31,6 @@ class Prefetcher:
 
     def active(self, name: str) -> bool:
         return not self.stop_event(name).is_set()
-
-    def kill_all(self):
-        with self._lock:
-            procs = list(self._procs)
-        for p in procs:
-            try:
-                p.terminate()
-            except Exception:
-                pass
 
     def complete(self, name: str) -> bool:
         return self.cache.is_full(name) and os.path.exists(self.cache.path(name))

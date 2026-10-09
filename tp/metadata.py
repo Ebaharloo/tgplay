@@ -21,7 +21,7 @@ from typing import Dict, Optional
 
 from .http import HttpClient, _quiet_close
 from .bangumi import Bangumi, cjk_title as _cjk
-from .translate import Translator, has_cjk
+from .translate import Translator
 
 ANILIST = 'https://graphql.anilist.co'
 _SEARCH = ('query($s:String){Page(page:1,perPage:8){media(search:$s,type:ANIME){'

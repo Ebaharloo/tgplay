@@ -24,8 +24,6 @@ def test_quality():
     assert len(byq['1080p']) == 1 and byq['1080p'][0].endswith('1080p @S.mkv')
     # a single quality is not a group (caller keeps the flat list)
     assert quality.group(['a 720p.mkv', 'b 720p.mkv']) == ([], {})
-    assert quality.strip_quality('BTTH - S5 E213 480p x.mkv') \
-        == 'BTTH - S5 E213 x.mkv'
     print('PASS quality parsing + grouping')
 
 

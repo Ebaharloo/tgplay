@@ -8,7 +8,7 @@ Stop, resume, options and the log are all here.
 import os
 import queue
 import threading
-from typing import Callable, Optional
+from typing import Callable
 
 from . import log as _log
 
@@ -146,7 +146,6 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
     _log.SINK = lambda s: lq.put(str(s))
 
     rq: 'queue.Queue' = queue.Queue()
-    after: list = []
 
     # --- behavior -------------------------------------------------------
     def current_sel():

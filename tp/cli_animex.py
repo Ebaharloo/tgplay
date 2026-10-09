@@ -7,7 +7,6 @@ proxy. Every audio x server AnimeX reports is offered in the menu; dub is the
 default. Electronically nothing else is special-cased.
 """
 import sys
-import threading
 from typing import List, Optional
 
 from .cache import Cache
@@ -21,7 +20,6 @@ from .prefetch import Prefetcher
 from .providers.animex import AnimeXProvider
 from .proxy import RangeProxy
 from .skip import SkipService
-from .titles import TitleService
 from .cli import parse, _resume_ep, _resume_pos, _link_get, _log_show, _plan
 from . import setup
 from . import log
@@ -101,7 +99,6 @@ def main_axp(argv: Optional[List[str]] = None) -> int:
     cfg = Config().ensure()
     http = HttpClient()
     meta = Metadata(cfg, http)
-    titles = TitleService(meta, cfg)
     try:
         provider = AnimeXProvider(url, quality=opts['f'], audio=audio, http=http)
     except ValueError as ex:

@@ -65,10 +65,6 @@ class HttpSource(MediaSource):
         except Exception:
             return 0
 
-    def refresh_size(self) -> int:
-        self._size = None
-        return self.size
-
     def read(self, lo: int, hi: int) -> bytes:
         return self.http.range_bytes(self.url, self.headers, lo, hi)
 

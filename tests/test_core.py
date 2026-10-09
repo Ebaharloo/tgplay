@@ -154,8 +154,6 @@ def test_episodes():
     assert all(isinstance(e, tuple) and len(e) == 2 for e in planned)
     n, link = planned[0]
     assert (n, link) == (2, 'L2')
-    assert episodes.first_start_for(planned, 2, 100) == 100
-    assert episodes.first_start_for(planned, 3, 100) is None
     print('PASS episodes')
 
 

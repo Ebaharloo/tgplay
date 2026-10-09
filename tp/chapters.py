@@ -13,7 +13,7 @@ mode: 'all' = names then positional fallback (default)
 import json
 import re
 import subprocess
-from typing import List, NamedTuple, Optional, Sequence, Tuple
+from typing import List, NamedTuple, Optional, Tuple
 
 OP_RE = re.compile(r'(?:^|\W)(op|opening|intro|introduction)(?:\W|\d|$)', re.I)
 ED_RE = re.compile(r'(?:^|\W)(ed|ending|end|outro|credits?|creditless)(?:\W|\d|$)', re.I)

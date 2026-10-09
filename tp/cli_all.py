@@ -159,9 +159,14 @@ def main_all(argv: Optional[List[str]] = None) -> int:
         gui_all.app(loader, cfg=cfg)
         return 0
 
-    res = gui.launcher() if gui.available() else _choose_plain()
+    res = None
+    if not force_curses and gui.available() and hasattr(gui, 'launcher'):
+        res = gui.launcher()          # Tk fallback picker (Qt uses gui_all above)
+    if res is None and ui.available():
+        res = _choose_plain()         # terminal chooser (also for --curses)
     if not res:
-        if not gui.available() and not ui.available():
+        if not ui.available() and not (gui.available()
+                                       and hasattr(gui, 'launcher')):
             print(ALL_HELP)
         return 0
     return dispatch(res[0], res[1], flags)

@@ -9,7 +9,7 @@ import json
 import os
 import shutil
 import subprocess
-from typing import Dict, List, Optional
+from typing import Optional
 
 from .config import Config
 from .http import HttpClient

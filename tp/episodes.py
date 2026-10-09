@@ -45,9 +45,3 @@ def select(eps: Dict[int, str], nums: Optional[Iterable[int]] = None,
 def resume(eps: Dict[int, str], start: int) -> List[Episode]:
     """Every episode from `start` onward (the resume prompt's choice)."""
     return [Episode(k, eps[k]) for k in sorted(eps) if k >= start]
-
-
-def first_start_for(planned: List[Episode], resume_ep: int,
-                    pos: int) -> Optional[int]:
-    """Seconds to seek to on the first episode, only if it is the resumed one."""
-    return int(pos) if planned and planned[0].num == resume_ep else None

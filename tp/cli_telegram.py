@@ -5,7 +5,6 @@ Provider differs. `--menu` opens the same curses form (no Quality row, since
 Telegram files have no quality groups).
 """
 import json
-import os
 import re
 import sys
 from typing import List, Optional
@@ -17,12 +16,11 @@ from .metadata import Metadata
 from .player import Player
 from .playlist import Playlist
 from .prefetch import Prefetcher
-from .providers.telegram import SingleFileProvider, TelegramProvider, login
+from .providers.telegram import SingleFileProvider, TelegramProvider
 from .proxy import RangeProxy
 from .skip import SkipService
 from .cli import parse
 from . import setup
-from . import log
 
 TG_HELP = """\
 tg (tgplay) - stream one Telegram video via a local range proxy.
