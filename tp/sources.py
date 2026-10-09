@@ -71,3 +71,29 @@ class HttpSource(MediaSource):
 
     def read(self, lo: int, hi: int) -> bytes:
         return self.http.range_bytes(self.url, self.headers, lo, hi)
+
+
+class DirectSource(MediaSource):
+    """A source mpv plays itself (HLS/DASH/whatever) - no local proxy.
+
+    Used by providers whose backend hands out segmented/streamed URLs (e.g.
+    AnimeX m3u8). `size`/`read` exist only to satisfy the interface; the
+    Playlist sees `direct = True` and passes `url` straight to the player with
+    its headers (referer) and any external subtitle tracks.
+    """
+
+    direct = True
+
+    def __init__(self, url: str, headers: Optional[Dict[str, str]] = None,
+                 subs: Optional[list] = None):
+        self.url = url
+        self.headers = dict(headers or {})
+        self.subs = list(subs or [])   # [(label, url), ...]
+
+    @property
+    def size(self) -> int:
+        return 0
+
+    def read(self, lo: int, hi: int) -> bytes:
+        raise NotImplementedError('DirectSource is played by mpv, not proxied')
+

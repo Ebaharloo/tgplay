@@ -87,18 +87,31 @@ class Playlist:
             while True:
                 stream = self.provider.stream(ep.num)
                 name = self._name(ep, stream)
-                self.proxy.register(name, stream)
-                ready = threading.Event()
-                self.proxy.prewarm(name, ready)
-                ready.wait(25)
-                url = self.proxy.url(name)
+                direct = getattr(stream, 'direct', False)
+                extra_direct: List[str] = []
+                if direct:
+                    # HLS/DASH: mpv plays the remote URL itself (no proxy)
+                    url = stream.url
+                    ref = (getattr(stream, 'headers', {}) or {}).get('Referer')
+                    if ref:
+                        extra_direct.append(f'--referrer={ref}')
+                    for _lbl, sub in (getattr(stream, 'subs', []) or []):
+                        extra_direct.append(f'--sub-file={sub}')
+                else:
+                    self.proxy.register(name, stream)
+                    ready = threading.Event()
+                    self.proxy.prewarm(name, ready)
+                    ready.wait(25)
+                    url = self.proxy.url(name)
 
                 flags, note = [], 'off'
                 if self.skip is not None:
                     try:
                         flags, note = self.skip.flags(
-                            title=title, ep=ep.num, url=url, mode=skip_mode,
-                            toggle=skip_toggle)
+                            title=title, ep=ep.num,
+                            url=None if direct else url, mode=skip_mode,
+                            toggle=skip_toggle,
+                            mal_id=getattr(self.provider, 'mal_id', None))
                     except Exception as ex:
                         flags, note = [], f'failed ({ex})'
                 if i == 0:
@@ -107,7 +120,8 @@ class Playlist:
                 sock = f'/tmp/tgplay-{os.getpid()}-{ep.num}.ipc'
                 fire = None
                 on_fire = None
-                if next_frac and nxt is not None and self.prefetcher is not None:
+                if next_frac and nxt is not None and self.prefetcher is not None \
+                        and not direct:
                     fire = self._trigger(cut, next_frac)
 
                     def on_fire(_nxt=nxt):
@@ -131,7 +145,7 @@ class Playlist:
                     log.cprint(f'start: ep{ep.num} at 0s (no saved position)')
                 watcher.start()
                 cmd = self.player.command(
-                    url, title=name, extra=(list(extra or []) + flags),
+                    url, title=name, extra=(list(extra or []) + extra_direct + flags),
                     start=start, cut=cut, ipc=sock)
                 tag = (f'  [start {int(start)}s]' if start is not None else '')
                 if cut:
@@ -150,7 +164,16 @@ class Playlist:
                     return
                 if rc == 2 and attempt < 2:  # failed to open: fresh link, retry
                     attempt += 1
-                    self.proxy.streams.pop(name, None)
+                    try:
+                        self.proxy.streams.pop(name, None)
+                    except Exception:
+                        pass
+                    rot = getattr(self.provider, 'rotate', None)
+                    if callable(rot):
+                        try:
+                            rot()          # try the next server (animex)
+                        except Exception:
+                            pass
                     log.cprint(f'load: ep{ep.num} failed to open -> retry {attempt}')
                     continue
                 if rc == 0:

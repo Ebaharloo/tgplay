@@ -88,15 +88,16 @@ class SkipService:
 
     def flags(self, *, title: str, ep: int, url: Optional[str] = None,
               mode: str = 'all', toggle: bool = False,
-              timeout: float = 30) -> Tuple[List[str], str]:
+              timeout: float = 30, mal_id: Optional[int] = None
+              ) -> Tuple[List[str], str]:
         """(mpv args, note). note names the detector + times applied."""
         if url:
             op, ed, osrc, esrc = self.chapters.resolve(url, mode, timeout)
             f = self.chapters.opts_from(op, ed, toggle)
             if f:
                 return f, _chapter_note(op, ed, osrc, esrc)
-        mal = None
-        if self.meta is not None:
+        mal = mal_id
+        if mal is None and self.meta is not None:
             mal = self.meta.resolve_mal(title, ask=False)
         if mal is None or not self.ani.available():
             return [], 'none (no usable chapters, no ani-skip data)'

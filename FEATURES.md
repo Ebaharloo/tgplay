@@ -25,6 +25,13 @@ this file = behaviour + to-do.)
 - `tgp <channel>` — last-N mkv menu; `-e 2-5,9` `-a` `-f 720` `--window N`.
 - `tg`/`tgp --menu`; `tg`/`tgp login` / `logout`.
 
+**AnimeX (`axp`)**
+- `axp <animex-url>` — stream animex.one with English **sub/dub**.
+- `axp` / `axp --menu` — the same desktop/terminal menus; the option list is
+  every audio type × every server AnimeX reports (dub pre-selected).
+- `-e RANGE` / `-a`, `--dub` / `--sub`, plus the shared
+  `--skip` / `--cut` / `--next` / mpv flags.
+
 ---
 
 ## Playback
@@ -127,6 +134,26 @@ title cache.
 
 ---
 
+## AnimeX (English dub) — `axp`
+
+- A **separate provider** (`tp/providers/animex.py`) with its own entry point
+  `axp`; `agp` (animegate) stays untouched. Everything else — proxy, player,
+  skip, menus, resume, GUI — is the shared machinery.
+- Chain (plain JSON, no obfuscation): the anime page's SvelteKit `__data.json`
+  gives the internal slug + AniList/MAL ids; then `pp.animex.one/rest/api/`
+  `episodes` · `servers` · `sources` gives the episode list, the **sub/dub
+  server list**, and a fresh **HLS** url + subtitle tracks.
+- **Every audio × server AnimeX reports becomes a menu option** (dub first);
+  the list is dynamic, nothing hardcoded.
+- HLS is played by **mpv directly** (`tp.sources.DirectSource`) with
+  `Referer: https://megaplay.buzz/`; the range proxy/cache is bypassed (HLS is
+  segmented and tokens are short-lived).
+- `stream()` **probes** each candidate server and skips ones that won't serve
+  us; on an mpv open failure the Playlist calls `provider.rotate()` to try the
+  next server. The MAL id (from the API) drives ani-skip intro/outro skipping.
+
+---
+
 ## Telegram specifics
 
 - Session at `~/.config/tgp/tg.session` (base name must NOT end in `.session`;
@@ -142,10 +169,10 @@ title cache.
 
 ```
 tp/config  tp/http  tp/sources  tp/cache  tp/proxy
-tp/providers/{base,animegate,telegram}
+tp/providers/{base,animegate,telegram,animex}
 tp/chapters  tp/skip  tp/metadata  tp/simkl  tp/titles
 tp/prefetch  tp/player  tp/playlist  tp/setup  tp/ui  tp/tracking
-tp/episodes  tp/log  tp/cli  tp/cli_telegram  tp/gui_qt  tp/gui  tp/icon
+tp/episodes  tp/log  tp/cli  tp/cli_telegram  tp/cli_animex  tp/gui_qt  tp/gui  tp/icon
 ```
 Thin entry points: `agp`, `tg`, `tgp` (symlinked into `~/.local/bin`; scripts use
 `realpath(__file__)` so symlinks work). Tests: `tests/test_*.py`.
