@@ -114,7 +114,7 @@ def main_axp(argv: Optional[List[str]] = None) -> int:
     chosen = None
 
     if interactive:
-        opts, mpv = setup.apply(opts, mpv, setup.load(cfg.ui))
+        opts, mpv = setup.apply(opts, mpv, setup.load(cfg.ui, 'axp'))
         provider.set_audio(opts.get('audio') or audio)
         provider.fetch_groups()
         provider.select(opts['f'])
@@ -144,7 +144,7 @@ def main_axp(argv: Optional[List[str]] = None) -> int:
                 print('menu: cancelled')
                 return 0
             opts, mpv = res
-            setup.save(cfg.ui, opts, mpv)
+            setup.save(cfg.ui, opts, mpv, 'axp')
             provider.set_audio(opts.get('audio') or audio)
             provider.select(opts['f'])
             eps = provider.episodes()
@@ -170,7 +170,7 @@ def main_axp(argv: Optional[List[str]] = None) -> int:
             st = resume_pt[1] if (resume_pt and pl[0].num == resume_pt[0]) else None
             nf = ('cut' if (o['nowait'] and o['cut']) else o['next']) \
                 if o['next'] else False
-            setup.save(cfg.ui, o, m)
+            setup.save(cfg.ui, o, m, 'axp')
             playlist.run(pl, skip_mode=(o['skip'] or 'all'),
                          skip_toggle=o['skip_toggle'], cut=o['cut'],
                          start=st, next_frac=nf, extra=m)

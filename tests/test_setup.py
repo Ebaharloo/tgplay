@@ -32,8 +32,39 @@ def test_roundtrip_and_precedence():
     print('PASS setup roundtrip + CLI precedence')
 
 
+def test_namespaced_per_source():
+    import json
+    p = os.path.join(tempfile.mkdtemp(prefix='tgplay-setup-'), 'ui.json')
+    setup.save(p, {'skip': 'all', 'f': '720'}, [], 'agp')
+    setup.save(p, {'skip': 'off', 'f': 'nero (dub+sub)'}, [], 'axp')
+    assert setup.load(p, 'agp')['quality'] == '720'
+    assert setup.load(p, 'axp')['quality'] == 'nero (dub+sub)'
+    # legacy flat file: readable as agp, migrated on next save
+    flat = os.path.join(tempfile.mkdtemp(prefix='tgplay-setup-'), 'ui.json')
+    json.dump({'skip': 'all', 'quality': 'DUB · nero'}, open(flat, 'w'))
+    assert setup.load(flat, 'agp')['quality'] == 'DUB · nero'
+    assert setup.load(flat, 'axp') == {}
+    setup.save(flat, {'f': '480'}, [], 'axp')
+    all_ = json.load(open(flat))
+    assert all_['agp']['quality'] == 'DUB · nero'
+    assert all_['axp']['quality'] == '480'
+    print('PASS setup namespaced per source + legacy migration')
+
+
+def test_animegate_tolerates_unknown_quality():
+    from tp.providers.animegate import AnimeGateProvider
+    p = AnimeGateProvider('https://animegate.ir/anime/x-1')
+    p.groups = [{'id': 1, 'label': '480P هاردساب', 'data': []},
+                {'id': 2, 'label': '720P هاردساب', 'data': []}]
+    p.select('DUB · nero')          # a leaked AnimeX label -> fall back
+    assert p.group['id'] == 1, p.group
+    print('PASS animegate tolerates an unknown quality')
+
+
 def main():
     test_roundtrip_and_precedence()
+    test_namespaced_per_source()
+    test_animegate_tolerates_unknown_quality()
     print('SETUP OK')
 
 

@@ -97,7 +97,9 @@ title cache.
 3. **Options form** — Quality, Episodes, Skip mode, Skip-toggle, `--next`,
    `--nowait`, Cut, Fullscreen, Extra mpv flags. A help panel explains the
    highlighted option; a footer line shows the keys.
-- **Remembers the last setup** (`ui.json`); CLI flags always win.
+- **Remembers the last setup** (`ui.json`); CLI flags always win. The saved
+  setup is **namespaced per source** (`ui.json` → `{agp, axp, tgp}`), so an
+  AnimeX server choice can't leak into AnimeGate (and vice-versa).
 - **App icon** (`tp/assets/tgplay.svg` + PNGs 16–512). `agp icon` installs it
   into the hicolor theme plus a `tgplay.desktop` launcher entry;
   `StartupWMClass=tgplay` + `setDesktopFileName('tgplay')` keep the taskbar

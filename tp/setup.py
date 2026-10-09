@@ -18,14 +18,21 @@ def _quality_key(label) -> str:
     return m.group(1) if m else str(label)
 
 
-def load(path) -> dict:
+def load(path, key: str = 'agp') -> dict:
     try:
-        return json.load(open(path))
+        d = json.load(open(path))
     except Exception:
         return {}
+    if not isinstance(d, dict):
+        return {}
+    if isinstance(d.get(key), dict):        # namespaced per source
+        return d[key]
+    if key == 'agp' and ('quality' in d or 'skip' in d or 'extra' in d):
+        return d                            # legacy flat file belongs to agp
+    return {}
 
 
-def save(path, opts: dict, mpv: List[str]) -> dict:
+def save(path, opts: dict, mpv: List[str], key: str = 'agp') -> dict:
     d = {
         'skip': opts.get('skip') or False,
         'skip_toggle': bool(opts.get('skip_toggle')),
@@ -38,8 +45,18 @@ def save(path, opts: dict, mpv: List[str]) -> dict:
         'audio': opts.get('audio') or 'dub',
     }
     try:
+        all_ = {}
+        try:
+            all_ = json.load(open(path))
+            if not isinstance(all_, dict):
+                all_ = {}
+        except Exception:
+            all_ = {}
+        if key not in all_ and ('quality' in all_ or 'skip' in all_):
+            all_ = {'agp': all_}            # migrate the legacy flat file
+        all_[key] = d
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        json.dump(d, open(path, 'w'))
+        json.dump(all_, open(path, 'w'))
     except Exception:
         pass
     return d

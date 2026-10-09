@@ -149,9 +149,18 @@ class AnimeGateProvider(Provider):
     def select(self, quality=None):
         if self.groups is None:
             self.fetch_groups()
-        self.group = pick_group(self.groups,
-                                quality if quality is not None else self.quality,
-                                self.all_groups, self.prompt)
+        want = quality if quality is not None else self.quality
+        try:
+            self.group = pick_group(self.groups, want, self.all_groups,
+                                    self.prompt)
+        except ValueError:
+            self.group = self.groups[0]
+            try:
+                from .. import log
+                log.cprint(f'quality "{want}" not found - using '
+                           f'"{self.group.get("label")}"')
+            except Exception:
+                pass
         self._gid = self.group['id']
         self._eps = all_eps(self._aid, self.group['id'], self.group,
                             self._csrf, self._cs, self.http)
