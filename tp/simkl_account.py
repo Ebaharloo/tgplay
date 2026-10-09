@@ -240,6 +240,8 @@ class SimklAccount:
             'watched': it.get('watched_episodes_count') or 0,
             'total': it.get('total_episodes_count') or 0,
             'next_ep': next_ep,
+            'air_date': nxt.get('date'),
+            'last_watched': it.get('last_watched_at'),
             'poster': show.get('poster') or it.get('poster'),
         }
 

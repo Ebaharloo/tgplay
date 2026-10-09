@@ -38,13 +38,37 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
 
     win = W.QWidget()
     win.setWindowTitle('tgplay')
-    win.resize(900, 820)
+    win.resize(1180, 820)
     ic = _icon(G)
     if ic is not None:
         win.setWindowIcon(ic)
-    root = W.QVBoxLayout(win)
-    root.setContentsMargins(12, 10, 12, 10)
+    outer = W.QHBoxLayout(win)
+    outer.setContentsMargins(12, 10, 12, 10)
+    outer.setSpacing(10)
+    root = W.QVBoxLayout()
     root.setSpacing(8)
+    outer.addLayout(root, 1)
+    side = W.QVBoxLayout()
+    side.setSpacing(8)
+    outer.addLayout(side, 0)
+
+    # --- right sidebar: feed / calendar (top) + history (bottom) --------
+    fbox = W.QGroupBox('Feed · calendar')
+    fv = W.QVBoxLayout(fbox)
+    feed = W.QListWidget()
+    feed.setAlternatingRowColors(True)
+    feed.setMinimumWidth(340)
+    fv.addWidget(feed)
+    side.addWidget(fbox, 1)
+    hbox = W.QGroupBox('History')
+    hv = W.QVBoxLayout(hbox)
+    hist = W.QListWidget()
+    hist.setAlternatingRowColors(True)
+    hist.setMaximumHeight(240)
+    hv.addWidget(hist)
+    side.addWidget(hbox, 0)
+    side_btn = W.QPushButton('↻  refresh feed & history')
+    side.addWidget(side_btn)
 
     # --- search row -----------------------------------------------------
     srow = W.QHBoxLayout()
@@ -448,6 +472,37 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
             libq.put(('play', e, res))
         threading.Thread(target=work, daemon=True).start()
 
+    def _fmt_date(s):
+        try:
+            from datetime import datetime
+            d = datetime.fromisoformat(str(s).replace('Z', '+00:00'))
+            return d.strftime('%a %d %b %Y')
+        except Exception:
+            return str(s)[:10]
+
+    def load_side():
+        feed.clear()
+        hist.clear()
+        feed.addItem('loading…')
+
+        def work():
+            from .simkl_account import SimklAccount
+            try:
+                connected = SimklAccount(cfg).logged_in() if cfg is not None else False
+            except Exception:
+                connected = False
+            if not connected:
+                libq.put(('feed', None, None))
+                return
+            try:
+                from .library import upcoming, recent
+                up = upcoming(cfg, http)
+                rc = recent(cfg, http)
+            except Exception:
+                up, rc = [], []
+            libq.put(('feed', up, rc))
+        threading.Thread(target=work, daemon=True).start()
+
     def drain_lib():
         while True:
             try:
@@ -456,6 +511,29 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
                 return
             if msg[0] == 'rows':
                 _show_lib(msg[1])
+            elif msg[0] == 'feed':
+                _, up, rc = msg
+                feed.clear()
+                hist.clear()
+                if up is None:
+                    feed.addItem('connect:  tgplay simkl login')
+                    hist.addItem('connect:  tgplay simkl login')
+                    continue
+                if not up:
+                    feed.addItem('no upcoming episodes')
+                for e in up:
+                    it = W.QListWidgetItem(
+                        f"{_fmt_date(e.get('air_date'))}   ep {e.get('next_ep')}   {e['title']}")
+                    it.setData(C.Qt.UserRole, e)
+                    feed.addItem(it)
+                if not rc:
+                    hist.addItem('no history')
+                for e in rc:
+                    it = W.QListWidgetItem(
+                        f"{str(e.get('last_watched'))[:10]}   "
+                        f"{e['watched']}/{e['total']}   {e['title']}")
+                    it.setData(C.Qt.UserRole, e)
+                    hist.addItem(it)
             elif msg[0] == 'play':
                 _, entry, res = msg
                 if res:
@@ -470,6 +548,9 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
 
     lib_btn.clicked.connect(load_library)
     lib.itemDoubleClicked.connect(play_library)
+    side_btn.clicked.connect(load_side)
+    feed.itemDoubleClicked.connect(play_library)
+    hist.itemDoubleClicked.connect(play_library)
     poll.timeout.connect(drain_lib)
 
     def drain_log():
@@ -535,6 +616,7 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
         win.raise_(); win.activateWindow()
     except Exception:
         pass
+    load_side()
 
     mode = os.environ.get('AGP_GUI_TEST')
     if initial:

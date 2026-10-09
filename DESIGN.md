@@ -148,6 +148,7 @@ window (`tp/gui_all`) uses `tp/session.open_session()` instead.
 | Login to a tracker | Simkl **AUTH V2 device / PIN** flow (no redirect); tokens in `simkl_auth.json`; refresh on demand | `tp/simkl_account.py` |
 | Watch list / create / sync lists | `GET /sync/all-items/anime/{watching,plantowatch}` — Simkl two-way-syncs MAL/AniList/Kitsu/Trakt, so one account covers them | `tp/simkl_account.py`, `tp/library.py` |
 | Feed of new episodes | watching entries with `next_to_watch` | `tp/library.py` (`up_next`) |
+| Feed / calendar + history rails | `next_to_watch_info.date` → **Feed · calendar** (right sidebar, top); `last_watched_at` → **History** (bottom) | `tp/library.py` (`upcoming`/`recent`), `tp/gui_all.py` |
 | Play straight from the list | `find_source()` resolves the title on our sources → `session.open_session` → player at the next episode | `tp/library.py`, `tp/gui_all.py` |
 | Sync progress back | on episode finish, `POST /sync/history` via a Playlist-compatible `SimklTracker` | `tp/simkl_account.py`, `tp/session.py` |
 | (legacy) AniList tracking | Auth-Pin login + save/sync + notices | `tp/tracking.py` |

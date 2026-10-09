@@ -213,6 +213,10 @@ title cache.
 - **Play from the list** — the app's **📚 Library** panel lists "up next";
   double-click resolves the title on our sources (axp dub / agp sub, via
   `tp/library.find_source`) and jumps into the player at the next episode.
+- **Right sidebar** — the unified window has a dedicated sidebar: **Feed ·
+  calendar** on top (your shows' next air dates, soonest first, from
+  `next_to_watch_info.date`) and **History** below (recently watched, from
+  `last_watched_at`). Double-click any row to play it; `↻ refresh` reloads.
 - **Sync back** — finishing an episode pushes progress to Simkl
   (`POST /sync/history`) through a Playlist-compatible `SimklTracker`.
 - CLI: `tgplay simkl login | status | library | logout`.

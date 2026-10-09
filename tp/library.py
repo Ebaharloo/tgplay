@@ -27,6 +27,28 @@ def up_next(cfg, http: Optional[HttpClient] = None) -> List[dict]:
         return []
 
 
+def _all(cfg, http=None) -> List[dict]:
+    try:
+        return SimklAccount(cfg, http).library(
+            ('watching', 'plantowatch', 'hold', 'completed', 'dropped'))
+    except Exception:
+        return []
+
+
+def upcoming(cfg, http: Optional[HttpClient] = None, limit: int = 25) -> List[dict]:
+    """Your shows with an upcoming episode, soonest first (the feed/calendar)."""
+    rows = [e for e in _all(cfg, http) if e.get('air_date')]
+    rows.sort(key=lambda e: str(e['air_date']))
+    return rows[:limit]
+
+
+def recent(cfg, http: Optional[HttpClient] = None, limit: int = 15) -> List[dict]:
+    """What you watched most recently (the history rail)."""
+    rows = [e for e in _all(cfg, http) if e.get('last_watched')]
+    rows.sort(key=lambda e: str(e['last_watched']), reverse=True)
+    return rows[:limit]
+
+
 def find_source(title: str, http: Optional[HttpClient] = None
                 ) -> Optional[Tuple[str, str]]:
     """Best match for `title` on our sources -> (source_id, target).
