@@ -26,7 +26,8 @@ from .translate import Translator, has_cjk
 ANILIST = 'https://graphql.anilist.co'
 _SEARCH = ('query($s:String){Page(page:1,perPage:8){media(search:$s,type:ANIME){'
            'idMal title{romaji english native} synonyms}}}')
-_GENERIC_EP = re.compile(r'^\s*episode\s*\d+\s*$', re.I)
+_GENERIC_EP = re.compile(
+    r'^\s*(episode\s*\d+|ep\s*\d+|第?\s*\d+\s*[集话話話])[\s.:。-]*$', re.I)
 _MAL_SEARCH = 'https://myanimelist.net/search/prefix.json'
 _MAL_UA = 'Mozilla/5.0 (X11; Linux x86_64) Gecko/20100101 Firefox/130.0'
 
@@ -279,8 +280,7 @@ class Metadata:
         if not kw:
             return cur
         try:
-            sid = self.bangumi.subject_id(kw)
-            eps = self.bangumi.episodes(sid) if sid else {}
+            eps = self.bangumi.grouped_episodes(kw)  # all seasons, offset
             self._mark_up('bangumi')
         except Exception:
             self._mark_down('bangumi')

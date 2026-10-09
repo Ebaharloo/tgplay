@@ -37,9 +37,32 @@ def test_search_episodes():
     print('PASS bangumi search + episodes')
 
 
+def test_grouped():
+    b = Bangumi()
+
+    def req(url, data=None):
+        if 'search/subjects' in url:
+            return {'data': [{'id': 1, 'name': '牧神记', 'name_cn': '牧神记'},
+                             {'id': 2, 'name': '牧神记 贰', 'name_cn': '牧神记2'},
+                             {'id': 9, 'name': '牧神的午后', 'name_cn': '牧神的午后'}]}
+        if 'subject_id=1' in url:
+            return {'total': 2, 'data': [{'ep': 1, 'name': 'A'},
+                                         {'ep': 2, 'name': 'B'}]}
+        if 'subject_id=2' in url:
+            return {'total': 2, 'data': [{'ep': 1, 'name': 'C'},
+                                         {'ep': 2, 'name': 'D'}]}
+        return {}
+
+    b._req = req
+    assert b.seasons('牧神记') == [1, 2]          # excludes 牧神的午后
+    assert b.grouped_episodes('牧神记') == {1: 'A', 2: 'B', 3: 'C', 4: 'D'}
+    print('PASS bangumi seasons + grouped episodes (offset)')
+
+
 def main():
     test_cjk_title()
     test_search_episodes()
+    test_grouped()
     print('BANGUMI OK')
 
 

@@ -31,12 +31,39 @@ class Bangumi:
             return json.load(r)
 
     def search(self, keyword: str) -> List[Tuple[int, str, str]]:
-        d = self._req(f'{API}/v0/search/subjects?limit=5',
+        d = self._req(f'{API}/v0/search/subjects?limit=10',
                       {'keyword': keyword, 'filter': {'type': [2]}})
         out = []
         for s in (d.get('data') or []):
             if s.get('id'):
                 out.append((s['id'], s.get('name') or '', s.get('name_cn') or ''))
+        return out
+
+    def seasons(self, keyword: str) -> List[int]:
+        """Subject ids whose name/name_cn contains `keyword`, release order.
+
+        For '牧神记' this returns season 1,2,3,4 -> we can stitch them into one
+        episode numbering when a site lists a whole multi-season show."""
+        hits = [(i, n, cn) for i, n, cn in self.search(keyword)
+                if keyword in (n or '') or keyword in (cn or '')]
+        if hits:
+            hits.sort(key=lambda t: t[0])  # ascending id ~ release order
+            return [i for i, _n, _cn in hits]
+        sid = self.subject_id(keyword)
+        return [sid] if sid else []
+
+    def grouped_episodes(self, keyword: str) -> Dict[int, str]:
+        """{global episode number: title} across all seasons of `keyword`,
+        offset by each season's episode count."""
+        out: Dict[int, str] = {}
+        offset = 0
+        for sid in self.seasons(keyword):
+            eps = self.episodes(sid)
+            if not eps:
+                continue
+            for n, t in eps.items():
+                out[offset + n] = t
+            offset += max(eps)
         return out
 
     def subject_id(self, keyword: str) -> Optional[int]:
