@@ -300,7 +300,14 @@ def main(argv: Optional[List[str]] = None):
         if missing:
             log.cprint(f'titles: looking up {len(missing)} missing '
                        'episode name(s)...')
-            meta.refresh_titles(mal, provider.title)
+            th = threading.Thread(
+                target=lambda: meta.refresh_titles(mal, provider.title),
+                daemon=True)
+            th.start()
+            th.join(timeout=5)  # bounded: the menu never hangs on metadata
+            if th.is_alive():
+                log.cprint('titles: still fetching names in the background '
+                           '(they will show next time)')
             if mal:
                 meta._refreshed.add(mal)  # no per-episode search this run
         labels = titles.labels(mal, eps)

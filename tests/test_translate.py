@@ -41,8 +41,19 @@ def test_translate():
     print('PASS translate (cache + filters)')
 
 
+def test_batch():
+    p = os.path.join(tempfile.mkdtemp(prefix='tgplay-trb-'), 'translations.json')
+    tr = Translator(p, http=FakeHttp(
+        {'responseData': {'translatedText': 'A\nB\nC'}}))
+    tr.ensure(['天黑别出门', '我是霸体', '小魔崽子'])
+    assert tr.get('天黑别出门') == 'A' and tr.get('我是霸体') == 'B' \
+        and tr.get('小魔崽子') == 'C', tr._cache
+    print('PASS translate batch (one request for many names)')
+
+
 def main():
     test_translate()
+    test_batch()
     print('TRANSLATE OK')
 
 
