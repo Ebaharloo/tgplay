@@ -40,6 +40,7 @@ class Player:
         self.binary = binary
         self.user_agent = user_agent
         self.referer = referer
+        self._proc = None
 
     def command(self, url: str, *, title: Optional[str] = None,
                 extra: Optional[List[str]] = None, start: Optional[int] = None,
@@ -72,9 +73,23 @@ class Player:
     def play(self, cmd: List[str]) -> int:
         _flush_stdin()
         try:
-            return subprocess.run(cmd).returncode
+            self._proc = subprocess.Popen(cmd)
+        except Exception:
+            return 1
+        try:
+            return self._proc.wait()
         except KeyboardInterrupt:
-            return 4  # mpv got SIGINT too: treat as a user quit
+            self.stop()  # mpv got SIGINT too: treat as a user quit
+            return 4
+
+    def stop(self):
+        """Terminate the current mpv (used by the GUI Stop button)."""
+        p = self._proc
+        if p is not None and p.poll() is None:
+            try:
+                p.terminate()
+            except Exception:
+                pass
 
 
 class PosWatcher(threading.Thread):

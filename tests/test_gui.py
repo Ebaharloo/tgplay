@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""test_gui - the Tkinter menu returns the right (chosen, opts, mpv).
+"""test_gui - the Tkinter controller passes the right (chosen, opts) to play.
 
-Skips when no display is available. Uses AGP_GUI_TEST to auto-act instead of
-clicking. Run: .venv/bin/python tests/test_gui.py   (or python3)
+Skips when no display is available. AGP_GUI_TEST auto-acts instead of clicking.
+Run: .venv/bin/python tests/test_gui.py   (or python3)
 """
 import os
 import sys
@@ -17,33 +17,40 @@ def _opts():
             'cut': None, 'f': '720p'}
 
 
-def test_configure():
+def test_controller():
     if not gui.available():
         print('SKIP gui (no display)')
         return
     groups = [{'label': '720p'}, {'label': '1080p'}]
     labels = {1: 'Episode 1', 2: 'Episode 2', 3: 'Episode 3'}
+    got = {}
+
+    def play(chosen, opts, mpv):
+        got['chosen'] = chosen
+        got['opts'] = opts
+
     try:
-        os.environ['AGP_GUI_TEST'] = 'play'          # 'Play from here' at resume
-        out = gui.configure('Test', 'https://x', groups, labels, 2, _opts(), [])
-        assert out is not None
-        chosen, opts, mpv = out
-        assert chosen == [2, 3], chosen              # resume=2 -> 2,3
-        assert opts['f'] == '720p'
+        os.environ['AGP_GUI_TEST'] = 'play'      # 'Play from here' at resume=2
+        gui.controller('Test', 'https://x', groups, labels, 2, _opts(), [],
+                       play, one_shot=True)
+        assert got['chosen'] == [2, 3], got            # resume=2 -> 2,3
+        assert got['opts']['f'] == '720p', got
 
         os.environ['AGP_GUI_TEST'] = 'all'
-        chosen, _o, _m = gui.configure('Test', '', groups, labels, None, _opts(), [])
-        assert chosen == [1, 2, 3], chosen
+        gui.controller('Test', '', groups, labels, None, _opts(), [], play,
+                       one_shot=True)
+        assert got['chosen'] == [1, 2, 3], got
 
-        os.environ['AGP_GUI_TEST'] = 'cancel'
-        assert gui.configure('Test', '', groups, labels, None, _opts(), []) is None
+        os.environ['AGP_GUI_TEST'] = 'close'     # Close without playing
+        gui.controller('Test', '', groups, labels, None, _opts(), [], play,
+                       one_shot=True)
     finally:
         os.environ.pop('AGP_GUI_TEST', None)
-    print('PASS gui configure (play / all / cancel)')
+    print('PASS gui controller (play / all / close)')
 
 
 def main():
-    test_configure()
+    test_controller()
     print('GUI OK')
 
 
