@@ -31,7 +31,7 @@ VER = '1.0'
 # account via the device/PIN link. Register the app ONCE at
 # https://simkl.com/settings/developer/ (client type "TV, devices & command
 # line"), then paste its client_id here to share it with every user.
-BUILTIN_CLIENT_ID = ''
+BUILTIN_CLIENT_ID = 'SIMKL_CLIENT_ID_NOW_IN_CONFIG'
 
 
 def _read(path, default):
