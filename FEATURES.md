@@ -224,8 +224,9 @@ title cache.
 - **Right sidebar** — two **sortable tables** (click a header to reorder):
   **Feed · calendar** on top (Date · Ep · Title — your shows' next air dates,
   from `next_to_watch_info.date`) and **History** below (Watched · Prog · Title
-  — recently watched, from `last_watched_at`). Double-click a row to play it;
-  `↻ refresh` reloads.
+  — recently watched, from `last_watched_at`). Double-click a row to load it;
+  `↻ refresh` reloads, and the sidebar **auto-refreshes right after a sync**
+  lands, so a freshly-watched episode shows up on its own.
 - **Sync back** — an episode is pushed to **Simkl** (the hub) *and* AniList by
   **MAL / AniList id** — taken from the provider, or **resolved from the title**
   when the source lacks one (so animegate's *Mushen Ji* maps to Simkl's *Tales

@@ -584,6 +584,12 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
     hist.itemDoubleClicked.connect(lambda it: load_entry(_row_entry(hist, it)))
     poll.timeout.connect(drain_lib)
 
+    # refresh the sidebar shortly after a sync lands (history/feed changed)
+    side_timer = C.QTimer()
+    side_timer.setSingleShot(True)
+    side_timer.setInterval(1500)
+    side_timer.timeout.connect(load_side)
+
     def drain_log():
         if state['closing']:
             return
@@ -597,6 +603,8 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
             logbox.appendPlainText('\n'.join(lines))
             logbox.verticalScrollBar().setValue(
                 logbox.verticalScrollBar().maximum())
+            if any(('synced:' in ln) or ('marked ep' in ln) for ln in lines):
+                side_timer.start()          # auto-refresh feed/history
 
     def refresh_status():
         if state['closing']:
@@ -612,7 +620,7 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
 
     def close():
         state['closing'] = True
-        for t in (debounce, poll, log_timer, st_timer):
+        for t in (debounce, poll, log_timer, st_timer, side_timer):
             try:
                 t.stop()
             except Exception:
