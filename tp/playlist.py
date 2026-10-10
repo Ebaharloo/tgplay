@@ -142,14 +142,15 @@ class Playlist:
                     sock, self.interval,
                     on_pos=lambda p, _n=ep.num: self._save(title, _n, p),
                     fire_when=fire, on_fire=on_fire)
-                if start is not None:
+                ep_start = start if i == 0 else None
+                if i == 0 and start is not None:
                     log.cprint(f'start: ep{ep.num} at {int(start)}s')
-                elif ep.num == episodes[0].num:
+                elif i == 0:
                     log.cprint(f'start: ep{ep.num} at 0s (no saved position)')
                 watcher.start()
                 cmd = self.player.command(
                     url, title=name, extra=(list(extra or []) + extra_direct + flags),
-                    start=start, cut=cut, ipc=sock)
+                    start=ep_start, cut=cut, ipc=sock)
                 tag = (f'  [start {int(start)}s]' if start is not None else '')
                 if cut:
                     tag += f'  [cut {cut}s]'
