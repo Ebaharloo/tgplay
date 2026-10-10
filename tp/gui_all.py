@@ -59,7 +59,8 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
     qapp = _app()
     from .http import HttpClient
     http = HttpClient()
-    state: dict = {'session': None, 'closing': False, 'msg': ''}
+    state: dict = {'session': None, 'closing': False, 'msg': '',
+                   'loading': False, 'playing': False}
 
     win = W.QWidget()
     win.setWindowTitle('tgplay')
@@ -243,10 +244,16 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
         s = state['session']
         if s is None or not chosen:
             return
+        if state.get('playing'):
+            return                          # one video at a time
         o, m = apply_opts()
+        state['playing'] = True
         state['msg'] = 'starting…'
         if one_shot:
-            s.play(chosen, o, m)
+            try:
+                s.play(chosen, o, m)
+            finally:
+                state['playing'] = False
             close()
             return
 
@@ -256,6 +263,8 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
                 state['msg'] = ''
             except Exception as ex:
                 state['msg'] = f'error: {ex}'
+            finally:
+                state['playing'] = False
         threading.Thread(target=run, daemon=True).start()
 
     def from_here():
@@ -370,12 +379,21 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
         fill_results(items)
 
     def load_target(src, target):
-        state['msg'] = 'loading…'
+        if state.get('loading'):
+            return                          # ignore repeat clicks while loading
+        state['loading'] = True
+        state['msg'] = f'loading  {target} …'
+        try:
+            head.setText(f'loading  {target} …')
+        except Exception:
+            pass
         try:
             s = loader(src, target)
         except Exception as ex:
             state['msg'] = f'error: {ex}'
+            state['loading'] = False
             return
+        state['loading'] = False
         if cfg is not None:
             history.add(cfg, link=target)
         set_session(s)
@@ -446,10 +464,9 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
             if it and int(it.data(C.Qt.UserRole)) == int(ep):
                 table.selectRow(r)
                 table.setCurrentCell(r, 1)
-                from_here()
-                return
+                return                       # select only; Play buttons start it
 
-    def play_entry(e):
+    def load_entry(e):
         if not e:
             return
         state['msg'] = f"finding “{e['title']}” on our sources…"
@@ -460,7 +477,7 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
                 res = find_source(e['title'], http)
             except Exception:
                 res = None
-            libq.put(('play', e, res))
+            libq.put(('load', e, res))
         threading.Thread(target=work, daemon=True).start()
 
     def _fmt_date(s):
@@ -546,12 +563,12 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
                     hist.insertRow(0)
                     hist.setItem(0, 2, W.QTableWidgetItem('no history'))
                 hist.setSortingEnabled(True)
-            elif msg[0] == 'play':
+            elif msg[0] == 'load':
                 _, entry, res = msg
                 if res:
                     load_target(res[0], res[1])
                     C.QTimer.singleShot(
-                        80, lambda ep=entry.get('next_ep'): _goto_ep(ep))
+                        120, lambda ep=entry.get('next_ep'): _goto_ep(ep))
                 else:
                     state['msg'] = f"not found on our sources: {entry['title']}"
 
@@ -563,8 +580,8 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
 
     hist_btn.clicked.connect(show_history)
     side_btn.clicked.connect(load_side)
-    feed.itemDoubleClicked.connect(lambda it: play_entry(_row_entry(feed, it)))
-    hist.itemDoubleClicked.connect(lambda it: play_entry(_row_entry(hist, it)))
+    feed.itemDoubleClicked.connect(lambda it: load_entry(_row_entry(feed, it)))
+    hist.itemDoubleClicked.connect(lambda it: load_entry(_row_entry(hist, it)))
     poll.timeout.connect(drain_lib)
 
     def drain_log():
@@ -620,7 +637,6 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
     b_all.clicked.connect(lambda: do_play(all_nums()))
     b_stop.clicked.connect(do_stop)
     b_close.clicked.connect(close)
-    table.doubleClicked.connect(lambda _i: from_here())
     win.destroyed.connect(lambda *_: (_log.__setattr__('SINK', prev_sink)))
 
     show_history()

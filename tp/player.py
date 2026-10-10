@@ -110,6 +110,7 @@ class PosWatcher(threading.Thread):
         self.on_fire = on_fire
         self.wait = wait
         self.last = 0.0
+        self.duration = 0.0
 
     def _query(self, prop: str) -> Optional[float]:
         c = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -148,6 +149,13 @@ class PosWatcher(threading.Thread):
             if p is None:
                 continue
             self.last = p
+            if self.duration == 0.0:
+                try:
+                    d = self._query('duration')
+                    if d:
+                        self.duration = d
+                except Exception:
+                    pass
             if self.on_pos:
                 self.on_pos(p)
             if not fired and self.fire_when and self.on_fire and p > 0:

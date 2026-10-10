@@ -38,6 +38,11 @@ this file = behaviour + to-do.)
   Paste any link (animegate / animex / t.me) or `@channel` too.
 - Picking a result **loads it in place** — no new window and no app restart;
   the field also shows **recent links and searches** when empty.
+- **Only the Play buttons start mpv.** Double-clicking a search result, a
+  sidebar row, or an episode **loads / selects** it (with a clear `loading …`
+  in the status and title) — it never auto-plays. Playback starts only from
+  **Play from here / Only selected / All**, and **one video runs at a time**
+  (repeat clicks while loading/playing are ignored).
 - `tgplay agp|axp|tg|tgp …` — run one source directly. The **desktop icon
   launches `tgplay`**.
 
@@ -221,11 +226,12 @@ title cache.
   from `next_to_watch_info.date`) and **History** below (Watched · Prog · Title
   — recently watched, from `last_watched_at`). Double-click a row to play it;
   `↻ refresh` reloads.
-- **Sync back** — finishing an episode pushes progress to **Simkl** (the hub)
-  *and* AniList, through a Playlist-compatible composite tracker
-  (`tp/tracking.make_tracker`). Turn it off per run with the **"Sync progress
-  to Simkl"** checkbox in Options, or `--no-sync` on the CLI; the choice is
-  remembered (`ui.json`).
+- **Sync back** — an episode is pushed to **Simkl** (the hub) *and* AniList by
+  **MAL / AniList id** (not title, so Mushen Ji ↔ "Tales of Herding Gods" and
+  Konosuba S3 still match), via `tp/tracking.make_tracker`. It marks when the
+  episode **finishes**, **or once ≥70% played** even if you quit
+  (`AGP_WATCHED_FRAC`, default `0.70`). Turn it off per run with the **"Sync
+  progress to Simkl"** checkbox or `--no-sync` (remembered in `ui.json`).
 - CLI: `tgplay simkl login | status | library | logout`.
 
 ---

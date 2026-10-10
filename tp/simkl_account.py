@@ -311,19 +311,28 @@ class SimklTracker:
                 best, score = e, r
         return best if score >= 0.55 else None
 
-    def mark_watched(self, title, num, ask=False):
+    def mark_watched(self, title, num, ask=False, mal=None, anilist=None):
         from . import log
-        e = self._match(title)
-        if not e:
-            log.cprint(f'simkl: no library match for "{title}" — not synced')
-            return None
+        ids = {}
+        if mal:
+            ids['mal'] = mal
+        if anilist:
+            ids['anilist'] = anilist
+        label = (f'mal {mal}' if mal else f'anilist {anilist}') if ids else title
+        if not ids:
+            e = self._match(title)
+            if not e:
+                log.cprint(f'simkl: no library match for "{title}" — not synced')
+                return None
+            ids = e
+            label = e.get('title') or title
         try:
-            added = self.acc.mark_watched(e, num)
+            added = self.acc.mark_watched(ids, num)
         except Exception as ex:
-            log.cprint(f'simkl: sync failed for "{e["title"]}" ({ex})')
+            log.cprint(f'simkl: sync failed for {label} ({ex})')
             return None
         if added:
-            log.cprint(f'simkl: marked ep {num} — {e["title"]}')
+            log.cprint(f'simkl: marked ep {num} — {label}')
         else:
-            log.cprint(f'simkl: ep {num} already watched — {e["title"]}')
+            log.cprint(f'simkl: ep {num} already watched — {label}')
         return added

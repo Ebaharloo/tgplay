@@ -150,8 +150,8 @@ class Tracker:
                             'next_airing': nae})
         return out
 
-    def mark_watched(self, title, watched, ask=False):
-        mid = self.resolve_media(title, ask=ask)
+    def mark_watched(self, title, watched, ask=False, mal=None, anilist=None):
+        mid = anilist or self.resolve_media(title, ask=ask)
         if not mid:
             return None
         m = self.media(mid)
@@ -314,12 +314,13 @@ class MultiTracker:
                 pass
         return False
 
-    def mark_watched(self, title, num, ask=False):
+    def mark_watched(self, title, num, ask=False, mal=None, anilist=None):
         from . import log
         done = []
         for t in self.trackers:
             try:
-                if t.enabled() and t.mark_watched(title, num):
+                if t.enabled() and t.mark_watched(title, num, mal=mal,
+                                                  anilist=anilist):
                     name = type(t).__name__.replace('Tracker', '') or 'tracker'
                     done.append(name)
             except Exception as ex:

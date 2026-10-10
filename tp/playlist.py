@@ -15,10 +15,13 @@ from . import log
 from .episodes import Episode
 from .player import PosWatcher
 
+# Mark an episode watched once this fraction played (even if the user quits).
+WATCHED_FRAC = float(os.environ.get('AGP_WATCHED_FRAC', '0.70'))
 
-def _safe(fn, *a):
+
+def _safe(fn, *a, **k):
     try:
-        fn(*a)
+        fn(*a, **k)
     except Exception as ex:
         log.cprint(f'track: sync failed ({ex})')
 
@@ -160,7 +163,17 @@ class Playlist:
                 except OSError:
                     pass
 
+                dur = getattr(watcher, 'duration', 0) or 0
+                pos = getattr(watcher, 'last', 0) or 0
+                frac = (pos / dur) if dur else 0.0
+                finished = (rc == 0) or (frac >= WATCHED_FRAC)
+
                 if rc == 4:  # user quit
+                    if finished:
+                        log.cprint(f'watched: {frac:.0%} of ep{ep.num} — '
+                                   'syncing to trackers')
+                        self._save(title, ep.num + 1, 0)
+                        self._mark(ep.num)
                     return
                 if rc == 2 and attempt < 2:  # failed to open: fresh link, retry
                     attempt += 1
@@ -176,7 +189,10 @@ class Playlist:
                             pass
                     log.cprint(f'load: ep{ep.num} failed to open -> retry {attempt}')
                     continue
-                if rc == 0:
+                if finished:
+                    if rc != 0:
+                        log.cprint(f'watched: {frac:.0%} of ep{ep.num} — '
+                                   'syncing to trackers')
                     self._save(title, ep.num + 1, 0)
                     self._mark(ep.num)
                 break
@@ -190,6 +206,9 @@ class Playlist:
                 return
         except Exception:
             return
+        mal = getattr(self.provider, 'mal_id', None)
+        anilist = getattr(self.provider, 'anilist_id', None)
         threading.Thread(
-            target=lambda: _safe(self.tracker.mark_watched, self.provider.title, num),
+            target=lambda: _safe(self.tracker.mark_watched, self.provider.title,
+                                 num, mal=mal, anilist=anilist),
             daemon=True).start()
