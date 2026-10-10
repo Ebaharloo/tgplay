@@ -208,6 +208,13 @@ class Playlist:
             return
         mal = getattr(self.provider, 'mal_id', None)
         anilist = getattr(self.provider, 'anilist_id', None)
+        if not mal and not anilist:
+            meta = getattr(self.skip, 'meta', None) if self.skip else None
+            if meta is not None:
+                try:
+                    mal = meta.resolve_mal(self.provider.title, ask=False)
+                except Exception:
+                    mal = None
         threading.Thread(
             target=lambda: _safe(self.tracker.mark_watched, self.provider.title,
                                  num, mal=mal, anilist=anilist),

@@ -227,9 +227,10 @@ title cache.
   — recently watched, from `last_watched_at`). Double-click a row to play it;
   `↻ refresh` reloads.
 - **Sync back** — an episode is pushed to **Simkl** (the hub) *and* AniList by
-  **MAL / AniList id** (not title, so Mushen Ji ↔ "Tales of Herding Gods" and
-  Konosuba S3 still match), via `tp/tracking.make_tracker`. It marks when the
-  episode **finishes**, **or once ≥70% played** even if you quit
+  **MAL / AniList id** — taken from the provider, or **resolved from the title**
+  when the source lacks one (so animegate's *Mushen Ji* maps to Simkl's *Tales
+  of Herding Gods*) — via `tp/tracking.make_tracker`. It marks when the episode
+  **finishes**, **or once ≥70% played** even if you quit
   (`AGP_WATCHED_FRAC`, default `0.70`). Turn it off per run with the **"Sync
   progress to Simkl"** checkbox or `--no-sync` (remembered in `ui.json`).
 - CLI: `tgplay simkl login | status | library | logout`.
