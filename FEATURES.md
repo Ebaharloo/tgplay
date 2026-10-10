@@ -216,10 +216,11 @@ title cache.
   `tp/library.find_source`) and plays from the next episode.
 - **🕘 History button** (top) shows **your** recent links and searches
   (`history.json`) — the app's own history, not Simkl's.
-- **Right sidebar** — the unified window has a dedicated sidebar: **Feed ·
-  calendar** on top (your shows' next air dates, soonest first, from
-  `next_to_watch_info.date`) and **History** below (recently watched, from
-  `last_watched_at`). Double-click any row to play it; `↻ refresh` reloads.
+- **Right sidebar** — two **sortable tables** (click a header to reorder):
+  **Feed · calendar** on top (Date · Ep · Title — your shows' next air dates,
+  from `next_to_watch_info.date`) and **History** below (Watched · Prog · Title
+  — recently watched, from `last_watched_at`). Double-click a row to play it;
+  `↻ refresh` reloads.
 - **Sync back** — finishing an episode pushes progress to **Simkl** (the hub)
   *and* AniList, through a Playlist-compatible composite tracker
   (`tp/tracking.make_tracker`). Turn it off per run with the **"Sync progress

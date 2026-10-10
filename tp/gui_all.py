@@ -31,6 +31,31 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
     from .cli_all import route
     from . import history
 
+    class _SortItem(W.QTableWidgetItem):
+        """Sorts by the numeric/string key in UserRole, not the shown text."""
+        def __lt__(self, other):
+            a = self.data(C.Qt.UserRole)
+            b = other.data(C.Qt.UserRole)
+            try:
+                return float(a) < float(b)
+            except Exception:
+                return str(a) < str(b)
+
+    def _mk_table(cols):
+        t = W.QTableWidget(0, len(cols))
+        t.setHorizontalHeaderLabels(cols)
+        t.verticalHeader().setVisible(False)
+        t.setEditTriggers(W.QAbstractItemView.NoEditTriggers)
+        t.setSelectionBehavior(W.QAbstractItemView.SelectRows)
+        t.setSelectionMode(W.QAbstractItemView.SingleSelection)
+        t.setShowGrid(False)
+        t.setAlternatingRowColors(True)
+        t.setMinimumWidth(340)
+        t.horizontalHeader().setSectionResizeMode(len(cols) - 1,
+                                                  W.QHeaderView.Stretch)
+        t.setSortingEnabled(True)
+        return t
+
     qapp = _app()
     from .http import HttpClient
     http = HttpClient()
@@ -53,18 +78,15 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
     outer.addLayout(side, 0)
 
     # --- right sidebar: feed / calendar (top) + history (bottom) --------
-    fbox = W.QGroupBox('Feed · calendar')
+    fbox = W.QGroupBox('Feed · calendar  (click a header to sort)')
     fv = W.QVBoxLayout(fbox)
-    feed = W.QListWidget()
-    feed.setAlternatingRowColors(True)
-    feed.setMinimumWidth(340)
+    feed = _mk_table(['Date', 'Ep', 'Title'])
     fv.addWidget(feed)
     side.addWidget(fbox, 1)
-    hbox = W.QGroupBox('History')
+    hbox = W.QGroupBox('History  (click a header to sort)')
     hv = W.QVBoxLayout(hbox)
-    hist = W.QListWidget()
-    hist.setAlternatingRowColors(True)
-    hist.setMaximumHeight(240)
+    hist = _mk_table(['Watched', 'Prog', 'Title'])
+    hist.setMaximumHeight(260)
     hv.addWidget(hist)
     side.addWidget(hbox, 0)
     side_btn = W.QPushButton('↻  refresh feed & history')
@@ -427,8 +449,7 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
                 from_here()
                 return
 
-    def play_library(item):
-        e = item.data(C.Qt.UserRole)
+    def play_entry(e):
         if not e:
             return
         state['msg'] = f"finding “{e['title']}” on our sources…"
@@ -451,9 +472,12 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
             return str(s)[:10]
 
     def load_side():
-        feed.clear()
-        hist.clear()
-        feed.addItem('loading…')
+        feed.setSortingEnabled(False)
+        feed.setRowCount(0)
+        hist.setSortingEnabled(False)
+        hist.setRowCount(0)
+        feed.insertRow(0)
+        feed.setItem(0, 2, W.QTableWidgetItem('loading…'))
 
         def work():
             from .simkl_account import SimklAccount
@@ -481,28 +505,47 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
                 return
             if msg[0] == 'feed':
                 _, up, rc = msg
-                feed.clear()
-                hist.clear()
+                feed.setSortingEnabled(False)
+                feed.setRowCount(0)
+                hist.setSortingEnabled(False)
+                hist.setRowCount(0)
                 if up is None:
-                    feed.addItem('connect:  tgplay simkl login')
-                    hist.addItem('connect:  tgplay simkl login')
+                    feed.insertRow(0)
+                    feed.setItem(0, 2, W.QTableWidgetItem(
+                        'connect:  tgplay simkl login'))
+                    hist.insertRow(0)
+                    hist.setItem(0, 2, W.QTableWidgetItem(
+                        'connect:  tgplay simkl login'))
                     continue
-                if not up:
-                    feed.addItem('no upcoming episodes')
                 for e in up:
+                    r = feed.rowCount(); feed.insertRow(r)
                     when = _fmt_date(e['air_date']) if e.get('air_date') else 'up next'
-                    it = W.QListWidgetItem(
-                        f"{when}   ep {e.get('next_ep')}   {e['title']}")
-                    it.setData(C.Qt.UserRole, e)
-                    feed.addItem(it)
-                if not rc:
-                    hist.addItem('no history')
+                    c0 = _SortItem(when)
+                    c0.setData(C.Qt.UserRole, str(e.get('air_date') or '9999-99'))
+                    c0.setData(C.Qt.UserRole + 1, e)
+                    feed.setItem(r, 0, c0)
+                    c1 = _SortItem(str(e.get('next_ep') or ''))
+                    c1.setData(C.Qt.UserRole, int(e.get('next_ep') or 0))
+                    feed.setItem(r, 1, c1)
+                    feed.setItem(r, 2, W.QTableWidgetItem(e['title']))
+                if not up:
+                    feed.insertRow(0)
+                    feed.setItem(0, 2, W.QTableWidgetItem('no upcoming episodes'))
+                feed.setSortingEnabled(True)
                 for e in rc:
-                    it = W.QListWidgetItem(
-                        f"{str(e.get('last_watched'))[:10]}   "
-                        f"{e['watched']}/{e['total']}   {e['title']}")
-                    it.setData(C.Qt.UserRole, e)
-                    hist.addItem(it)
+                    r = hist.rowCount(); hist.insertRow(r)
+                    c0 = _SortItem(str(e.get('last_watched'))[:10])
+                    c0.setData(C.Qt.UserRole, str(e.get('last_watched') or ''))
+                    c0.setData(C.Qt.UserRole + 1, e)
+                    hist.setItem(r, 0, c0)
+                    c1 = _SortItem(f"{e['watched']}/{e['total']}")
+                    c1.setData(C.Qt.UserRole, int(e.get('watched') or 0))
+                    hist.setItem(r, 1, c1)
+                    hist.setItem(r, 2, W.QTableWidgetItem(e['title']))
+                if not rc:
+                    hist.insertRow(0)
+                    hist.setItem(0, 2, W.QTableWidgetItem('no history'))
+                hist.setSortingEnabled(True)
             elif msg[0] == 'play':
                 _, entry, res = msg
                 if res:
@@ -512,10 +555,16 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
                 else:
                     state['msg'] = f"not found on our sources: {entry['title']}"
 
+    def _row_entry(table, item):
+        try:
+            return table.item(item.row(), 0).data(C.Qt.UserRole + 1)
+        except Exception:
+            return None
+
     hist_btn.clicked.connect(show_history)
     side_btn.clicked.connect(load_side)
-    feed.itemDoubleClicked.connect(play_library)
-    hist.itemDoubleClicked.connect(play_library)
+    feed.itemDoubleClicked.connect(lambda it: play_entry(_row_entry(feed, it)))
+    hist.itemDoubleClicked.connect(lambda it: play_entry(_row_entry(hist, it)))
     poll.timeout.connect(drain_lib)
 
     def drain_log():
