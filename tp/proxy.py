@@ -167,18 +167,26 @@ class _Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+    def _name(self) -> str:
+        path = self.path.split('?', 1)[0]
+        return (urllib.parse.unquote(path[len('/f/'):])
+                if path.startswith('/f/') else urllib.parse.unquote(path.lstrip('/')))
+
     def _stream(self) -> Optional[Stream]:
         if self.proxy is None:
             return None
-        path = self.path.split('?', 1)[0]
-        name = (urllib.parse.unquote(path[len('/f/'):])
-                if path.startswith('/f/') else urllib.parse.unquote(path.lstrip('/')))
-        return self.proxy.streams.get(name)
+        return self.proxy.streams.get(self._name())
 
     def _size(self, st: Stream) -> int:
         return st.size or st.source.size
 
     def do_HEAD(self):
+        try:
+            self._do_head()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def _do_head(self):
         st = self._stream()
         if st is None:
             return self.send_error(404)
@@ -190,11 +198,23 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        try:
+            self._do_get()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def _do_get(self):
         st = self._stream()
         if st is None:
             return self.send_error(404)
         size = self._size(st)
         if not size:
+            try:
+                from . import log
+                log.cprint(f'link: size unknown for "{self._name()}" — '
+                           'CDN did not answer; retrying with a fresh link')
+            except Exception:
+                pass
             return self.send_error(503, 'size unknown')
         rng = self.headers.get('Range')
         s, fin = 0, size - 1

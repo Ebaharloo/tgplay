@@ -4,6 +4,7 @@ A `MediaSource` is anything with a known size and exact ranged reads. AniGate
 (signed CDN over HTTP) and Telegram (telethon) become two implementations, so
 the proxy and playlist never special-case a backend.
 """
+import time
 from abc import ABC, abstractmethod
 from typing import Dict, Optional
 
@@ -52,18 +53,20 @@ class HttpSource(MediaSource):
         return self._size
 
     def _probe(self) -> int:
-        try:
-            r = self.http.open(self.http.request(
-                self.url, headers={**self.headers, 'Range': 'bytes=0-1'}))
+        for attempt in range(3):
             try:
-                cr = r.headers.get('Content-Range', '')
-                cl = r.headers.get('Content-Length', '0')
-                r.read(2)  # drain before close (py3.14 finalizer)
-            finally:
-                _quiet_close(r)
-            return int(cr.rsplit('/', 1)[1]) if '/' in cr else int(cl or 0)
-        except Exception:
-            return 0
+                r = self.http.open(self.http.request(
+                    self.url, headers={**self.headers, 'Range': 'bytes=0-1'}))
+                try:
+                    cr = r.headers.get('Content-Range', '')
+                    cl = r.headers.get('Content-Length', '0')
+                    r.read(2)  # drain before close (py3.14 finalizer)
+                finally:
+                    _quiet_close(r)
+                return int(cr.rsplit('/', 1)[1]) if '/' in cr else int(cl or 0)
+            except Exception:
+                time.sleep(0.4 * (attempt + 1))   # CDN blip: retry
+        return 0
 
     def read(self, lo: int, hi: int) -> bytes:
         return self.http.range_bytes(self.url, self.headers, lo, hi)
