@@ -84,7 +84,7 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
     frow = W.QHBoxLayout()
     frow.addWidget(W.QLabel('Show'))
     feed_filter = W.QComboBox()
-    feed_filter.addItems(['Upcoming', 'Remaining', 'All'])
+    feed_filter.addItems(['Calendar', 'Remaining', 'All'])
     frow.addWidget(feed_filter)
     frow.addStretch(1)
     fv.addLayout(frow)
@@ -543,28 +543,39 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
                 libq.put(('feed', None, None))
                 return
             try:
-                from .library import feed, recent
-                up = feed(cfg, http)
+                from .library import (calendar, recently_aired, remaining,
+                                      recent)
+                cal = calendar(cfg, http) + recently_aired(cfg, http)
+                rem = remaining(cfg, http)
                 rc = recent(cfg, http)
             except Exception:
-                up, rc = [], []
-            libq.put(('feed', up, rc))
+                cal, rem, rc = [], [], []
+            libq.put(('feed', {'cal': cal, 'rem': rem}, rc))
         threading.Thread(target=work, daemon=True).start()
 
     def render_feed():
-        rows = state.get('feed')
+        cal = state.get('cal')
+        rem = state.get('rem')
         feed.setSortingEnabled(False)
         feed.setRowCount(0)
-        if rows is None:
+        if cal is None and rem is None:
             feed.insertRow(0)
             feed.setItem(0, 2, W.QTableWidgetItem('connect:  tgplay simkl login'))
             feed.setSortingEnabled(True)
             return
         mode = feed_filter.currentText()
-        if mode == 'Upcoming':
-            rows = [e for e in rows if e.get('kind') == 'upcoming']
+        if mode == 'Calendar':
+            rows = list(cal or [])
         elif mode == 'Remaining':
-            rows = [e for e in rows if e.get('kind') in ('aired', 'next')]
+            rows = list(rem or [])
+        else:                                   # All (de-duplicated)
+            seen, rows = set(), []
+            for e in list(cal or []) + list(rem or []):
+                key = (e.get('simkl'), e.get('next_ep'))
+                if key in seen:
+                    continue
+                seen.add(key)
+                rows.append(e)
         for e in rows:
             r = feed.rowCount(); feed.insertRow(r)
             k = e.get('kind')
@@ -572,8 +583,8 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
                 when = '📅  ' + _fmt_date(e['air_date'])
             elif k == 'aired':
                 when = '✅  aired ' + str(e['air_date'])[:10]
-            else:
-                when = 'up next'
+            else:                               # remaining
+                when = str(e.get('air_date') or '')[:10] or '—'
             c0 = _SortItem(when)
             c0.setData(C.Qt.UserRole, str(e.get('air_date') or '9999-99'))
             c0.setData(C.Qt.UserRole + 1, e)
@@ -584,6 +595,8 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
             ttl = e['title']
             if k == 'upcoming' and e.get('ep_title'):
                 ttl = f"{e['title']} · {e['ep_title']}"
+            elif k == 'remaining' and e.get('total'):
+                ttl = f"{e['title']}  ({e.get('watched')}/{e.get('total')})"
             feed.setItem(r, 2, W.QTableWidgetItem(ttl))
         if not rows:
             feed.insertRow(0)
@@ -600,12 +613,16 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
             if msg[0] == 'feed-refresh':
                 load_side()
             elif msg[0] == 'feed':
-                _, up, rc = msg
-                state['feed'] = up
+                _, payload, rc = msg
+                if payload is None:
+                    state['cal'] = state['rem'] = None
+                else:
+                    state['cal'] = payload.get('cal')
+                    state['rem'] = payload.get('rem')
                 render_feed()
                 hist.setSortingEnabled(False)
                 hist.setRowCount(0)
-                if up is None:
+                if payload is None:
                     hist.insertRow(0)
                     hist.setItem(0, 2, W.QTableWidgetItem(
                         'connect:  tgplay simkl login'))

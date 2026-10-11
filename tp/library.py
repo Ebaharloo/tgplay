@@ -86,27 +86,32 @@ def calendar(cfg, http: Optional[HttpClient] = None, days: int = 21,
     return out[:limit]
 
 
-def feed(cfg, http: Optional[HttpClient] = None, limit: int = 30) -> List[dict]:
-    """The sidebar feed:
-    - **upcoming** (calendar of your shows) first, soonest first,
-    - then **aired** (recently aired but unwatched), newest first,
-    - then shows with a next episode but no air date.
-    Each row gets a `kind` of 'upcoming' | 'aired' | 'next'."""
-    from datetime import date
-    up = calendar(cfg, http)
+def recently_aired(cfg, http: Optional[HttpClient] = None, days: int = 7,
+                   limit: int = 40) -> List[dict]:
+    """Episodes of your shows that aired in the **last `days`** (new to watch)."""
+    from datetime import date, timedelta
     rows = _all(cfg, http)
-    today = date.today().isoformat()
-    aired, nodate = [], []
+    today = date.today()
+    cut = (today - timedelta(days=days)).isoformat()
+    out = []
     for e in rows:
         d = str(e.get('air_date') or '')[:10]
-        if d and d < today:
+        if d and cut <= d < today.isoformat():
             e['kind'] = 'aired'
-            aired.append(e)
-        elif not d and e.get('next_ep') and e.get('status') == 'watching':
-            e['kind'] = 'next'
-            nodate.append(e)
-    aired.sort(key=lambda e: str(e['air_date']), reverse=True)
-    return (up + aired + nodate)[:limit]
+            out.append(e)
+    out.sort(key=lambda e: str(e['air_date']), reverse=True)
+    return out[:limit]
+
+
+def remaining(cfg, http: Optional[HttpClient] = None, limit: int = 80) -> List[dict]:
+    """The 'continue watching' backlog: every started show that still has a
+    next unwatched episode (however old), most recent first."""
+    out = []
+    for e in up_next(cfg, http):
+        e['kind'] = 'remaining'
+        out.append(e)
+    out.sort(key=lambda e: str(e.get('air_date') or ''), reverse=True)
+    return out[:limit]
 
 
 def recent(cfg, http: Optional[HttpClient] = None, limit: int = 15) -> List[dict]:

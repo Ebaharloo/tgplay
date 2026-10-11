@@ -221,13 +221,20 @@ title cache.
   `tp/library.find_source`) and plays from the next episode.
 - **🕘 History button** (top) shows **your** recent links and searches
   (`history.json`) — the app's own history, not Simkl's.
-- **Right sidebar** — two **sortable tables** (click a header to reorder):
-  **Feed · calendar** on top — 📅 **upcoming episodes of your own shows**
-  (Simkl's public calendar, filtered to your list), then ✅ recently-aired, then
-  `up next` (Date · Ep · Title) — and **History** below (Watched · Prog · Title
-  — recently watched, from `last_watched_at`). Double-click a row to load it;
-  `↻ refresh` reloads, and the sidebar **auto-refreshes right after a sync**
-  lands, so a freshly-watched episode shows up on its own.
+- **Right sidebar** — two **sortable tables** (click a header to reorder).
+  **Feed** (top) has a **Show** filter:
+  - **Calendar** — 📅 **upcoming episodes of your own shows** (Simkl's public
+    calendar, filtered to your list) **+** ✅ **aired in the last few days**.
+  - **Remaining** — every started show that still has a next unwatched episode
+    (the "continue watching" backlog, with `watched/total`).
+  - **All** — both, de-duplicated.
+  **History** (bottom) = recently watched (Watched · Prog · Title).
+- **Right-click a sidebar row**: *search / load on our sources*, **Simkl list ▸
+  Watching / Plan to watch / Completed / On hold / Dropped**, or *Open on
+  Simkl* / *Open on MAL*. The **`＋ Simkl list`** button adds the current show
+  to Watching. (The calendar lists shows on your Simkl list — watching an
+  episode doesn't add one.) `↻ refresh` reloads, and the sidebar
+  **auto-refreshes right after a sync** lands.
 - **Sync back** — an episode is pushed to **Simkl** (the hub) *and* AniList by
   **MAL / AniList id** — taken from the provider, or **resolved from the title**
   when the source lacks one (so animegate's *Mushen Ji* maps to Simkl's *Tales
