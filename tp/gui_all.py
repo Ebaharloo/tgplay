@@ -536,7 +536,13 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
                     continue
                 for e in up:
                     r = feed.rowCount(); feed.insertRow(r)
-                    when = _fmt_date(e['air_date']) if e.get('air_date') else 'up next'
+                    k = e.get('kind')
+                    if k == 'upcoming':
+                        when = '📅  ' + _fmt_date(e['air_date'])
+                    elif k == 'aired':
+                        when = '✅  aired ' + str(e['air_date'])[:10]
+                    else:
+                        when = 'up next'
                     c0 = _SortItem(when)
                     c0.setData(C.Qt.UserRole, str(e.get('air_date') or '9999-99'))
                     c0.setData(C.Qt.UserRole + 1, e)
@@ -544,7 +550,10 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
                     c1 = _SortItem(str(e.get('next_ep') or ''))
                     c1.setData(C.Qt.UserRole, int(e.get('next_ep') or 0))
                     feed.setItem(r, 1, c1)
-                    feed.setItem(r, 2, W.QTableWidgetItem(e['title']))
+                    ttl = e['title']
+                    if k == 'upcoming' and e.get('ep_title'):
+                        ttl = f"{e['title']} · {e['ep_title']}"
+                    feed.setItem(r, 2, W.QTableWidgetItem(ttl))
                 if not up:
                     feed.insertRow(0)
                     feed.setItem(0, 2, W.QTableWidgetItem('no upcoming episodes'))

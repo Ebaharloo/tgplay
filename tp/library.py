@@ -6,10 +6,14 @@ normalises it; `up_next()` keeps the shows with a next unwatched episode;
 so the app can jump straight into the player.
 """
 import difflib
+import json
+import urllib.parse
 from typing import List, Optional, Tuple
 
-from .http import HttpClient
+from .http import HttpClient, _quiet_close
 from .simkl_account import SimklAccount
+
+CAL = 'https://data.simkl.in/calendar/v2/anime.json'
 
 
 def entries(cfg, http: Optional[HttpClient] = None,
@@ -35,16 +39,74 @@ def _all(cfg, http=None) -> List[dict]:
         return []
 
 
-def feed(cfg, http: Optional[HttpClient] = None, limit: int = 25) -> List[dict]:
-    """The sidebar feed: dated upcoming episodes (soonest first), then the
-    shows with a next episode but no air date (the old 'library/up next')."""
+def calendar(cfg, http: Optional[HttpClient] = None, days: int = 21,
+             limit: int = 40) -> List[dict]:
+    """Upcoming episodes **for the user's own shows**, from Simkl's public
+    calendar (`data.simkl.in`, no auth). This is the real 'what airs next'."""
+    from datetime import datetime, timedelta, timezone
+    acc = SimklAccount(cfg, http)
+    try:
+        ids = {e['simkl'] for e in acc.library(('watching', 'plantowatch'))
+               if e.get('simkl')}
+    except Exception:
+        ids = set()
+    if not ids:
+        return []
+    http = http or HttpClient()
+    url = CAL + '?' + urllib.parse.urlencode(
+        {'client_id': acc.client_id or '', 'app-name': 'tgplay',
+         'app-version': '1.0'})
+    try:
+        r = http.open(http.request(url, headers={'User-Agent': 'tgplay/1.0'}))
+        try:
+            d = json.load(r)
+        finally:
+            _quiet_close(r)
+    except Exception:
+        return []
+    meta = d.get('metadata') or {}
+    now = datetime.now(timezone.utc)
+    horizon = now + timedelta(days=days)
+    out = []
+    for e in d.get('calendar') or []:
+        if e.get('simkl_id') not in ids:
+            continue
+        try:
+            dt = datetime.fromisoformat(str(e.get('date')).replace('Z', '+00:00'))
+        except Exception:
+            continue
+        if not (now <= dt <= horizon):
+            continue
+        ep = e.get('episode') or {}
+        m = meta.get(str(e.get('simkl_id'))) or {}
+        out.append({'title': m.get('title') or '', 'simkl': e.get('simkl_id'),
+                    'air_date': e.get('date'), 'next_ep': ep.get('episode'),
+                    'ep_title': ep.get('title'), 'kind': 'upcoming'})
+    out.sort(key=lambda x: str(x.get('air_date')))
+    return out[:limit]
+
+
+def feed(cfg, http: Optional[HttpClient] = None, limit: int = 30) -> List[dict]:
+    """The sidebar feed:
+    - **upcoming** (calendar of your shows) first, soonest first,
+    - then **aired** (recently aired but unwatched), newest first,
+    - then shows with a next episode but no air date.
+    Each row gets a `kind` of 'upcoming' | 'aired' | 'next'."""
+    from datetime import date
+    up = calendar(cfg, http)
     rows = _all(cfg, http)
-    dated = [e for e in rows if e.get('air_date')]
-    dated.sort(key=lambda e: str(e['air_date']))
-    undated = [e for e in rows
-               if not e.get('air_date') and e.get('next_ep')
-               and e.get('status') == 'watching']
-    return (dated + undated)[:limit]
+    today = date.today().isoformat()
+    aired, nodate = [], []
+    for e in rows:
+        d = str(e.get('air_date') or '')[:10]
+        if d and d < today:
+            e['kind'] = 'aired'
+            aired.append(e)
+        elif not d and e.get('next_ep') and e.get('status') == 'watching':
+            e['kind'] = 'next'
+            nodate.append(e)
+    aired.sort(key=lambda e: str(e['air_date']), reverse=True)
+    return (up + aired + nodate)[:limit]
 
 
 def recent(cfg, http: Optional[HttpClient] = None, limit: int = 15) -> List[dict]:

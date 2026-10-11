@@ -151,7 +151,7 @@ class Playlist:
                 cmd = self.player.command(
                     url, title=name, extra=(list(extra or []) + extra_direct + flags),
                     start=ep_start, cut=cut, ipc=sock)
-                tag = (f'  [start {int(start)}s]' if start is not None else '')
+                tag = (f'  [start {int(ep_start)}s]' if ep_start is not None else '')
                 if cut:
                     tag += f'  [cut {cut}s]'
                 if flags:

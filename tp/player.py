@@ -57,6 +57,8 @@ class Player:
                            '(mpv would treat them as a file; use --flag=value)')
             except Exception:
                 pass
+        if any(x.startswith('--start') for x in extra):
+            start = None            # an explicit --start in extra flags wins
         cmd = [self.binary, '--ytdl=no',
                f'--user-agent={self.user_agent}',
                f'--referrer={self.referer}',
