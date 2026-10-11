@@ -274,6 +274,17 @@ class SimklAccount:
         d = self._api('/sync/history', method='POST', body=body)
         return int(((d.get('added') or {}).get('episodes')) or 0)
 
+    def add_to_list(self, ids: dict, status: str = 'watching') -> bool:
+        """Put a title on a Simkl watchlist status (so it shows in the feed)."""
+        if not self.logged_in() or not ids:
+            return False
+        body = {'anime': [{'ids': ids, 'to': status}]}
+        try:
+            self._api('/sync/add-to-list', method='POST', body=body)
+            return True
+        except Exception:
+            return False
+
 
 class SimklTracker:
     """Playlist-compatible tracker: pushes finished episodes to Simkl.

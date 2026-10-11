@@ -81,6 +81,13 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
     # --- right sidebar: feed / calendar (top) + history (bottom) --------
     fbox = W.QGroupBox('Feed · calendar  (click a header to sort)')
     fv = W.QVBoxLayout(fbox)
+    frow = W.QHBoxLayout()
+    frow.addWidget(W.QLabel('Show'))
+    feed_filter = W.QComboBox()
+    feed_filter.addItems(['Upcoming', 'Remaining', 'All'])
+    frow.addWidget(feed_filter)
+    frow.addStretch(1)
+    fv.addLayout(frow)
     feed = _mk_table(['Date', 'Ep', 'Title'])
     fv.addWidget(feed)
     side.addWidget(fbox, 1)
@@ -112,7 +119,13 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
     # --- header ---------------------------------------------------------
     head = W.QLabel('Search or paste a link to start')
     hf = head.font(); hf.setPointSize(hf.pointSize() + 2); head.setFont(hf)
-    root.addWidget(head)
+    hrow = W.QHBoxLayout()
+    hrow.addWidget(head, 1)
+    add_btn = W.QPushButton('＋ Simkl list')
+    add_btn.setToolTip('Add the current show to your Simkl Watching list '
+                       '(it then appears in the calendar)')
+    hrow.addWidget(add_btn)
+    root.addLayout(hrow)
     link_lbl = W.QLabel('')
     link_lbl.setTextInteractionFlags(C.Qt.TextBrowserInteraction)
     link_lbl.setOpenExternalLinks(True)
@@ -480,6 +493,30 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
             libq.put(('load', e, res))
         threading.Thread(target=work, daemon=True).start()
 
+    def add_current():
+        s = state['session']
+        if s is None:
+            state['msg'] = 'load a show first'
+            return
+        state['msg'] = f'adding “{s.title}” to Simkl…'
+
+        def work():
+            try:
+                from .metadata import Metadata
+                from .simkl_account import SimklAccount
+                mal = getattr(s.provider, 'mal_id', None)
+                if not mal:
+                    mal = Metadata(cfg, http).resolve_mal(s.title, ask=False)
+                ids = {'mal': mal} if mal else {'title': s.title}
+                ok = SimklAccount(cfg, http).add_to_list(ids, 'watching')
+                state['msg'] = ('added to Simkl list' if ok
+                                else 'could not add to Simkl (logged in?)')
+                if ok:
+                    libq.put(('feed-refresh',))
+            except Exception as ex:
+                state['msg'] = f'add failed: {ex}'
+        threading.Thread(target=work, daemon=True).start()
+
     def _fmt_date(s):
         try:
             from datetime import datetime
@@ -514,50 +551,65 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
             libq.put(('feed', up, rc))
         threading.Thread(target=work, daemon=True).start()
 
+    def render_feed():
+        rows = state.get('feed')
+        feed.setSortingEnabled(False)
+        feed.setRowCount(0)
+        if rows is None:
+            feed.insertRow(0)
+            feed.setItem(0, 2, W.QTableWidgetItem('connect:  tgplay simkl login'))
+            feed.setSortingEnabled(True)
+            return
+        mode = feed_filter.currentText()
+        if mode == 'Upcoming':
+            rows = [e for e in rows if e.get('kind') == 'upcoming']
+        elif mode == 'Remaining':
+            rows = [e for e in rows if e.get('kind') in ('aired', 'next')]
+        for e in rows:
+            r = feed.rowCount(); feed.insertRow(r)
+            k = e.get('kind')
+            if k == 'upcoming':
+                when = '📅  ' + _fmt_date(e['air_date'])
+            elif k == 'aired':
+                when = '✅  aired ' + str(e['air_date'])[:10]
+            else:
+                when = 'up next'
+            c0 = _SortItem(when)
+            c0.setData(C.Qt.UserRole, str(e.get('air_date') or '9999-99'))
+            c0.setData(C.Qt.UserRole + 1, e)
+            feed.setItem(r, 0, c0)
+            c1 = _SortItem(str(e.get('next_ep') or ''))
+            c1.setData(C.Qt.UserRole, int(e.get('next_ep') or 0))
+            feed.setItem(r, 1, c1)
+            ttl = e['title']
+            if k == 'upcoming' and e.get('ep_title'):
+                ttl = f"{e['title']} · {e['ep_title']}"
+            feed.setItem(r, 2, W.QTableWidgetItem(ttl))
+        if not rows:
+            feed.insertRow(0)
+            feed.setItem(0, 2, W.QTableWidgetItem(
+                'nothing here — try another filter or ↻ refresh'))
+        feed.setSortingEnabled(True)
+
     def drain_lib():
         while True:
             try:
                 msg = libq.get_nowait()
             except queue.Empty:
                 return
-            if msg[0] == 'feed':
+            if msg[0] == 'feed-refresh':
+                load_side()
+            elif msg[0] == 'feed':
                 _, up, rc = msg
-                feed.setSortingEnabled(False)
-                feed.setRowCount(0)
+                state['feed'] = up
+                render_feed()
                 hist.setSortingEnabled(False)
                 hist.setRowCount(0)
                 if up is None:
-                    feed.insertRow(0)
-                    feed.setItem(0, 2, W.QTableWidgetItem(
-                        'connect:  tgplay simkl login'))
                     hist.insertRow(0)
                     hist.setItem(0, 2, W.QTableWidgetItem(
                         'connect:  tgplay simkl login'))
                     continue
-                for e in up:
-                    r = feed.rowCount(); feed.insertRow(r)
-                    k = e.get('kind')
-                    if k == 'upcoming':
-                        when = '📅  ' + _fmt_date(e['air_date'])
-                    elif k == 'aired':
-                        when = '✅  aired ' + str(e['air_date'])[:10]
-                    else:
-                        when = 'up next'
-                    c0 = _SortItem(when)
-                    c0.setData(C.Qt.UserRole, str(e.get('air_date') or '9999-99'))
-                    c0.setData(C.Qt.UserRole + 1, e)
-                    feed.setItem(r, 0, c0)
-                    c1 = _SortItem(str(e.get('next_ep') or ''))
-                    c1.setData(C.Qt.UserRole, int(e.get('next_ep') or 0))
-                    feed.setItem(r, 1, c1)
-                    ttl = e['title']
-                    if k == 'upcoming' and e.get('ep_title'):
-                        ttl = f"{e['title']} · {e['ep_title']}"
-                    feed.setItem(r, 2, W.QTableWidgetItem(ttl))
-                if not up:
-                    feed.insertRow(0)
-                    feed.setItem(0, 2, W.QTableWidgetItem('no upcoming episodes'))
-                feed.setSortingEnabled(True)
                 for e in rc:
                     r = hist.rowCount(); hist.insertRow(r)
                     c0 = _SortItem(str(e.get('last_watched'))[:10])
@@ -587,8 +639,71 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
         except Exception:
             return None
 
+    def _open_url(u):
+        try:
+            G.QDesktopServices.openUrl(C.QUrl(u))
+        except Exception:
+            pass
+
+    def _set_status(e, status):
+        ids = {k: e[k] for k in ('mal', 'anilist', 'simkl') if e.get(k)}
+        if not ids:
+            state['msg'] = 'no id to update on Simkl'
+            return
+        state['msg'] = f'setting Simkl → {status}…'
+
+        def work():
+            try:
+                from .simkl_account import SimklAccount
+                ok = SimklAccount(cfg, http).add_to_list(ids, status)
+                state['msg'] = (f'Simkl → {status}' if ok
+                                else 'Simkl update failed (logged in?)')
+                if ok:
+                    libq.put(('feed-refresh',))
+            except Exception as ex:
+                state['msg'] = f'Simkl update failed: {ex}'
+        threading.Thread(target=work, daemon=True).start()
+
+    def _context(table, pos):
+        it = table.itemAt(pos)
+        if it is None:
+            return
+        e = table.item(it.row(), 0).data(C.Qt.UserRole + 1)
+        if not e:
+            return
+        menu = W.QMenu(table)
+        a_load = menu.addAction('▶   Search / load on our sources')
+        sub = menu.addMenu('➕  Simkl list')
+        acts = {}
+        for label, st in (('Watching', 'watching'),
+                          ('Plan to watch', 'plantowatch'),
+                          ('Completed', 'completed'),
+                          ('On hold', 'hold'),
+                          ('Dropped', 'dropped')):
+            acts[sub.addAction(label)] = st
+        a_simkl = menu.addAction('🔗  Open on Simkl') if e.get('simkl') else None
+        a_mal = menu.addAction('🔗  Open on MAL') if e.get('mal') else None
+        pick = menu.exec(table.viewport().mapToGlobal(pos))
+        if pick is None:
+            return
+        if pick == a_load:
+            load_entry(e)
+        elif pick in acts:
+            _set_status(e, acts[pick])
+        elif a_simkl is not None and pick == a_simkl:
+            _open_url(f"https://simkl.com/anime/{e['simkl']}")
+        elif a_mal is not None and pick == a_mal:
+            _open_url(f"https://myanimelist.net/anime/{e['mal']}")
+
+    for _t in (feed, hist):
+        _t.setContextMenuPolicy(C.Qt.CustomContextMenu)
+        _t.customContextMenuRequested.connect(
+            lambda pos, t=_t: _context(t, pos))
+
     hist_btn.clicked.connect(show_history)
+    add_btn.clicked.connect(add_current)
     side_btn.clicked.connect(load_side)
+    feed_filter.currentTextChanged.connect(lambda _t: render_feed())
     feed.itemDoubleClicked.connect(lambda it: load_entry(_row_entry(feed, it)))
     hist.itemDoubleClicked.connect(lambda it: load_entry(_row_entry(hist, it)))
     poll.timeout.connect(drain_lib)
