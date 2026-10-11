@@ -47,6 +47,16 @@ class Player:
                 cut: Optional[int] = None, cache_bytes: str = '150MiB',
                 readahead: int = 60, vo: str = 'gpu-next,gpu,dispmanx',
                 pin_context: bool = True, ipc: Optional[str] = None) -> List[str]:
+        extra = list(extra or [])
+        bad = [x for x in extra if x.startswith('=')]
+        if bad:
+            extra = [x for x in extra if not x.startswith('=')]
+            try:
+                from . import log
+                log.cprint(f'mpv: ignoring malformed flag(s) {bad} '
+                           '(mpv would treat them as a file; use --flag=value)')
+            except Exception:
+                pass
         cmd = [self.binary, '--ytdl=no',
                f'--user-agent={self.user_agent}',
                f'--referrer={self.referer}',
