@@ -20,19 +20,27 @@ Whole-project pass (linters, dead-code scan, complexity, duplication).
 
 ## Remaining findings (prioritised)
 
-### 1. Duplicated "Options" across four UIs  (medium effort)
-The same fields — quality/server, audio, skip, toggle, next, nowait, cut, extra,
-fullscreen, sync — are built 4×: `tp/gui_all.py`, `tp/gui_qt.py`, `tp/gui.py` (Tk),
-`tp/ui.py` (curses).
-→ Extract a shared **options model** (list of field specs + `to_opts()/from_opts()`)
-and render it per toolkit.
+### 1. Duplicated "Options" across four UIs  (done)
+The options inventory now lives in **`tp/options.py`**: `PlaybackOptions`
+(the normalizing read/write view over the legacy opts dict + mpv list) plus
+`form_fields()`/`form_result()` — the render/collect spec every UI shares:
+- Qt window: `tp/gui_all.OptionsForm` (rows mirror the old grid exactly)
+- curses form: `tp/ui._curses_form` renders the same spec (test_ui still green)
+- remembered setup: `tp/setup.py` save/apply delegate to the model
+  (`saved_shape` / `merge_saved` — test_setup stays byte-identical)
+- locked by `tests/test_options.py` (field inventory == setup.save keys ==
+  parse keys; full round-trips)
+- one improvement out of it: an explicit `--next=N` fraction now survives an
+  untouched UI checkbox instead of silently resetting to 0.60.
 
-### 2. Duplicated provider/session setup in the CLIs  (medium effort)
-`cli.main`, `cli_animex.main_axp`, `cli_telegram.main_tgp` each build a provider +
-proxy + cache + skip + prefetch + player + playlist, and `session.open_session()` is a
-4th copy.
-→ Make every per-source CLI build a **`Session`** (`tp/session.open_session`) — one
-setup path, and `agp`/`axp`/`tgp` shrink to arg-parse + pick + `session.play()`.
+### 2. Duplicated provider/session setup in the CLIs  (done)
+`agp`, `axp`, `tg`, `tgp` no longer hand-wire provider + proxy + cache + skip +
+prefetch + player + playlist. Every path builds **one `Session`**
+(`tp/session.open_session`, extended with `wait_titles` for the curses menu
+and `window`/`matcher` for tgp) and plays/closes it. Args keep their exact
+behavior: `-a/-e` prompts, audio flags, `--window/-f`, sub/dub, resume
+prompts. The old `_run` service zoo is gone from all three modules
+(`tests/test_cli_session.py` pins the wiring).
 
 ### 3. Two now-dead GUI controllers  (done)
 `gui_qt.controller` (303 LN) and `gui.controller` (268 LN) are retired. Every
@@ -48,10 +56,13 @@ GUI now goes through the unified window via the OOP seams:
 - Kept from the old modules: `choose_url` (Qt + Tk pickers) and the Tk
   `launcher` (no-PySide6 fallback) in `tp/gui.py`.
 
-### 4. Large functions  (low risk, mechanical)
-`gui_all.app` (784 lines), `cli.main` (218 → ~180 after #3), `cli_animex.main_axp`
-(185), `ui._curses_form` (168), `playlist.run` (118).
-→ Split into small helpers / a window class (naturally solved by #1/#2).
+### 4. Large functions  (done — the window is a class now)
+`gui_all.app` was a 784-line closure; it is a `MainWindow` class (widget
+builders `_build_*`, behavior methods, `UnloadOptionsForm`) with a thin
+`app()` wrapper kept for compatibility. `cli.main`/`main_axp` shrunk to
+arg-parse + Session; `ui._curses_form` now renders the shared spec instead of
+hand-rolling its fields.
+Remaining sizable: `playlist.run` (118) — cohesive loop, left as is.
 
 ### 5. Tested-but-unused code  (low effort)
 `metadata.ep_title` + `simkl.episode_title` — covered by tests but not used at runtime
@@ -66,7 +77,7 @@ GUI now goes through the unified window via the OOP seams:
 ## Suggested order
 1. ✅ single-fetch overview (done).
 2. ✅ retire the duplicate GUI controllers (#3, done).
-3. Extract the shared Options model (#1).
-4. Collapse the CLIs onto `Session` (#2 — the curses/direct paths still build
-   providers manually).
-5. Delete/relocate the unused title helpers (#5).
+3. ✅ shared Options model (#1, done — tp/options.py).
+4. ✅ collapse the CLIs onto `Session` (#2, done — all four sources).
+5. ✅ MainWindow class (#4, done — gui_all rewritten OO).
+6. Delete/relocate the unused title helpers (#5).

@@ -4,21 +4,12 @@ Both reuse the exact same Player/Playlist/RangeProxy as `agp`; only the
 Provider differs. `--menu` opens the same curses form (no Quality row, since
 Telegram files have no quality groups).
 """
-import json
 import re
 import sys
 from typing import List, Optional
 
-from .cache import Cache
 from .config import Config
-from .episodes import Episode, parse_range, select
-from .metadata import Metadata
-from .player import Player
-from .playlist import Playlist
-from .prefetch import Prefetcher
-from .providers.telegram import SingleFileProvider, TelegramProvider
-from .proxy import RangeProxy
-from .skip import SkipService
+from .episodes import parse_range, select
 from .cli import parse
 from . import setup
 
@@ -59,24 +50,6 @@ def _strip_menu(argv):
     return [a for a in argv if a not in ('--menu', '--tui')], interactive
 
 
-def _run(provider, episodes, opts, mpv):
-    cfg = Config().ensure()
-    proxy = RangeProxy(port=cfg.proxy_port).start()
-    cache = Cache(cfg.cache_dir, cfg.cache_budget)
-    skip = SkipService(metadata=Metadata(cfg))
-    playlist = Playlist(provider, proxy, cache, Player(referer='https://t.me/'),
-                        cfg, skip=skip, prefetcher=Prefetcher(cache))
-    next_frac = False
-    if opts['next']:
-        next_frac = 'cut' if (opts['nowait'] and opts['cut']) else opts['next']
-    try:
-        playlist.run(episodes, skip_mode=(opts['skip'] or 'all'),
-                     skip_toggle=opts['skip_toggle'], cut=opts['cut'],
-                     next_frac=next_frac, extra=mpv)
-    finally:
-        proxy.stop()
-
-
 def _maybe_login(argv) -> bool:
     if argv and argv[0] in ('login', 'tg-login'):
         from .providers.telegram import login
@@ -94,15 +67,6 @@ def _maybe_login(argv) -> bool:
         cache_command(argv[1:])
         return True
     return False
-
-
-def _resume_ep(cfg, title) -> Optional[int]:
-    try:
-        d = json.load(open(cfg.progress))
-        e = d.get(title, {})
-        return int(e.get('ep')) if e.get('ep') else None
-    except Exception:
-        return None
 
 
 def _chat_msg(pos):
@@ -135,15 +99,19 @@ def main_tg(argv: Optional[List[str]] = None) -> int:
     if chat is None:
         print(TG_HELP)
         return 0
-    provider = SingleFileProvider(chat, msg_id, Config().tg_session)
-    provider.load()
-    if interactive:
-        res = ui.gather(opts, [], mpv)
-        if res is None:
-            print('menu: cancelled')
-            return 0
-        opts, mpv = res
-    _run(provider, [Episode(1, f'{chat}/{msg_id}')], opts, mpv)
+    from .session import open_session
+    s = open_session('tg', f'{chat} {msg_id}', Config().ensure(),
+                     None, opts, mpv)
+    try:
+        if interactive:
+            res = ui.gather(opts, [], mpv)      # same curses form (no quality)
+            if res is None:
+                print('menu: cancelled')
+                return 0
+            opts, mpv = res
+        s.play([1], opts, mpv)                  # one file = one episode
+    finally:
+        s.close()
     return 0
 
 
@@ -181,51 +149,56 @@ def main_tgp(argv: Optional[List[str]] = None) -> int:
             print(TGP_HELP)
             return 0
         interactive = True
-    provider = TelegramProvider(channel, session=Config().tg_session,
-                                window=window, matcher=opts['f'])
-    provider.load()
-    cfg = Config()
-    qs = provider.qualities()
-    quality_groups = [{'label': q} for q in qs]
-    if interactive:
-        opts, mpv = setup.apply(opts, mpv, setup.load(cfg.ui, 'tgp'))
-        res = ui.gather(opts, quality_groups, mpv, show_eps=False)
-        if res is None:
-            print('menu: cancelled')
-            return 0
-        opts, mpv = res
-        setup.save(cfg.ui, opts, mpv, 'tgp')  # remember for next time
-        if qs:
-            provider.set_quality(opts.get('f'))
-        eps = provider.episodes()
-        chosen = ui.pick_start(eps, _resume_ep(cfg, channel))
-        if chosen is None:
-            print('menu: cancelled')
-            return 0
-        planned = [Episode(k, eps[k]) for k in chosen]
-    else:
-        if qs and opts.get('f') in qs:
-            provider.set_quality(opts['f'])
-        eps = provider.episodes()
-        direct = next((a for a in pos if a != channel), None) or opts['e']
-        if opts['a'] or direct == 'a':
-            planned = select(eps, all=True)
-        elif direct:
-            planned = select(eps, nums=parse_range(direct))
-        else:
-            print(f'\n[ last {len(eps)} mkv | {eps[1]} ... {eps[len(eps)]} ]')
-            for k in sorted(eps):
-                print(f'{k}) {eps[k]}')
-            try:
-                val = input('\npick [1|2-5,9|a|q]: ').strip().lower()
-            except EOFError:
-                val = 'q'
-            if val in ('', 'q'):
+    cfg = Config().ensure()
+    from .session import open_session
+    s = open_session('tgp', channel, cfg, None, opts, mpv,
+                     window=window, matcher=opts['f'])
+    try:
+        if interactive:
+            opts, mpv = setup.apply(opts, mpv, setup.load(cfg.ui, 'tgp'))
+            res = ui.gather(opts, [{'label': q} for q in s.provider.qualities()],
+                            mpv, show_eps=False)
+            if res is None:
+                print('menu: cancelled')
                 return 0
-            planned = select(eps, all=True) if val == 'a' \
-                else select(eps, nums=parse_range(val))
-    if not planned:
-        print('nothing to play')
-        return 0
-    _run(provider, planned, opts, mpv)
+            opts, mpv = res
+            setup.save(cfg.ui, opts, mpv, 'tgp')   # remember for next time
+            if s.provider.qualities():
+                s.provider.set_quality(opts.get('f'))
+            s.refresh_labels()
+            chosen = ui.pick_start(s.labels,
+                                   s.resume[0] if s.resume else None)
+            if chosen is None:
+                print('menu: cancelled')
+                return 0
+            planned = chosen
+        else:
+            if s.provider.qualities() and opts.get('f') in \
+                    s.provider.qualities():
+                s.provider.set_quality(opts['f'])
+            s.refresh_labels()
+            eps = s.provider.episodes()
+            direct = next((a for a in pos if a != channel), None) or opts['e']
+            if opts['a'] or direct == 'a':
+                planned = sorted(eps)
+            elif direct:
+                planned = [e.num for e in select(eps, nums=parse_range(direct))]
+            else:
+                print(f'\n[ last {len(eps)} mkv | {eps[1]} ... {eps[len(eps)]} ]')
+                for k in sorted(eps):
+                    print(f'{k}) {eps[k]}')
+                try:
+                    val = input('\npick [1|2-5,9|a|q]: ').strip().lower()
+                except EOFError:
+                    val = 'q'
+                if val in ('', 'q'):
+                    return 0
+                planned = sorted(eps) if val == 'a' \
+                    else [e.num for e in select(eps, nums=parse_range(val))]
+        if not planned:
+            print('nothing to play')
+            return 0
+        s.play(planned, opts, mpv)
+    finally:
+        s.close()
     return 0

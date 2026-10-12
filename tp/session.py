@@ -100,9 +100,12 @@ class Session:
         except Exception:
             pass
         self._player.stop()
+        # the Telegram views are already narrowed/planned at build time:
+        # re-selecting here would renumber them (see cli_telegram)
+        if self.src not in ('tg', 'tgp'):
+            self.provider.select(o.get('f'))
         if self.src == 'axp':
             self.provider.set_audio(o.get('audio') or 'dub')
-        self.provider.select(o.get('f'))
         eps = self.provider.episodes()
         planned = [Episode(k, eps[k]) for k in chosen if k in eps]
         if not planned:
@@ -119,11 +122,20 @@ class Session:
                             self._player, self.cfg, skip=self._skip,
                             prefetcher=self._prefetch, tracker=tracker)
         start = self.resume[1] if (self.resume and planned[0].num == self.resume[0]) else None
+        if start:
+            _m, _s = divmod(int(start), 60)
+            log.cprint(f'resume: ep{planned[0].num} at {_m:d}:{_s:02d} '
+                       f'(mpv --start={int(start)})')
         nf = ('cut' if (o.get('nowait') and o.get('cut')) else o.get('next')) \
             if o.get('next') else False
         playlist.run(planned, skip_mode=(o.get('skip') or 'all'),
                      skip_toggle=bool(o.get('skip_toggle')), cut=o.get('cut'),
                      start=start, next_frac=nf, extra=m)
+
+    def refresh_labels(self) -> 'Session':
+        """Re-pull the episode labels after the provider view changed."""
+        self.labels = dict(self.provider.episodes())
+        return self
 
     def stop(self):
         self._player.stop()
@@ -172,8 +184,14 @@ def _telegram_target(target):
 
 
 def open_session(src: str, target: str, cfg, http, opts: dict = None,
-                 mpv: List[str] = None) -> Session:
-    """Build a Session for (src, target): agp / axp / tgp / tg."""
+                 mpv: List[str] = None, *, wait_titles: bool = False,
+                 window: int = None, matcher: str = None) -> Session:
+    """Build a Session for (src, target): agp / axp / tgp / tg.
+
+    - `wait_titles`: block briefly (≤5 s) on missing episode names — the
+      curses menu wants them now instead of next launch.
+    - `window`/`matcher`: Telegram-only knobs (--window N, -f name matcher).
+    """
     from .cli import _link_get, _log_show
     from .metadata import Metadata
     from .titles import TitleService
@@ -202,7 +220,9 @@ def open_session(src: str, target: str, cfg, http, opts: dict = None,
             prov.load()
             labels = dict(prov.episodes())
         else:
-            prov = TelegramProvider(chat, session=cfg.tg_session)
+            prov = TelegramProvider(chat, session=cfg.tg_session,
+                                    window=int(window or 50),
+                                    matcher=matcher)
             prov.load()
             labels = dict(prov.episodes())
         groups = []
@@ -214,13 +234,25 @@ def open_session(src: str, target: str, cfg, http, opts: dict = None,
         prov.select(opts.get('f'))
         eps = prov.episodes()
         mal = _safe_mal(meta, prov.title)
+        missing = [n for n in eps if mal and titles.get(mal, n) is None]
+        th = None
+        if missing:
+            log.cprint(f'titles: looking up {len(missing)} missing '
+                       'episode name(s)...')
+            th = threading.Thread(
+                target=lambda: meta.refresh_titles(mal, prov.title),
+                daemon=True)
+            th.start()
+            if wait_titles:                  # the terminal menu wants names NOW
+                th.join(timeout=5)
+                if th.is_alive():
+                    log.cprint('titles: still fetching names in the '
+                               'background (they will show next time)')
+            if mal:
+                meta._refreshed.add(mal)
         labels = titles.labels(mal, {n: f'Episode {n}' for n in eps})
         groups = prov.groups
         audio = False
-        if mal and any(labels.get(n, '').startswith('Episode ') for n in eps):
-            threading.Thread(
-                target=lambda: meta.refresh_titles(mal, prov.title),
-                daemon=True).start()          # fill missing names next time
 
     log.cprint(f'>> {prov.title} - {len(labels)} episodes')
 

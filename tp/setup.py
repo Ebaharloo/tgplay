@@ -2,20 +2,15 @@
 
 Only the *menu* uses this: a plain flag run is untouched. CLI flags always win
 over the saved values; the saved setup only fills in what you left unset.
+
+The value normalization lives in tp.options (the one shared playback-options
+model) — this module is just the ui.json file format on top of it.
 """
 import json
 import os
-import re
 from typing import List, Tuple
 
-
-def _quality_key(label) -> str:
-    if not label:
-        return None
-    if re.search(r'x265', str(label), re.I):
-        return 'x265'
-    m = re.search(r'(\d{3,4})', str(label))
-    return m.group(1) if m else str(label)
+from .options import PlaybackOptions, quality_key as _quality_key  # noqa: F401
 
 
 def load(path, key: str = 'agp') -> dict:
@@ -33,18 +28,7 @@ def load(path, key: str = 'agp') -> dict:
 
 
 def save(path, opts: dict, mpv: List[str], key: str = 'agp') -> dict:
-    d = {
-        'skip': opts.get('skip') or False,
-        'skip_toggle': bool(opts.get('skip_toggle')),
-        'next': opts.get('next') or False,
-        'nowait': bool(opts.get('nowait')),
-        'cut': opts.get('cut'),
-        'fullscreen': '--fullscreen' in mpv,
-        'extra': ' '.join(x for x in mpv if x != '--fullscreen'),
-        'quality': _quality_key(opts.get('f')),
-        'audio': opts.get('audio') or 'dub',
-        'sync': opts.get('sync') or 'auto',
-    }
+    d = PlaybackOptions(opts, mpv).saved_shape()
     try:
         all_ = {}
         try:
@@ -65,28 +49,6 @@ def save(path, opts: dict, mpv: List[str], key: str = 'agp') -> dict:
 
 def apply(opts: dict, mpv: List[str], saved: dict) -> Tuple[dict, List[str]]:
     """Prefill `opts`/`mpv` from `saved`, never overriding a CLI value."""
-    if not saved:
-        return opts, mpv
-    opts = dict(opts)
-    mpv = list(mpv)
-    if not opts.get('skip') and saved.get('skip'):
-        opts['skip'] = saved['skip']
-    if not opts.get('skip_toggle') and saved.get('skip_toggle'):
-        opts['skip_toggle'] = True
-    if not opts.get('next') and saved.get('next'):
-        opts['next'] = saved['next']
-    if not opts.get('nowait') and saved.get('nowait'):
-        opts['nowait'] = True
-    if opts.get('cut') is None and saved.get('cut'):
-        opts['cut'] = saved['cut']
-    if not opts.get('f') and saved.get('quality'):
-        opts['f'] = saved['quality']
-    if not opts.get('audio') and saved.get('audio'):
-        opts['audio'] = saved['audio']
-    if not opts.get('sync') and saved.get('sync'):
-        opts['sync'] = saved['sync']
-    if not mpv and saved.get('extra'):  # user passed no flags -> restore theirs
-        mpv += saved['extra'].split()
-    if saved.get('fullscreen') and '--fullscreen' not in mpv:
-        mpv.append('--fullscreen')
-    return opts, mpv
+    po = PlaybackOptions(opts, mpv)
+    po.merge_saved(saved)
+    return po.to_opts(), po.mpv()

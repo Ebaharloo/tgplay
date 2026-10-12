@@ -1,437 +1,583 @@
 """tp.gui_all - the unified window: search/link AND episodes/options in one page.
 
-The top has a search field that queries AnimeGate + AnimeX (or accepts any
-link / @channel). Picking a result loads a `Session` into the SAME window, so
-you can jump between titles without the app closing and reopening. Playback,
-Stop, resume, options and the log are all here.
+Now an OOP MainWindow. The top has a search field that queries AnimeGate +
+AnimeX (or accepts any link / @channel). Picking a result loads a `Session`
+into the SAME window, so you can jump between titles without the app closing
+and reopening. Playback, Stop, resume, the shared options form (tp.options),
+the Simkl sidebar and the log are all here.
 """
 import os
 import queue
 import threading
-from typing import Callable
+import time
+from typing import Callable, List, Optional
 
+from PySide6 import QtWidgets as W, QtCore as C, QtGui as G
+
+from . import history
 from . import log as _log
+from .options import PlaybackOptions
 
 
-def _app():
+def _app_main() -> 'W.QApplication':
     from .gui_qt import _app as app
     return app()
 
 
-def _icon(G):
-    from .gui_qt import _app_icon
-    return _app_icon(G)
+def _app_icon() -> Optional[G.QIcon]:
+    from .gui_qt import _app_icon as icon
+    return icon(G)
 
 
-class UnifiedWindow:
-    """The ONE window controller (OOP facade over the unified GUI).
+def _fmt_ts(ts) -> str:
+    """Friendly 'when was this opened' stamp for the history picker."""
+    ts = int(ts or 0)
+    if not ts:
+        return '(old)'
+    age = max(0, int(time.time()) - ts)
+    if age < 60:
+        return 'just now'
+    if age < 3600:
+        return f'{age // 60}m ago'
+    if age < 86400:
+        return f'{age // 3600}h ago'
+    if age < 7 * 86400:
+        return f'{age // 86400}d ago'
+    return time.strftime('%Y-%m-%d', time.localtime(ts))
 
-    Every entry point opens `tgplay`'s window through this object: the
-    launcher (`tgplay`), and the per-source CLIs (`agp`, `axp`). It replaces
-    the retired per-source controllers (tp/gui_qt.controller, tp/gui.controller):
-    one Session per source, loaded in place by `loader(src, target)`.
+
+def _fmt_date(s) -> str:
+    try:
+        from datetime import datetime
+        d = datetime.fromisoformat(str(s).replace('Z', '+00:00'))
+        return d.strftime('%a %d %b %Y')
+    except Exception:
+        return str(s)[:10]
+
+
+class _SortItem(W.QTableWidgetItem):
+    """Sorts by the numeric/string key in UserRole, not the shown text."""
+
+    def __lt__(self, other):
+        a = self.data(C.Qt.UserRole)
+        b = other.data(C.Qt.UserRole)
+        try:
+            return float(a) < float(b)
+        except Exception:
+            return str(a) < str(b)
+
+
+class SortableTable(W.QTableWidget):
+    """No-edit, row-select, alternating, sortable table (sidebar style)."""
+
+    def __init__(self, cols: List[str], parent=None):
+        super().__init__(0, len(cols), parent)
+        self.setHorizontalHeaderLabels(cols)
+        self.verticalHeader().setVisible(False)
+        self.setEditTriggers(W.QAbstractItemView.NoEditTriggers)
+        self.setSelectionBehavior(W.QAbstractItemView.SelectRows)
+        self.setSelectionMode(W.QAbstractItemView.SingleSelection)
+        self.setShowGrid(False)
+        self.setAlternatingRowColors(True)
+        self.setMinimumWidth(340)
+        self.horizontalHeader().setSectionResizeMode(
+            len(cols) - 1, W.QHeaderView.Stretch)
+        self.setSortingEnabled(True)
+
+
+class OptionsForm(W.QWidget):
+    """The Options group, rendered from the ONE shared spec (tp.options).
+
+    Every option is in the same place in every UI: quality/server, audio,
+    skip, skip-toggle, fullscreen, pre-download next (+ 'start at cut'),
+    Simkl sync, cut seconds and extra mpv flags. The rows/wiring mirror the
+    old hand-built grid exactly; values flow through PlaybackOptions.
     """
 
-    def __init__(self, loader, cfg=None, initial=None, one_shot: bool = False):
-        self.loader = loader
-        self.cfg = cfg
-        self.initial = initial
-        self.one_shot = one_shot
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.box = W.QGroupBox('Options')
+        form = W.QGridLayout(self.box)
+        form.setHorizontalSpacing(10)
+        form.setVerticalSpacing(4)
 
-    def run(self) -> None:
-        """Open the window and block until it closes."""
-        return app(loader=self.loader, cfg=self.cfg,
-                   one_shot=self.one_shot, initial=self.initial)
+        def combo(items=()):
+            cb = W.QComboBox()
+            cb.setEditable(False)
+            cb.addItems(list(items))
+            return cb
+
+        self.server_lbl = W.QLabel('Server')
+        self.server = combo()
+        self.audio_lbl = W.QLabel('Audio')
+        self.audio_cb = combo(['dub', 'sub', 'auto'])
+        self.skip_lbl = W.QLabel('Skip')
+        self.skip = combo(['off', 'all', 'names', 'auto'])
+        self.toggle = W.QCheckBox('toggle key T')
+        self.full = W.QCheckBox('fullscreen')
+        self.nxt = W.QCheckBox('Pre-download next episode')
+        self.nowait = W.QCheckBox('start it at cut point')
+        self.sync_cb = W.QCheckBox('Sync progress to Simkl')
+        self.sync_cb.setChecked(True)
+        self.sync_cb.setToolTip(
+            'Off = never push watch progress to Simkl for this run')
+        self.cut = W.QLineEdit()
+        self.cut.setFixedWidth(70)
+        self.extra = W.QLineEdit()
+
+        form.addWidget(self.server_lbl, 0, 0)
+        form.addWidget(self.server, 0, 1, 1, 3)
+        form.addWidget(self.audio_lbl, 1, 0)
+        form.addWidget(self.audio_cb, 1, 1, 1, 3)
+        form.addWidget(self.skip_lbl, 2, 0)
+        form.addWidget(self.skip, 2, 1)
+        form.addWidget(self.toggle, 2, 2)
+        form.addWidget(self.full, 2, 3)
+        form.addWidget(self.nxt, 3, 0, 1, 2)
+        form.addWidget(self.nowait, 3, 2, 1, 2)
+        form.addWidget(self.sync_cb, 4, 0, 1, 4)
+        form.addWidget(W.QLabel('Cut last N s'), 5, 0)
+        form.addWidget(self.cut, 5, 1)
+        form.addWidget(W.QLabel('Extra mpv flags'), 5, 2)
+        form.addWidget(self.extra, 5, 3)
+
+        lay = W.QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self.box)
+        # the per-session 'next' fraction is remembered when the form is
+        # first filled (so an --next=45 CLI value survives untouched clicks)
+        self._next_was = False
+        self._next_orig = None
+
+    # --- session -> widgets --------------------------------------------
+    def load(self, s):
+        """Fill every widget from the Session's opts/mpv/groups.
+
+        Same rules the old hand-built code used, via the shared model."""
+        po = PlaybackOptions(s.opts, s.mpv) if s is not None \
+            else PlaybackOptions.defaults()
+        s_opts = s.opts if s is not None else {}
+        labels = [str(g['label']) for g in s.groups] if s is not None else []
+        self.server.blockSignals(True)
+        self.server.clear()
+        self.server.addItems(labels)
+        if labels and po.quality:
+            idx = next((i for i, l in enumerate(labels)
+                        if str(po.quality).lower() in l.lower()), 0)
+            self.server.setCurrentIndex(idx)
+        self.server.blockSignals(False)
+        for w in (self.server, self.server_lbl):
+            w.setVisible(bool(labels))
+        # audio (AnimeX only)
+        for w in (self.audio_cb, self.audio_lbl):
+            w.setVisible(bool(s is not None and s.audio))
+        if s is not None and s.audio:
+            self.audio_cb.setCurrentText(po.audio_mode)
+        # skip / toggles / next / cut / extras
+        self.skip.setCurrentText(
+            s_opts.get('skip') if isinstance(s_opts.get('skip'), str)
+            else ('all' if s_opts.get('skip') else 'off'))
+        self.toggle.setChecked(bool(s_opts.get('skip_toggle')))
+        self.full.setChecked(po.fullscreen)
+        self.nxt.setChecked(bool(po.next))
+        self.nowait.setChecked(po.nowait)
+        self.sync_cb.setChecked(po.sync == 'auto')
+        self.cut.setText(str(po.cut or ''))
+        self.extra.setText(' '.join(po.extras))
+        self._next_was = bool(po.next)
+        self._next_orig = po.next if not isinstance(po.next, bool) else None
+
+    # --- widgets -> legacy (opts, mpv) ---------------------------------
+    def to_raw(self, s) -> tuple:
+        po = PlaybackOptions(s.opts if s is not None else None)
+        if self.server.isVisible():
+            po.quality = self.server.currentText()
+        if self.audio_cb.isVisible():
+            po.audio = self.audio_cb.currentText()
+        po.set_skip(self.skip.currentText())
+        po.set_skip_toggle(self.toggle.isChecked())
+        if self.nxt.isChecked():
+            # untouched + checked keeps its exact fraction (--next=N)
+            keep = self._next_orig if (self._next_was and self._next_orig) \
+                else 0.60
+            po.set_next(keep)
+        else:
+            po.set_next(False)
+        po.set_nowait(self.nowait.isChecked())
+        po.set_sync(self.sync_cb.isChecked())
+        po.set_cut(self.cut.text().strip())
+        po.with_extras(self.extra.text().split(),
+                       fullscreen=self.full.isChecked())
+        return po.to_opts(), po.mpv()
 
 
-def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
-        initial=None):
-    """Open the unified window. `loader(src, target)` returns a Session."""
-    from PySide6 import QtWidgets as W, QtCore as C, QtGui as G
-    from .search import search_all
-    from .cli_all import route
-    from . import history
+class MainWindow(W.QWidget):
+    """The one tgplay window: search, sessions, options, sidebar, log."""
 
-    class _SortItem(W.QTableWidgetItem):
-        """Sorts by the numeric/string key in UserRole, not the shown text."""
-        def __lt__(self, other):
-            a = self.data(C.Qt.UserRole)
-            b = other.data(C.Qt.UserRole)
-            try:
-                return float(a) < float(b)
-            except Exception:
-                return str(a) < str(b)
+    def __init__(self, loader: Callable, cfg=None, one_shot: bool = False):
+        super().__init__()
+        self._loader = loader
+        self._cfg = cfg
+        self._one_shot = one_shot
+        self.state: dict = {'session': None, 'closing': False, 'msg': '',
+                            'loading': False, 'playing': False}
 
-    def _mk_table(cols):
-        t = W.QTableWidget(0, len(cols))
-        t.setHorizontalHeaderLabels(cols)
-        t.verticalHeader().setVisible(False)
-        t.setEditTriggers(W.QAbstractItemView.NoEditTriggers)
-        t.setSelectionBehavior(W.QAbstractItemView.SelectRows)
-        t.setSelectionMode(W.QAbstractItemView.SingleSelection)
-        t.setShowGrid(False)
-        t.setAlternatingRowColors(True)
-        t.setMinimumWidth(340)
-        t.horizontalHeader().setSectionResizeMode(len(cols) - 1,
-                                                  W.QHeaderView.Stretch)
-        t.setSortingEnabled(True)
-        return t
+        from .http import HttpClient
+        self._http = HttpClient()
+        self._lq: 'queue.Queue' = queue.Queue()      # log lines
+        self._rq: 'queue.Queue' = queue.Queue()      # search results
+        self._libq: 'queue.Queue' = queue.Queue()    # sidebar payloads
+        self._prev_sink = _log.SINK
+        _log.SINK = lambda s: self._lq.put(str(s))
 
-    qapp = _app()
-    from .http import HttpClient
-    http = HttpClient()
-    state: dict = {'session': None, 'closing': False, 'msg': '',
-                   'loading': False, 'playing': False}
+        self.setWindowTitle('tgplay')
+        self.resize(1180, 820)
+        ic = _app_icon()
+        if ic is not None:
+            self.setWindowIcon(ic)
+        outer = W.QHBoxLayout(self)
+        outer.setContentsMargins(12, 10, 12, 10)
+        outer.setSpacing(10)
+        root = W.QVBoxLayout()
+        root.setSpacing(8)
+        outer.addLayout(root, 1)
+        side = W.QVBoxLayout()
+        side.setSpacing(8)
+        outer.addLayout(side, 0)
 
-    win = W.QWidget()
-    win.setWindowTitle('tgplay')
-    win.resize(1180, 820)
-    ic = _icon(G)
-    if ic is not None:
-        win.setWindowIcon(ic)
-    outer = W.QHBoxLayout(win)
-    outer.setContentsMargins(12, 10, 12, 10)
-    outer.setSpacing(10)
-    root = W.QVBoxLayout()
-    root.setSpacing(8)
-    outer.addLayout(root, 1)
-    side = W.QVBoxLayout()
-    side.setSpacing(8)
-    outer.addLayout(side, 0)
+        self._build_sidebar(side)
+        self._build_search_row(root)
+        self._build_header(root)
+        self._build_options(root)
+        self._build_episodes(root, outer)
+        self._build_status(root)
+        self._build_log(root)
+        self._build_buttons(root)
 
-    # --- right sidebar: feed / calendar (top) + history (bottom) --------
-    fbox = W.QGroupBox('Feed · calendar  (click a header to sort)')
-    fv = W.QVBoxLayout(fbox)
-    frow = W.QHBoxLayout()
-    frow.addWidget(W.QLabel('Show'))
-    feed_filter = W.QComboBox()
-    feed_filter.addItems(['Calendar', 'Remaining', 'All'])
-    frow.addWidget(feed_filter)
-    frow.addStretch(1)
-    fv.addLayout(frow)
-    feed = _mk_table(['Date', 'Ep', 'Title'])
-    fv.addWidget(feed)
-    side.addWidget(fbox, 1)
-    hbox = W.QGroupBox('History  (click a header to sort)')
-    hv = W.QVBoxLayout(hbox)
-    hist = _mk_table(['Watched', 'Prog', 'Title'])
-    hist.setMaximumHeight(260)
-    hv.addWidget(hist)
-    side.addWidget(hbox, 0)
-    side_btn = W.QPushButton('↻  refresh feed & history')
-    side.addWidget(side_btn)
+        self._timers()
+        self._connect()
 
-    # --- search row -----------------------------------------------------
-    srow = W.QHBoxLayout()
-    box = W.QLineEdit()
-    box.setClearButtonEnabled(True)
-    box.setPlaceholderText('Search animegate + animex…  or paste a link / @channel')
-    srow.addWidget(box, 1)
-    hist_btn = W.QPushButton('🕘 History')
-    hist_btn.setToolTip('Your recent links and searches in the app')
-    srow.addWidget(hist_btn)
-    root.addLayout(srow)
+    # --- widget construction -------------------------------------------
+    def _build_sidebar(self, side: W.QLayout):
+        fbox = W.QGroupBox('Feed · calendar  (click a header to sort)')
+        fv = W.QVBoxLayout(fbox)
+        frow = W.QHBoxLayout()
+        frow.addWidget(W.QLabel('Show'))
+        self.feed_filter = W.QComboBox()
+        self.feed_filter.addItems(['Calendar', 'Remaining', 'All'])
+        frow.addWidget(self.feed_filter)
+        frow.addStretch(1)
+        fv.addLayout(frow)
+        self.feed = SortableTable(['Date', 'Ep', 'Title'])
+        fv.addWidget(self.feed)
+        side.addWidget(fbox, 1)
 
-    # history gets a real table (Date | Source | Link | ✕); search results
-    # keep a plain list — a QStackedWidget swaps between the two views.
-    results = W.QListWidget()
-    results.setMaximumHeight(170)
+        hbox = W.QGroupBox('History  (click a header to sort)')
+        hv = W.QVBoxLayout(hbox)
+        self.hist = SortableTable(['Watched', 'Prog', 'Title'])
+        self.hist.setMaximumHeight(260)
+        hv.addWidget(self.hist)
+        side.addWidget(hbox, 0)
 
-    def _fmt_ts(ts):
-        ts = int(ts or 0)
-        if not ts:
-            return '(old)'
-        age = max(0, int(__import__('time').time()) - ts)
-        if age < 60:
-            return 'just now'
-        if age < 3600:
-            return f'{age // 60}m ago'
-        if age < 86400:
-            return f'{age // 3600}h ago'
-        if age < 7 * 86400:
-            return f'{age // 86400}d ago'
-        return __import__('time').strftime('%Y-%m-%d', __import__('time').localtime(ts))
+        self.side_btn = W.QPushButton('↻  refresh feed & history')
+        side.addWidget(self.side_btn)
 
-    hist_tbl = W.QTableWidget(0, 4)
-    hist_tbl.setHorizontalHeaderLabels(['Date', 'Source', 'Link', ''])
-    hist_tbl.verticalHeader().setVisible(False)
-    hist_tbl.setEditTriggers(W.QAbstractItemView.NoEditTriggers)
-    hist_tbl.setSelectionBehavior(W.QAbstractItemView.SelectRows)
-    hist_tbl.setSelectionMode(W.QAbstractItemView.SingleSelection)
-    hist_tbl.setShowGrid(False)
-    hist_tbl.setAlternatingRowColors(True)
-    hist_tbl.setMaximumHeight(170)
-    hh = hist_tbl.horizontalHeader()
-    hh.setSectionResizeMode(0, W.QHeaderView.ResizeToContents)
-    hh.setSectionResizeMode(1, W.QHeaderView.ResizeToContents)
-    hh.setSectionResizeMode(2, W.QHeaderView.Stretch)
-    hh.setSectionResizeMode(3, W.QHeaderView.Fixed)
-    hist_tbl.setColumnWidth(3, 30)
-    hist_tbl.setSortingEnabled(True)
-    res_stack = W.QStackedWidget()
-    res_stack.addWidget(results)        # page 0: search / typeahead
-    res_stack.addWidget(hist_tbl)       # page 1: local history picker
-    res_stack.setMaximumHeight(170)
-    res_stack.setVisible(False)
-    root.addWidget(res_stack)
+    def _build_search_row(self, root: W.QLayout):
+        srow = W.QHBoxLayout()
+        self.box = W.QLineEdit()
+        self.box.setClearButtonEnabled(True)
+        self.box.setPlaceholderText(
+            'Search animegate + animex…  or paste a link / @channel')
+        srow.addWidget(self.box, 1)
+        self.hist_btn = W.QPushButton('🕘 History')
+        self.hist_btn.setToolTip(
+            'Your recent links and searches, with their date and source.\n'
+            'Click a header (Date/Source/Link) to sort · ✕ removes one entry.')
+        srow.addWidget(self.hist_btn)
+        root.addLayout(srow)
 
-    # --- header ---------------------------------------------------------
-    head = W.QLabel('Search or paste a link to start')
-    hf = head.font(); hf.setPointSize(hf.pointSize() + 2); head.setFont(hf)
-    hrow = W.QHBoxLayout()
-    hrow.addWidget(head, 1)
-    add_btn = W.QPushButton('＋ Simkl list')
-    add_btn.setToolTip('Add the current show to your Simkl Watching list '
-                       '(it then appears in the calendar)')
-    hrow.addWidget(add_btn)
-    root.addLayout(hrow)
-    link_lbl = W.QLabel('')
-    link_lbl.setTextInteractionFlags(C.Qt.TextBrowserInteraction)
-    link_lbl.setOpenExternalLinks(True)
-    root.addWidget(link_lbl)
+        # history gets a real table (Date | Source | Link | ✕); the search
+        # list keeps the plain look - a QStackedWidget swaps the two views.
+        self.results = W.QListWidget()
+        self.results.setMaximumHeight(170)
 
-    # --- options --------------------------------------------------------
-    obox = W.QGroupBox('Options')
-    form = W.QGridLayout(obox)
-    form.setHorizontalSpacing(10); form.setVerticalSpacing(4)
-    server_lbl = W.QLabel('Server')
-    server = W.QComboBox(); server.setEditable(False)
-    audio_lbl = W.QLabel('Audio')
-    audio_cb = W.QComboBox(); audio_cb.addItems(['dub', 'sub', 'auto'])
-    audio_cb.setEditable(False)
-    skip = W.QComboBox(); skip.addItems(['off', 'all', 'names', 'auto'])
-    skip.setEditable(False)
-    toggle = W.QCheckBox('toggle key T')
-    full = W.QCheckBox('fullscreen')
-    nxt = W.QCheckBox('Pre-download next episode')
-    nowait = W.QCheckBox('start it at cut point')
-    sync_cb = W.QCheckBox('Sync progress to Simkl')
-    sync_cb.setChecked(True)
-    sync_cb.setToolTip('Off = never push watch progress to Simkl for this run')
-    cut = W.QLineEdit(); cut.setFixedWidth(70)
-    extra = W.QLineEdit()
-    r = 0
-    form.addWidget(server_lbl, r, 0); form.addWidget(server, r, 1, 1, 3); r += 1
-    form.addWidget(audio_lbl, r, 0); form.addWidget(audio_cb, r, 1, 1, 3); r += 1
-    form.addWidget(W.QLabel('Skip'), r, 0); form.addWidget(skip, r, 1)
-    form.addWidget(toggle, r, 2); form.addWidget(full, r, 3); r += 1
-    form.addWidget(nxt, r, 0, 1, 2); form.addWidget(nowait, r, 2, 1, 2); r += 1
-    form.addWidget(sync_cb, r, 0, 1, 4); r += 1
-    form.addWidget(W.QLabel('Cut last N s'), r, 0); form.addWidget(cut, r, 1)
-    form.addWidget(W.QLabel('Extra mpv flags'), r, 2); form.addWidget(extra, r, 3)
-    root.addWidget(obox)
+        self.hist_tbl = W.QTableWidget(0, 4)
+        self.hist_tbl.setHorizontalHeaderLabels(['Date', 'Source', 'Link', ''])
+        self.hist_tbl.verticalHeader().setVisible(False)
+        self.hist_tbl.setEditTriggers(W.QAbstractItemView.NoEditTriggers)
+        self.hist_tbl.setSelectionBehavior(W.QAbstractItemView.SelectRows)
+        self.hist_tbl.setSelectionMode(W.QAbstractItemView.SingleSelection)
+        self.hist_tbl.setShowGrid(False)
+        self.hist_tbl.setAlternatingRowColors(True)
+        self.hist_tbl.setMaximumHeight(170)
+        hh = self.hist_tbl.horizontalHeader()
+        hh.setSectionResizeMode(0, W.QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(1, W.QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(2, W.QHeaderView.Stretch)
+        hh.setSectionResizeMode(3, W.QHeaderView.Fixed)
+        self.hist_tbl.setColumnWidth(3, 30)
+        self.hist_tbl.setSortingEnabled(True)
 
-    # --- episodes -------------------------------------------------------
-    ebox = W.QGroupBox('Episodes')
-    ev = W.QVBoxLayout(ebox)
-    table = W.QTableWidget(0, 2)
-    table.setHorizontalHeaderLabels(['#', 'Episode name'])
-    table.verticalHeader().setVisible(False)
-    table.setEditTriggers(W.QAbstractItemView.NoEditTriggers)
-    table.setSelectionBehavior(W.QAbstractItemView.SelectRows)
-    table.setSelectionMode(W.QAbstractItemView.ExtendedSelection)
-    table.setShowGrid(False)
-    table.setAlternatingRowColors(True)
-    hdr = table.horizontalHeader()
-    hdr.setSectionResizeMode(0, W.QHeaderView.ResizeToContents)
-    hdr.setSectionResizeMode(1, W.QHeaderView.Stretch)
-    ev.addWidget(table)
-    root.addWidget(ebox, 1)
+        self.res_stack = W.QStackedWidget()
+        self.res_stack.addWidget(self.results)      # page 0: typeahead
+        self.res_stack.addWidget(self.hist_tbl)     # page 1: history picker
+        self.res_stack.setMaximumHeight(170)
+        self.res_stack.setVisible(False)
+        root.addWidget(self.res_stack)
 
-    status = W.QLabel('idle')
-    root.addWidget(status)
+    def _build_header(self, root: W.QLayout):
+        self.head = W.QLabel('Search or paste a link to start')
+        hf = self.head.font()
+        hf.setPointSize(hf.pointSize() + 2)
+        self.head.setFont(hf)
+        hrow = W.QHBoxLayout()
+        hrow.addWidget(self.head, 1)
+        self.add_btn = W.QPushButton('＋ Simkl list')
+        self.add_btn.setToolTip(
+            'Add the current show to your Simkl Watching list '
+            '(it then appears in the calendar)')
+        hrow.addWidget(self.add_btn)
+        root.addLayout(hrow)
+        self.link_lbl = W.QLabel('')
+        self.link_lbl.setTextInteractionFlags(C.Qt.TextBrowserInteraction)
+        self.link_lbl.setOpenExternalLinks(True)
+        root.addWidget(self.link_lbl)
 
-    # --- log ------------------------------------------------------------
-    lbox = W.QGroupBox('Log')
-    lv = W.QVBoxLayout(lbox)
-    logbox = W.QPlainTextEdit()
-    logbox.setReadOnly(True)
-    logbox.setMaximumBlockCount(3000)
-    logbox.setFixedHeight(150)
-    try:
-        logbox.setFont(G.QFontDatabase.systemFont(G.QFontDatabase.FixedFont))
-    except Exception:
-        pass
-    lv.addWidget(logbox)
-    if _log.HISTORY:
-        logbox.setPlainText('\n'.join(list(_log.HISTORY)))
-    root.addWidget(lbox)
+    def _build_options(self, root: W.QLayout):
+        self.opts_form = OptionsForm()
+        root.addWidget(self.opts_form)
 
-    # --- buttons --------------------------------------------------------
-    bar = W.QHBoxLayout()
-    b_from = W.QPushButton('▶  Play from here')
-    b_sel = W.QPushButton('▶  Only selected')
-    b_all = W.QPushButton('▶  All')
-    b_stop = W.QPushButton('■  Stop')
-    b_close = W.QPushButton('Close')
-    for b in (b_from, b_sel, b_all, b_stop):
-        bar.addWidget(b)
-    bar.addStretch(1); bar.addWidget(b_close)
-    root.addLayout(bar)
+    def _build_episodes(self, root: W.QLayout, outer: W.QLayout):
+        self.ebox = W.QGroupBox('Episodes')
+        ev = W.QVBoxLayout(self.ebox)
+        self.table = W.QTableWidget(0, 2)
+        self.table.setHorizontalHeaderLabels(['#', 'Episode name'])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setEditTriggers(W.QAbstractItemView.NoEditTriggers)
+        self.table.setSelectionBehavior(W.QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(W.QAbstractItemView.ExtendedSelection)
+        self.table.setShowGrid(False)
+        self.table.setAlternatingRowColors(True)
+        hdr = self.table.horizontalHeader()
+        hdr.setSectionResizeMode(0, W.QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(1, W.QHeaderView.Stretch)
+        ev.addWidget(self.table)
+        root.addWidget(self.ebox, 1)
 
-    lq: 'queue.Queue' = queue.Queue()
-    prev_sink = _log.SINK
-    _log.SINK = lambda s: lq.put(str(s))
+    def _build_status(self, root: W.QLayout):
+        self.status = W.QLabel('idle')
+        root.addWidget(self.status)
 
-    rq: 'queue.Queue' = queue.Queue()
-    libq: 'queue.Queue' = queue.Queue()
+    def _build_log(self, root: W.QLayout):
+        lbox = W.QGroupBox('Log')
+        lv = W.QVBoxLayout(lbox)
+        self.logbox = W.QPlainTextEdit()
+        self.logbox.setReadOnly(True)
+        self.logbox.setMaximumBlockCount(3000)
+        self.logbox.setFixedHeight(150)
+        try:
+            self.logbox.setFont(G.QFontDatabase.systemFont(
+                G.QFontDatabase.FixedFont))
+        except Exception:
+            pass
+        lv.addWidget(self.logbox)
+        if _log.HISTORY:
+            self.logbox.setPlainText('\n'.join(list(_log.HISTORY)))
+        root.addWidget(lbox)
 
-    # --- behavior -------------------------------------------------------
-    def current_sel():
-        rows = sorted({i.row() for i in table.selectedIndexes()})
-        nums = [int(table.item(r, 0).data(C.Qt.UserRole)) for r in rows
-                if table.item(r, 0)]
-        return nums
+    def _build_buttons(self, root: W.QLayout):
+        bar = W.QHBoxLayout()
+        self.b_from = W.QPushButton('▶  Play from here')
+        self.b_sel = W.QPushButton('▶  Only selected')
+        self.b_all = W.QPushButton('▶  All')
+        self.b_stop = W.QPushButton('■  Stop')
+        self.b_close = W.QPushButton('Close')
+        for b in (self.b_from, self.b_sel, self.b_all, self.b_stop):
+            bar.addWidget(b)
+        bar.addStretch(1)
+        bar.addWidget(self.b_close)
+        root.addLayout(bar)
 
-    def focus_num():
-        r = table.currentRow()
-        it = table.item(r, 0) if r >= 0 else None
+    def _timers(self):
+        # search debouncer + queue poller
+        self.debounce = C.QTimer()
+        self.debounce.setSingleShot(True)
+        self.debounce.setInterval(350)
+        self.poll = C.QTimer()
+        self.poll.setInterval(150)
+        # sidebar refresh shortly after a sync lands (history/feed changed)
+        self.side_timer = C.QTimer()
+        self.side_timer.setSingleShot(True)
+        self.side_timer.setInterval(1500)
+        self.log_timer = C.QTimer()
+        self.log_timer.timeout.connect(self._drain_log)
+        self.log_timer.start(250)
+        self.st_timer = C.QTimer()
+        self.st_timer.timeout.connect(self._refresh_status)
+        self.st_timer.start(1000)
+
+    def _connect(self):
+        self.box.textChanged.connect(self._on_text)
+        self.box.returnPressed.connect(self._accept_typed)
+        self.debounce.timeout.connect(
+            lambda: self._run_search(self.box.text().strip()))
+        self.poll.timeout.connect(self._drain_search)
+        self.poll.start()
+        self.results.itemClicked.connect(self._pick_result)
+        self.results.itemActivated.connect(self._pick_result)
+        self.hist_btn.clicked.connect(lambda *_: self.show_history(force=True))
+        self.hist_tbl.cellClicked.connect(self._hist_click)
+        self.feed_filter.currentTextChanged.connect(
+            lambda _t: self._render_feed())
+        for t in (self.feed, self.hist):
+            t.setContextMenuPolicy(C.Qt.CustomContextMenu)
+            t.customContextMenuRequested.connect(
+                lambda pos, tab=t: self._context(tab, pos))
+        self.feed.itemDoubleClicked.connect(
+            lambda it: self.load_entry(self._row_entry(self.feed, it)))
+        self.hist.itemDoubleClicked.connect(
+            lambda it: self.load_entry(self._row_entry(self.hist, it)))
+        self.b_from.clicked.connect(self._from_here)
+        self.b_sel.clicked.connect(self._only_sel)
+        self.b_all.clicked.connect(lambda: self._do_play(self._all_nums()))
+        self.b_stop.clicked.connect(self._do_stop)
+        self.b_close.clicked.connect(self.close_window)
+        self.add_btn.clicked.connect(self.add_current)
+        self.side_btn.clicked.connect(self.load_side)
+        self.poll.timeout.connect(self._drain_lib)
+
+    # --- playback -------------------------------------------------------
+    def _current_sel(self) -> List[int]:
+        rows = sorted({i.row() for i in self.table.selectedIndexes()})
+        return [int(self.table.item(r, 0).data(C.Qt.UserRole)) for r in rows
+                if self.table.item(r, 0)]
+
+    def _focus_num(self) -> Optional[int]:
+        r = self.table.currentRow()
+        it = self.table.item(r, 0) if r >= 0 else None
         return int(it.data(C.Qt.UserRole)) if it else None
 
-    def all_nums():
-        return [int(table.item(r, 0).data(C.Qt.UserRole))
-                for r in range(table.rowCount())]
+    def _all_nums(self) -> List[int]:
+        return [int(self.table.item(r, 0).data(C.Qt.UserRole))
+                for r in range(self.table.rowCount())]
 
-    def apply_opts():
-        s = state['session']
-        o = dict(s.opts) if s else {}
-        if server.isVisible():
-            o['f'] = server.currentText()
-        if audio_cb.isVisible():
-            o['audio'] = audio_cb.currentText()
-        sm = skip.currentText()
-        o['skip'] = False if sm == 'off' else sm
-        o['skip_toggle'] = bool(toggle.isChecked())
-        o['next'] = 0.60 if nxt.isChecked() else False
-        o['nowait'] = bool(nowait.isChecked())
-        o['sync'] = 'auto' if sync_cb.isChecked() else 'off'
-        c = cut.text().strip()
-        o['cut'] = int(c) if c.isdigit() else None
-        m = extra.text().split()
-        if full.isChecked() and '--fullscreen' not in m:
-            m.append('--fullscreen')
-        return o, m
+    def _apply_opts(self):
+        s = self.state['session']
+        return self.opts_form.to_raw(s)          # shared options model
 
-    def do_play(chosen):
-        s = state['session']
+    def _do_play(self, chosen):
+        s = self.state['session']
         if s is None or not chosen:
             return
-        if state.get('playing'):
-            return                          # one video at a time
-        o, m = apply_opts()
-        state['playing'] = True
-        state['msg'] = 'starting…'
-        if one_shot:
+        if self.state.get('playing'):
+            return                                # one video at a time
+        o, m = self._apply_opts()
+        self.state['playing'] = True
+        self.state['msg'] = 'starting…'
+        if self._one_shot:
             try:
                 s.play(chosen, o, m)
             finally:
-                state['playing'] = False
-            close()
+                self.state['playing'] = False
+            self.close_window()
             return
 
         def run():
             try:
                 s.play(chosen, o, m)
-                state['msg'] = ''
+                self.state['msg'] = ''
             except Exception as ex:
-                state['msg'] = f'error: {ex}'
+                self.state['msg'] = f'error: {ex}'
             finally:
-                state['playing'] = False
+                self.state['playing'] = False
         threading.Thread(target=run, daemon=True).start()
 
-    def from_here():
-        f = focus_num()
+    def _from_here(self):
+        f = self._focus_num()
         if f is not None:
-            do_play([n for n in all_nums() if n >= f])
+            self._do_play([n for n in self._all_nums() if n >= f])
 
-    def only_sel():
-        sel = current_sel()
-        f = focus_num()
-        do_play(sel if sel else ([f] if f is not None else all_nums()))
+    def _only_sel(self):
+        sel = self._current_sel()
+        f = self._focus_num()
+        self._do_play(sel if sel else
+                      ([f] if f is not None else self._all_nums()))
 
-    def do_stop():
-        s = state['session']
+    def _do_stop(self):
+        s = self.state['session']
         if s:
             try:
                 s.stop()
             except Exception:
                 pass
-        state['msg'] = 'stopped'
+        self.state['msg'] = 'stopped'
 
-    def set_session(s):
-        old = state['session']
+    def set_session(self, s):
+        old = self.state['session']
         if old is not None:
             try:
                 old.close()
             except Exception:
                 pass
-        state['session'] = s
-        state['msg'] = ''
-        head.setText(s.title or 'tgplay')
-        link_lbl.setText(f'<a href="{s.link}">{s.link}</a>' if s.link else '')
-        # server list
-        labels = [str(g['label']) for g in s.groups]
-        server.blockSignals(True)
-        server.clear(); server.addItems(labels)
-        if labels:
-            want = s.opts.get('f')
-            idx = next((i for i, l in enumerate(labels)
-                        if want and str(want).lower() in l.lower()), 0)
-            server.setCurrentIndex(idx)
-        server.blockSignals(False)
-        for w in (server, server_lbl):
-            w.setVisible(bool(labels))
-        # audio
-        for w in (audio_cb, audio_lbl):
-            w.setVisible(bool(s.audio))
-        if s.audio:
-            audio_cb.setCurrentText(s.opts.get('audio')
-                                    if s.opts.get('audio') in ('dub', 'sub', 'auto')
-                                    else 'dub')
-        # options
-        o = s.opts
-        skip.setCurrentText(o.get('skip') if isinstance(o.get('skip'), str)
-                            else ('all' if o.get('skip') else 'off'))
-        toggle.setChecked(bool(o.get('skip_toggle')))
-        nxt.setChecked(bool(o.get('next')))
-        nowait.setChecked(bool(o.get('nowait')))
-        sync_cb.setChecked(o.get('sync', 'auto') != 'off')
-        cut.setText(str(o.get('cut') or ''))
-        extra.setText(' '.join(x for x in s.mpv if x != '--fullscreen'))
-        full.setChecked('--fullscreen' in s.mpv)
+        self.state['session'] = s
+        self.state['msg'] = ''
+        self.head.setText(s.title or 'tgplay')
+        self.link_lbl.setText(
+            f'<a href="{s.link}">{s.link}</a>' if s.link else '')
+        self.opts_form.load(s)                    # shared options form
         # episodes
         nums = sorted(s.labels)
-        table.setRowCount(0)
-        table.setRowCount(len(nums))
+        self.table.setRowCount(0)
+        self.table.setRowCount(len(nums))
         for i, n in enumerate(nums):
             it0 = W.QTableWidgetItem(str(n))
             it0.setData(C.Qt.UserRole, n)
             it0.setTextAlignment(C.Qt.AlignRight | C.Qt.AlignVCenter)
-            table.setItem(i, 0, it0)
-            table.setItem(i, 1, W.QTableWidgetItem(
+            self.table.setItem(i, 0, it0)
+            self.table.setItem(i, 1, W.QTableWidgetItem(
                 s.labels.get(n, f'Episode {n}')))
-        ebox.setTitle(f'Episodes ({len(nums)})')
+        self.ebox.setTitle(f'Episodes ({len(nums)})')
         if nums:
-            row = nums.index(s.resume[0]) if (s.resume and s.resume[0] in s.labels) else 0
-            table.selectRow(row)
-            table.setCurrentCell(row, 1)
-            table.scrollToItem(table.item(row, 1))
+            row = nums.index(s.resume[0]) if (s.resume and
+                                              s.resume[0] in s.labels) else 0
+            self.table.selectRow(row)
+            self.table.setCurrentCell(row, 1)
+            self.table.scrollToItem(self.table.item(row, 1))
+
+    def load_target(self, src, target):
+        if self.state.get('loading'):
+            return                          # ignore repeat clicks while loading
+        self.state['loading'] = True
+        self.state['msg'] = f'loading  {target} …'
+        try:
+            self.head.setText(f'loading  {target} …')
+        except Exception:
+            pass
+        try:
+            s = self._loader(src, target)
+        except Exception as ex:
+            self.state['msg'] = f'error: {ex}'
+            self.state['loading'] = False
+            return
+        self.state['loading'] = False
+        if self._cfg is not None:
+            history.add(self._cfg, link=target)
+        self.set_session(s)
+        self.state['msg'] = ''
 
     # --- search ---------------------------------------------------------
-    debounce = C.QTimer(); debounce.setSingleShot(True); debounce.setInterval(350)
-    poll = C.QTimer(); poll.setInterval(150)
-
-    def run_search(text):
+    def _run_search(self, text):
         def work():
             try:
-                rq.put(search_all(text, sources=('agp', 'axp')) or [])
+                from .search import search_all
+                self._rq.put(search_all(text, sources=('agp', 'axp')) or [])
             except Exception:
-                rq.put([])
+                self._rq.put([])
         threading.Thread(target=work, daemon=True).start()
 
-    def fill_results(items):
-        results.clear()
-        res_stack.setCurrentWidget(results)
+    def _fill_results(self, items):
+        self.results.clear()
+        self.res_stack.setCurrentWidget(self.results)
         for e in items:
             kind = e.get('kind') or 'result'
             title = e.get('title', '')
@@ -444,14 +590,68 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
             it.setData(C.Qt.UserRole + 1, e.get('source'))
             it.setData(C.Qt.UserRole + 2, title)
             it.setData(C.Qt.UserRole + 3, kind)
-            results.addItem(it)
-        results.setVisible(bool(items))
-        res_stack.setVisible(bool(items))
+            self.results.addItem(it)
+        self.results.setVisible(bool(items))
+        self.res_stack.setVisible(bool(items))
 
-    def _hist_rows():
-        items = history.recent(cfg) if cfg is not None else []
-        filtered = []
-        seen = set()
+    def _on_text(self):
+        from .cli_all import route
+        t = self.box.text().strip()
+        if not t:
+            self.show_history()
+            return
+        r = route(t)
+        if r:
+            self._fill_results(
+                [{'title': t, 'url': r[1], 'source': r[0]}])
+            return
+        self.debounce.start()
+
+    def _drain_search(self):
+        try:
+            items = self._rq.get_nowait()
+        except queue.Empty:
+            return
+        self._fill_results(items)
+
+    def _pick_result(self, item):
+        if item is None:
+            return
+        kind = item.data(C.Qt.UserRole + 3)
+        if kind == 'query':                     # replay a past search
+            self.box.setText(str(item.data(C.Qt.UserRole + 2)))
+            return
+        src = item.data(C.Qt.UserRole + 1) or 'agp'
+        target = item.data(C.Qt.UserRole)
+        if target:
+            from .cli_all import route
+            q = self.box.text().strip()
+            if self._cfg is not None and q and not route(q):
+                history.add(self._cfg, query=q)
+            elif self._cfg is not None and not q:
+                history.add(self._cfg, link=target)  # record it NOW
+            self.box.clear()
+            self._fill_results([])
+            self.load_target(str(src), str(target))
+
+    def _accept_typed(self):
+        from .cli_all import route
+        t = self.box.text().strip()
+        r = route(t)
+        if r:
+            self._fill_results([])
+            self.load_target(r[0], r[1])
+            return
+        n = self.results.currentRow()
+        if n < 0 and self.results.count():
+            n = 0
+        if n >= 0:
+            self._pick_result(self.results.item(n))
+
+    # --- local history picker ------------------------------------------
+    def _hist_rows(self) -> List[dict]:
+        items = history.recent(self._cfg) if self._cfg is not None else []
+        filtered, seen = [], set()
         for e in items:                     # drop duplicate titles (same link
             if e['title'] in seen:          # can appear once per source)
                 continue
@@ -459,178 +659,98 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
             filtered.append(e)
         return filtered
 
-    def show_history(force=False):
-        sc = hist_tbl.horizontalHeader().sortIndicatorSection()
-        so = hist_tbl.horizontalHeader().sortIndicatorOrder()
-        hist_tbl.setSortingEnabled(False)
-        hist_tbl.setRowCount(0)
-        items = _hist_rows()
-        hist_tbl.setVisible(True)
+    def show_history(self, force=False):
+        sc = self.hist_tbl.horizontalHeader().sortIndicatorSection()
+        so = self.hist_tbl.horizontalHeader().sortIndicatorOrder()
+        self.hist_tbl.setSortingEnabled(False)
+        self.hist_tbl.setRowCount(0)
+        items = self._hist_rows()
         for e in items:
-            r = hist_tbl.rowCount()
-            hist_tbl.insertRow(r)
+            r = self.hist_tbl.rowCount()
+            self.hist_tbl.insertRow(r)
             it_d = _SortItem(_fmt_ts(e.get('ts')))
             it_d.setData(C.Qt.UserRole, str(e.get('ts') or 0))
-            hist_tbl.setItem(r, 0, it_d)
+            self.hist_tbl.setItem(r, 0, it_d)
             src = 'search' if e['kind'] == 'query' else str(
                 e.get('source') or 'link')
-            hist_tbl.setItem(r, 1, W.QTableWidgetItem(src))
+            self.hist_tbl.setItem(r, 1, W.QTableWidgetItem(src))
             it_l = _SortItem(e['title'])
             it_l.setData(C.Qt.UserRole, e['title'])   # sort by the link text
             it_l.setData(C.Qt.UserRole + 1, e)
-            hist_tbl.setItem(r, 2, it_l)
+            self.hist_tbl.setItem(r, 2, it_l)
             x = W.QToolButton()
             x.setText('✕')
             x.setToolTip('remove from history')
-            x.clicked.connect(lambda _c=False, row=r, e=e: _hist_del(row, e))
-            hist_tbl.setCellWidget(r, 3, x)
+            x.clicked.connect(
+                lambda _c=False, row=r, ent=e: self._hist_del(row, ent))
+            self.hist_tbl.setCellWidget(r, 3, x)
         if not items:
-            hist_tbl.insertRow(0)
-            hist_tbl.setItem(0, 2, W.QTableWidgetItem('no history yet'))
-        hist_tbl.setSortingEnabled(True)
+            self.hist_tbl.insertRow(0)
+            self.hist_tbl.setItem(0, 2, W.QTableWidgetItem('no history yet'))
+        self.hist_tbl.setSortingEnabled(True)
         if sc < 0:
-            hist_tbl.sortItems(0, C.Qt.DescendingOrder)  # newest first default
+            self.hist_tbl.sortItems(0, C.Qt.DescendingOrder)  # newest first
         else:
-            hist_tbl.sortItems(sc, so)      # keep the user's chosen sort
-        res_stack.setCurrentWidget(hist_tbl)
-        res_stack.setVisible(bool(items) or force)
+            self.hist_tbl.sortItems(sc, so)       # keep the user's sort
+        self.res_stack.setCurrentWidget(self.hist_tbl)
+        self.res_stack.setVisible(bool(items) or force)
 
-    def _hist_del(_row, e):
+    def _hist_del(self, _row, e):
         try:
             if e['kind'] == 'query':
-                history.remove(cfg, query=e['title'])
+                history.remove(self._cfg, query=e['title'])
             else:
-                history.remove(cfg, link=e['url'])
+                history.remove(self._cfg, link=e['url'])
         except Exception:
             pass
-        show_history(force=True)
+        self.show_history(force=True)
 
-    def _hist_click(row, col):
+    def _hist_click(self, row, col):
         if col == 3:
             return
-        it = hist_tbl.item(row, 2)
+        it = self.hist_tbl.item(row, 2)
         e = it.data(C.Qt.UserRole + 1) if it else None
         if not e:
             return
         if e['kind'] == 'query':                # replay a past search
-            box.setText(e['title'])
+            self.box.setText(e['title'])
             return
-        if cfg is not None:
-            history.add(cfg, link=e['url'])     # record NOW, before loading
-        box.clear()
-        load_target(str(e.get('source') or 'agp'), str(e['url']))
-
-    def load_target(src, target):
-        if state.get('loading'):
-            return                          # ignore repeat clicks while loading
-        state['loading'] = True
-        state['msg'] = f'loading  {target} …'
-        try:
-            head.setText(f'loading  {target} …')
-        except Exception:
-            pass
-        try:
-            s = loader(src, target)
-        except Exception as ex:
-            state['msg'] = f'error: {ex}'
-            state['loading'] = False
-            return
-        state['loading'] = False
-        if cfg is not None:
-            history.add(cfg, link=target)
-        set_session(s)
-        state['msg'] = ''
-
-    def on_text():
-        t = box.text().strip()
-        if not t:
-            show_history()
-            return
-        r = route(t)
-        if r:
-            fill_results([{'title': t, 'url': r[1], 'source': r[0]}])
-            return
-        debounce.start()
-
-    def drain_search():
-        try:
-            items = rq.get_nowait()
-        except queue.Empty:
-            return
-        fill_results(items)
-
-    def pick_result(item):
-        if item is None:
-            return
-        kind = item.data(C.Qt.UserRole + 3)
-        if kind == 'query':                     # replay a past search
-            box.setText(str(item.data(C.Qt.UserRole + 2)))
-            return
-        src = item.data(C.Qt.UserRole + 1) or 'agp'
-        target = item.data(C.Qt.UserRole)
-        if target:
-            q = box.text().strip()
-            if cfg is not None and q and not route(q):
-                history.add(cfg, query=q)
-            elif cfg is not None and not q:
-                history.add(cfg, link=target)   # picked a result: record it now
-            box.clear()
-            box.clear()
-            fill_results([])
-            load_target(str(src), str(target))
-
-    def accept_typed():
-        t = box.text().strip()
-        r = route(t)
-        if r:
-            fill_results([])
-            load_target(r[0], r[1])
-            return
-        n = results.currentRow()
-        if n < 0 and results.count():
-            n = 0
-        if n >= 0:
-            pick_result(results.item(n))
-
-    box.textChanged.connect(on_text)
-    debounce.timeout.connect(lambda: run_search(box.text().strip()))
-    poll.timeout.connect(drain_search)
-    poll.start()
-    results.itemClicked.connect(pick_result)
-    results.itemActivated.connect(pick_result)
-    box.returnPressed.connect(accept_typed)
+        if self._cfg is not None:
+            history.add(self._cfg, link=e['url'])    # record NOW
+        self.box.clear()
+        self.load_target(str(e.get('source') or 'agp'), str(e['url']))
 
     # --- library / sidebar ----------------------------------------------
-    def _goto_ep(ep):
+    def _goto_ep(self, ep):
         if not ep:
             return
-        for r in range(table.rowCount()):
-            it = table.item(r, 0)
+        for r in range(self.table.rowCount()):
+            it = self.table.item(r, 0)
             if it and int(it.data(C.Qt.UserRole)) == int(ep):
-                table.selectRow(r)
-                table.setCurrentCell(r, 1)
+                self.table.selectRow(r)
+                self.table.setCurrentCell(r, 1)
                 return                       # select only; Play buttons start it
 
-    def load_entry(e):
+    def load_entry(self, e):
         if not e:
             return
-        state['msg'] = f"finding “{e['title']}” on our sources…"
+        self.state['msg'] = f"finding “{e['title']}” on our sources…"
 
         def work():
             try:
                 from .library import find_source
-                res = find_source(e['title'], http)
+                res = find_source(e['title'], self._http)
             except Exception:
                 res = None
-            libq.put(('load', e, res))
+            self._libq.put(('load', e, res))
         threading.Thread(target=work, daemon=True).start()
 
-    def add_current():
-        s = state['session']
+    def add_current(self):
+        s = self.state['session']
         if s is None:
-            state['msg'] = 'load a show first'
+            self.state['msg'] = 'load a show first'
             return
-        state['msg'] = f'adding “{s.title}” to Simkl…'
+        self.state['msg'] = f'adding “{s.title}” to Simkl…'
 
         def work():
             try:
@@ -638,62 +758,58 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
                 from .simkl_account import SimklAccount
                 mal = getattr(s.provider, 'mal_id', None)
                 if not mal:
-                    mal = Metadata(cfg, http).resolve_mal(s.title, ask=False)
+                    mal = Metadata(self._cfg, self._http).resolve_mal(
+                        s.title, ask=False)
                 ids = {'mal': mal} if mal else {'title': s.title}
-                ok = SimklAccount(cfg, http).add_to_list(ids, 'watching')
-                state['msg'] = ('added to Simkl list' if ok
-                                else 'could not add to Simkl (logged in?)')
+                ok = SimklAccount(self._cfg, self._http).add_to_list(
+                    ids, 'watching')
+                self.state['msg'] = ('added to Simkl list' if ok
+                                     else 'could not add to Simkl (logged in?)')
                 if ok:
-                    libq.put(('feed-refresh',))
+                    self._libq.put(('feed-refresh',))
             except Exception as ex:
-                state['msg'] = f'add failed: {ex}'
+                self.state['msg'] = f'add failed: {ex}'
         threading.Thread(target=work, daemon=True).start()
 
-    def _fmt_date(s):
-        try:
-            from datetime import datetime
-            d = datetime.fromisoformat(str(s).replace('Z', '+00:00'))
-            return d.strftime('%a %d %b %Y')
-        except Exception:
-            return str(s)[:10]
-
-    def load_side():
-        feed.setSortingEnabled(False)
-        feed.setRowCount(0)
-        hist.setSortingEnabled(False)
-        hist.setRowCount(0)
-        feed.insertRow(0)
-        feed.setItem(0, 2, W.QTableWidgetItem('loading…'))
+    def load_side(self):
+        self.feed.setSortingEnabled(False)
+        self.feed.setRowCount(0)
+        self.hist.setSortingEnabled(False)
+        self.hist.setRowCount(0)
+        self.feed.insertRow(0)
+        self.feed.setItem(0, 2, W.QTableWidgetItem('loading…'))
 
         def work():
-            from .simkl_account import SimklAccount
             try:
-                connected = SimklAccount(cfg).logged_in() if cfg is not None else False
+                from .simkl_account import SimklAccount
+                connected = (SimklAccount(self._cfg).logged_in()
+                             if self._cfg is not None else False)
             except Exception:
                 connected = False
             if not connected:
-                libq.put(('feed', None, None))
+                self._libq.put(('feed', None, None))
                 return
             try:
                 from .library import overview
-                ov = overview(cfg, http)
+                ov = overview(self._cfg, self._http)
                 cal, rem, rc = ov['cal'], ov['rem'], ov['hist']
             except Exception:
                 cal, rem, rc = [], [], []
-            libq.put(('feed', {'cal': cal, 'rem': rem}, rc))
+            self._libq.put(('feed', {'cal': cal, 'rem': rem}, rc))
         threading.Thread(target=work, daemon=True).start()
 
-    def render_feed():
-        cal = state.get('cal')
-        rem = state.get('rem')
-        feed.setSortingEnabled(False)
-        feed.setRowCount(0)
+    def _render_feed(self):
+        cal = self.state.get('cal')
+        rem = self.state.get('rem')
+        self.feed.setSortingEnabled(False)
+        self.feed.setRowCount(0)
         if cal is None and rem is None:
-            feed.insertRow(0)
-            feed.setItem(0, 2, W.QTableWidgetItem('connect:  tgplay simkl login'))
-            feed.setSortingEnabled(True)
+            self.feed.insertRow(0)
+            self.feed.setItem(0, 2, W.QTableWidgetItem(
+                'connect:  tgplay simkl login'))
+            self.feed.setSortingEnabled(True)
             return
-        mode = feed_filter.currentText()
+        mode = self.feed_filter.currentText()
         if mode == 'Calendar':
             rows = list(cal or [])
         elif mode == 'Remaining':
@@ -707,7 +823,8 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
                 seen.add(key)
                 rows.append(e)
         for e in rows:
-            r = feed.rowCount(); feed.insertRow(r)
+            r = self.feed.rowCount()
+            self.feed.insertRow(r)
             k = e.get('kind')
             if k == 'upcoming':
                 when = '📅  ' + _fmt_date(e['air_date'])
@@ -718,101 +835,99 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
             c0 = _SortItem(when)
             c0.setData(C.Qt.UserRole, str(e.get('air_date') or '9999-99'))
             c0.setData(C.Qt.UserRole + 1, e)
-            feed.setItem(r, 0, c0)
+            self.feed.setItem(r, 0, c0)
             c1 = _SortItem(str(e.get('next_ep') or ''))
             c1.setData(C.Qt.UserRole, int(e.get('next_ep') or 0))
-            feed.setItem(r, 1, c1)
+            self.feed.setItem(r, 1, c1)
             ttl = e['title']
             if k == 'upcoming' and e.get('ep_title'):
                 ttl = f"{e['title']} · {e['ep_title']}"
             elif k == 'remaining' and e.get('total'):
                 ttl = f"{e['title']}  ({e.get('watched')}/{e.get('total')})"
-            feed.setItem(r, 2, W.QTableWidgetItem(ttl))
+            self.feed.setItem(r, 2, W.QTableWidgetItem(ttl))
         if not rows:
-            feed.insertRow(0)
-            feed.setItem(0, 2, W.QTableWidgetItem(
+            self.feed.insertRow(0)
+            self.feed.setItem(0, 2, W.QTableWidgetItem(
                 'nothing here — try another filter or ↻ refresh'))
-        feed.setSortingEnabled(True)
+        self.feed.setSortingEnabled(True)
 
-    def drain_lib():
+    def _drain_lib(self):
         while True:
             try:
-                msg = libq.get_nowait()
+                msg = self._libq.get_nowait()
             except queue.Empty:
                 return
             if msg[0] == 'feed-refresh':
-                load_side()
+                self.load_side()
             elif msg[0] == 'feed':
                 _, payload, rc = msg
                 if payload is None:
-                    state['cal'] = state['rem'] = None
+                    self.state['cal'] = self.state['rem'] = None
                 else:
-                    state['cal'] = payload.get('cal')
-                    state['rem'] = payload.get('rem')
-                render_feed()
-                hist.setSortingEnabled(False)
-                hist.setRowCount(0)
+                    self.state['cal'] = payload.get('cal')
+                    self.state['rem'] = payload.get('rem')
+                self._render_feed()
+                self.hist.setSortingEnabled(False)
+                self.hist.setRowCount(0)
                 if payload is None:
-                    hist.insertRow(0)
-                    hist.setItem(0, 2, W.QTableWidgetItem(
+                    self.hist.insertRow(0)
+                    self.hist.setItem(0, 2, W.QTableWidgetItem(
                         'connect:  tgplay simkl login'))
                     continue
                 for e in rc:
-                    r = hist.rowCount(); hist.insertRow(r)
+                    r = self.hist.rowCount()
+                    self.hist.insertRow(r)
                     c0 = _SortItem(str(e.get('last_watched'))[:10])
                     c0.setData(C.Qt.UserRole, str(e.get('last_watched') or ''))
                     c0.setData(C.Qt.UserRole + 1, e)
-                    hist.setItem(r, 0, c0)
+                    self.hist.setItem(r, 0, c0)
                     c1 = _SortItem(f"{e['watched']}/{e['total']}")
                     c1.setData(C.Qt.UserRole, int(e.get('watched') or 0))
-                    hist.setItem(r, 1, c1)
-                    hist.setItem(r, 2, W.QTableWidgetItem(e['title']))
+                    self.hist.setItem(r, 1, c1)
+                    self.hist.setItem(r, 2, W.QTableWidgetItem(e['title']))
                 if not rc:
-                    hist.insertRow(0)
-                    hist.setItem(0, 2, W.QTableWidgetItem('no history'))
-                hist.setSortingEnabled(True)
-                hist.sortItems(0, C.Qt.DescendingOrder)   # newest watched first
+                    self.hist.insertRow(0)
+                    self.hist.setItem(0, 2, W.QTableWidgetItem('no history'))
+                self.hist.setSortingEnabled(True)
+                self.hist.sortItems(0, C.Qt.DescendingOrder)  # newest first
             elif msg[0] == 'load':
                 _, entry, res = msg
                 if res:
-                    load_target(res[0], res[1])
+                    self.load_target(res[0], res[1])
                     C.QTimer.singleShot(
-                        120, lambda ep=entry.get('next_ep'): _goto_ep(ep))
+                        120, lambda ep=entry.get('next_ep'): self._goto_ep(ep))
                 else:
-                    state['msg'] = f"not found on our sources: {entry['title']}"
+                    self.state['msg'] = ("not found on our sources: "
+                                         f"{entry['title']}")
 
+    @staticmethod
     def _row_entry(table, item):
         try:
             return table.item(item.row(), 0).data(C.Qt.UserRole + 1)
         except Exception:
             return None
 
-    def _open_url(u):
-        try:
-            G.QDesktopServices.openUrl(C.QUrl(u))
-        except Exception:
-            pass
-
-    def _set_status(e, status):
+    def _set_status(self, e, status):
         ids = {k: e[k] for k in ('mal', 'anilist', 'simkl') if e.get(k)}
         if not ids:
-            state['msg'] = 'no id to update on Simkl'
+            self.state['msg'] = 'no id to update on Simkl'
             return
-        state['msg'] = f'setting Simkl → {status}…'
+        self.state['msg'] = f'setting Simkl → {status}…'
 
         def work():
             try:
                 from .simkl_account import SimklAccount
-                ok = SimklAccount(cfg, http).add_to_list(ids, status)
-                state['msg'] = (f'Simkl → {status}' if ok
-                                else 'Simkl update failed (logged in?)')
+                ok = SimklAccount(self._cfg, self._http).add_to_list(
+                    ids, status)
+                self.state['msg'] = (f'Simkl → {status}' if ok
+                                     else 'Simkl update failed (logged in?)')
                 if ok:
-                    libq.put(('feed-refresh',))
+                    self._libq.put(('feed-refresh',))
             except Exception as ex:
-                state['msg'] = f'Simkl update failed: {ex}'
+                self.state['msg'] = f'Simkl update failed: {ex}'
         threading.Thread(target=work, daemon=True).start()
 
-    def _context(table, pos):
+    def _context(self, table, pos):
         it = table.itemAt(pos)
         if it is None:
             return
@@ -835,110 +950,129 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
         if pick is None:
             return
         if pick == a_load:
-            load_entry(e)
+            self.load_entry(e)
         elif pick in acts:
-            _set_status(e, acts[pick])
+            self._set_status(e, acts[pick])
         elif a_simkl is not None and pick == a_simkl:
-            _open_url(f"https://simkl.com/anime/{e['simkl']}")
+            self._open_url(f"https://simkl.com/anime/{e['simkl']}")
         elif a_mal is not None and pick == a_mal:
-            _open_url(f"https://myanimelist.net/anime/{e['mal']}")
+            self._open_url(f"https://myanimelist.net/anime/{e['mal']}")
 
-    for _t in (feed, hist):
-        _t.setContextMenuPolicy(C.Qt.CustomContextMenu)
-        _t.customContextMenuRequested.connect(
-            lambda pos, t=_t: _context(t, pos))
+    @staticmethod
+    def _open_url(u):
+        try:
+            G.QDesktopServices.openUrl(C.QUrl(u))
+        except Exception:
+            pass
 
-    hist_btn.clicked.connect(lambda *_: show_history(force=True))
-    hist_tbl.cellClicked.connect(_hist_click)
-    hist_btn.setToolTip('Your recent links and searches, with their date and source.\n'
-                        'Click a header (Date/Source/Link) to sort · ✕ removes one entry.')
-    add_btn.clicked.connect(add_current)
-    side_btn.clicked.connect(load_side)
-    feed_filter.currentTextChanged.connect(lambda _t: render_feed())
-    feed.itemDoubleClicked.connect(lambda it: load_entry(_row_entry(feed, it)))
-    hist.itemDoubleClicked.connect(lambda it: load_entry(_row_entry(hist, it)))
-    poll.timeout.connect(drain_lib)
-
-    # refresh the sidebar shortly after a sync lands (history/feed changed)
-    side_timer = C.QTimer()
-    side_timer.setSingleShot(True)
-    side_timer.setInterval(1500)
-    side_timer.timeout.connect(load_side)
-
-    def drain_log():
-        if state['closing']:
+    # --- log / status ---------------------------------------------------
+    def _drain_log(self):
+        if self.state['closing']:
             return
         lines = []
         while True:
             try:
-                lines.append(lq.get_nowait())
+                lines.append(self._lq.get_nowait())
             except queue.Empty:
                 break
         if lines:
-            logbox.appendPlainText('\n'.join(lines))
-            logbox.verticalScrollBar().setValue(
-                logbox.verticalScrollBar().maximum())
+            self.logbox.appendPlainText('\n'.join(lines))
+            self.logbox.verticalScrollBar().setValue(
+                self.logbox.verticalScrollBar().maximum())
             if any(('synced:' in ln) or ('marked ep' in ln) for ln in lines):
-                side_timer.start()          # auto-refresh feed/history
+                self.side_timer.start()          # auto-refresh feed/history
 
-    def refresh_status():
-        if state['closing']:
+    def _refresh_status(self):
+        if self.state['closing']:
             return
-        s = state['session']
+        s = self.state['session']
         txt = s.status() if s is not None else ''
-        if state.get('msg'):
-            txt = state['msg']
-        status.setText(txt or 'idle')
+        if self.state.get('msg'):
+            txt = self.state['msg']
+        self.status.setText(txt or 'idle')
 
-    log_timer = C.QTimer(); log_timer.timeout.connect(drain_log); log_timer.start(250)
-    st_timer = C.QTimer(); st_timer.timeout.connect(refresh_status); st_timer.start(1000)
-
-    def close():
-        state['closing'] = True
-        for t in (debounce, poll, log_timer, st_timer, side_timer):
+    # --- closing --------------------------------------------------------
+    def close_window(self):
+        if self.state['closing']:
+            return
+        self.state['closing'] = True
+        for t in (self.debounce, self.poll, self.log_timer, self.st_timer,
+                  self.side_timer):
             try:
                 t.stop()
             except Exception:
                 pass
         try:
-            if state['session'] is not None:
-                state['session'].close()
+            if self.state['session'] is not None:
+                self.state['session'].close()
         except Exception:
             pass
         try:
-            _log.SINK = prev_sink
+            if _log.SINK is not None:
+                _log.SINK = self._prev_sink
         except Exception:
             pass
-        win.close()
+        self.close()
         try:
-            qapp.quit()
+            W.QApplication.instance().quit()
         except Exception:
             pass
 
-    b_from.clicked.connect(from_here)
-    b_sel.clicked.connect(only_sel)
-    b_all.clicked.connect(lambda: do_play(all_nums()))
-    b_stop.clicked.connect(do_stop)
-    b_close.clicked.connect(close)
-    win.destroyed.connect(lambda *_: (_log.__setattr__('SINK', prev_sink)))
+    def closeEvent(self, ev):
+        self.close_window()
+        ev.accept()
 
-    show_history()
-    box.setFocus()
-    win.show()
-    try:
-        win.raise_(); win.activateWindow()
-    except Exception:
-        pass
-    load_side()
+    # --- run ------------------------------------------------------------
+    def run(self, initial=None) -> int:
+        """Seed, show, load `initial`, honour the AGP_GUI_TEST hook, exec."""
+        self.show_history()
+        self.box.setFocus()
+        self.show()
+        try:
+            self.raise_()
+            self.activateWindow()
+        except Exception:
+            pass
+        self.load_side()
 
-    mode = os.environ.get('AGP_GUI_TEST')
-    if initial:
-        load_target(initial[0], initial[1])
-    if mode == 'play':
-        C.QTimer.singleShot(300, from_here)
-    elif mode == 'all':
-        C.QTimer.singleShot(300, lambda: do_play(all_nums()))
-    elif mode == 'close':
-        C.QTimer.singleShot(300, close)
+        mode = os.environ.get('AGP_GUI_TEST')
+        if initial:
+            self.load_target(initial[0], initial[1])
+        if mode == 'play':
+            C.QTimer.singleShot(300, self._from_here)
+        elif mode == 'all':
+            C.QTimer.singleShot(
+                300, lambda: self._do_play(self._all_nums()))
+        elif mode == 'close':
+            C.QTimer.singleShot(300, self.close_window)
+        return W.QApplication.instance().exec()
 
-    qapp.exec()
+
+def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
+        initial=None) -> int:
+    """Open the unified window. `loader(src, target)` returns a Session."""
+    _app_main()
+    win = MainWindow(loader, cfg=cfg, one_shot=one_shot)
+    win.destroyed.connect(lambda *_: (_log.__setattr__('SINK', win._prev_sink)))
+    return win.run(initial=initial)
+
+
+class UnifiedWindow:
+    """The ONE window controller (OOP facade over the unified GUI).
+
+    Every entry point opens `tgplay`'s window through this object: the
+    launcher (`tgplay`), and the per-source CLIs (`agp`, `axp`). It replaces
+    the retired per-source controllers (tp/gui_qt.controller, tp/gui.controller):
+    one Session per source, loaded in place by `loader(src, target)`.
+    """
+
+    def __init__(self, loader, cfg=None, initial=None, one_shot: bool = False):
+        self.loader = loader
+        self.cfg = cfg
+        self.initial = initial
+        self.one_shot = one_shot
+
+    def run(self) -> None:
+        """Open the window and block until it closes."""
+        return app(loader=self.loader, cfg=self.cfg,
+                   one_shot=self.one_shot, initial=self.initial)

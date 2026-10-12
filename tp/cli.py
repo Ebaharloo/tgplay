@@ -8,19 +8,10 @@ import sys
 import threading
 from typing import List, Optional, Tuple
 
-from .cache import Cache
+from .cache import Cache                 # `agp cache` command
 from .config import Config
 from .http import HttpClient
-from .player import Player
-from .playlist import Playlist
-from .prefetch import Prefetcher
-from .proxy import RangeProxy
-from .skip import SkipService
-from .metadata import Metadata
-from .titles import TitleService
-from .providers.animegate import AnimeGateProvider
 from . import episodes as epmod
-from .episodes import Episode
 from . import setup
 from . import log
 
@@ -219,23 +210,22 @@ def parse(argv: List[str]) -> Tuple[dict, List[str], List[str]]:
     return opts, pos, mpv
 
 
-def _plan(provider, opts, playlist):
-    eps = provider.episodes()
+def _plan(s, opts):
+    """Decide the episode numbers for a non-menu run (direct CLI play)."""
+    eps = s.provider.episodes()
     if opts['a']:
         return epmod.select(eps, all=True)
     if opts['e']:
         return epmod.select(eps, nums=epmod.parse_range(opts['e']))
-    prog = playlist.progress_for(provider.title)
-    if prog and prog.get('pos') and prog.get('ep'):
-        start = epmod.resume(eps, prog['ep'])
+    if s.resume and s.resume[1]:           # progress: ep + a position
+        start = epmod.resume(eps, s.resume[0])
         if start:
             try:
-                ans = input(f'resume "{provider.title}" ep {prog["ep"]}? [Y/n] ')
+                ans = input(f'resume "{s.title}" ep {s.resume[0]}? [Y/n] ')
             except EOFError:
                 ans = 'n'
             if ans.strip().lower() != 'n':
-                playlist._resume = (prog['ep'], int(prog['pos']))
-                return start
+                return start               # Session.play re-applies the pos
     try:
         val = input('eps [a|2-5,9]: ').strip().lower()
     except EOFError:
@@ -309,15 +299,8 @@ def main(argv: Optional[List[str]] = None):
 
     cfg = Config().ensure()
     http = HttpClient()
-    meta = Metadata(cfg, http)
-    titles = TitleService(meta, cfg)
-    provider = AnimeGateProvider(url, quality=opts['f'], http=http)
 
     planned = None
-    resume_pt = None
-    labels = None
-    res_ep = None
-    chosen = None
 
     from .tracking import Tracker
     tracker = Tracker(cfg, http)          # "new episodes" checks, low priority
@@ -338,90 +321,39 @@ def main(argv: Optional[List[str]] = None):
             log.cprint(f'gui: {ex} - using the terminal menu')
         use_gui = False                   # GUI failed -> the curses menu below
 
-    # load the catalogue (groups + episodes)
-    if interactive:
-        opts, mpv = setup.apply(opts, mpv, setup.load(cfg.ui))  # from last time
-        provider.fetch_groups()
-        provider.select(opts['f'])
-    else:
-        provider.load()
+    # --- terminal flows: BOTH the curses menu and direct play go through
+    # the ONE Session (same setup path as the desktop window) -----------
+    from .session import open_session
     ui.recent_add(url)
-    log.cprint(f'>> {provider.title} - {len(provider.episodes())} episodes')
-    _log_show(cfg, meta, provider.title)   # resolve + log the link BEFORE the menu
+    if interactive:
+        opts, mpv = setup.apply(opts, mpv, setup.load(cfg.ui))
+    s = open_session('agp', url, cfg, http, opts, mpv,
+                     wait_titles=bool(interactive))
 
     if interactive:
-        eps = provider.episodes()
-        mal = meta.cached_mal(provider.title)
-        if mal is None:
-            try:
-                mal = meta.resolve_mal(provider.title, ask=False)
-            except Exception:
-                mal = None
-        missing = [n for n in eps if mal and titles.get(mal, n) is None]
-        if missing:
-            log.cprint(f'titles: looking up {len(missing)} missing '
-                       'episode name(s)...')
-            th = threading.Thread(
-                target=lambda: meta.refresh_titles(mal, provider.title),
-                daemon=True)
-            th.start()
-            th.join(timeout=5)  # bounded: the menu never hangs on metadata
-            if th.is_alive():
-                log.cprint('titles: still fetching names in the background '
-                           '(they will show next time)')
-            if mal:
-                meta._refreshed.add(mal)
-        labels = titles.labels(mal, {n: f'Episode {n}' for n in eps})
-        res_ep = _resume_ep(cfg, provider.title)
-        resume_pt = (res_ep, _resume_pos(cfg, provider.title))
-        if not use_gui:  # terminal menu picks now
-            chosen = ui.pick_start(labels, res_ep)
-            if chosen is None:
-                print('menu: cancelled')
-                return 0
-            res = ui.gather(opts, provider.groups, mpv, show_eps=False)
-            if res is None:
-                print('menu: cancelled')
-                return 0
-            opts, mpv = res
-            setup.save(cfg.ui, opts, mpv)
-            provider.select(opts['f'])
-            eps = provider.episodes()
-            planned = [Episode(k, eps[k]) for k in chosen if k in eps]
-
-    from .tracking import make_tracker
-    play_tracker = make_tracker(cfg, http,
-                                sync=(opts.get('sync', 'auto') != 'off'))
-    proxy = RangeProxy(port=cfg.proxy_port).start()
-    cache = Cache(cfg.cache_dir, cfg.cache_budget)
-    skip = SkipService(metadata=meta)
-    prefetch = Prefetcher(cache)
-    player = Player()
-    playlist = Playlist(provider, proxy, cache, player, cfg,
-                        skip=skip, prefetcher=prefetch, tracker=play_tracker)
-
-    if not interactive:
-        planned = _plan(provider, opts, playlist)
+        res_ep = s.resume[0] if s.resume else None
+        chosen = ui.pick_start(s.labels, res_ep)
+        if chosen is None:
+            s.close()
+            print('menu: cancelled')
+            return 0
+        res = ui.gather(opts, s.provider.groups, mpv, show_eps=False)
+        if res is None:
+            s.close()
+            print('menu: cancelled')
+            return 0
+        opts, mpv = res
+        setup.save(cfg.ui, opts, mpv)          # remember (play re-saves too)
+        planned = chosen
+    else:
+        planned = [e.num for e in _plan(s, opts)]   # Episode objs -> numbers
     if not planned:
+        s.close()
         print('nothing to play')
         return 0
 
-    next_frac = False
-    if opts['next']:
-        next_frac = 'cut' if (opts['nowait'] and opts['cut']) else opts['next']
-    skip_mode = opts['skip'] or 'all'
-    start = None
-    rp = getattr(playlist, '_resume', None) or resume_pt
-    if rp and planned and planned[0].num == rp[0]:
-        start = rp[1]
-    if start:
-        _m, _s = divmod(int(start), 60)
-        log.cprint(f'resume: ep{planned[0].num} at {_m:d}:{_s:02d} '
-                   f'(mpv --start={int(start)})')
     try:
-        playlist.run(planned, skip_mode=skip_mode,
-                     skip_toggle=opts['skip_toggle'], cut=opts['cut'],
-                     start=start, next_frac=next_frac, extra=mpv)
+        s.play(planned, opts, mpv)             # resume line printed inside
     finally:
-        proxy.stop()
+        s.close()                              # stops the per-run proxy
     return 0

@@ -278,57 +278,23 @@ def gather(opts, groups, mpv, show_eps=True, audio=False):
 
 
 def _curses_form(opts, groups, mpv, show_eps=True, audio=False):
+    """The curses form, rendered from the ONE shared spec (tp.options)."""
     import curses
-    labels = [str(g['label']) for g in groups]
-    skip_modes = ['off', 'all', 'names', 'auto']
-    skip_cur = opts.get('skip') if isinstance(opts.get('skip'), str) else (
-        'all' if opts.get('skip') else 'off')
-    qidx = next((i for i, l in enumerate(labels)
-                 if opts.get('f') and str(opts['f']).lower() in l.lower()), 0)
-    fields = []
-    if labels:  # Telegram has no quality groups -> omit this row
-        fields.append({'k': 'quality',
-                       'label': 'Server' if audio else 'Quality',
-                       'kind': 'radio', 'opts': labels, 'i': qidx,
-                       'help': ("Which AnimeX server to stream from."
-                                if audio else
-                                "Which release to stream (higher = larger/slower).")})
-    if audio:
-        amodes = ['dub', 'sub', 'auto']
-        acur = opts.get('audio') if opts.get('audio') in amodes else 'dub'
-        fields.append({'k': 'audio', 'label': 'Audio  (dub / sub / auto)',
-                       'kind': 'radio', 'opts': amodes, 'i': amodes.index(acur),
-                       'help': 'dub = English dub (default); sub = original '
-                               'audio + subtitles; auto = dub when available, '
-                               'else sub.'})
-    if show_eps:
-        fields.append({'k': 'eps', 'label': 'Episodes  (1-12, 2-5,9, a = all)',
-                       'kind': 'text', 'val': opts.get('e') or 'a',
-                       'help': 'Episodes to play, back-to-back.'})
-    fields += [
-        {'k': 'skip', 'label': 'Skip intro / outro', 'kind': 'radio',
-         'opts': skip_modes, 'i': skip_modes.index(skip_cur),
-         'help': 'names = chapters titled Intro/Opening/Ending/Credits; auto = '
-                 'guess from a short leading/trailing chapter; all = names '
-                 'then the guess; off = play everything.'},
-        {'k': 'toggle', 'label': 'Allow turning skip off in mpv with T',
-         'kind': 'check', 'val': bool(opts.get('skip_toggle')),
-         'help': 'Press T in mpv to toggle skipping if a guess was wrong.'},
-        {'k': 'next', 'label': 'Pre-download the next episode',
-         'kind': 'check', 'val': bool(opts.get('next')),
-         'help': 'Fetch the next episode in the background while this plays.'},
-        {'k': 'nowait', 'label': '   start that download at the cut point',
-         'kind': 'check', 'val': bool(opts.get('nowait')),
-         'help': 'Start it at (duration - Cut) instead of 60%. Needs a Cut.'},
-        {'k': 'cut', 'label': 'Cut the last N seconds', 'kind': 'text',
-         'val': str(opts.get('cut') or ''),
-         'help': 'Stop each episode N seconds early. Blank = full.'},
-        {'k': 'full', 'label': 'Fullscreen', 'kind': 'check',
-         'val': '--fullscreen' in mpv, 'help': 'Start mpv fullscreen.'},
-        {'k': 'extra', 'label': 'Extra mpv flags', 'kind': 'text',
-         'val': ' '.join(x for x in mpv if x != '--fullscreen'),
-         'help': 'Any extra mpv flags, e.g. --volume 80.'},
-    ]
+    from .options import form_fields, form_result
+
+    def build_fields():
+        fields = form_fields(groups=[str(g['label']) for g in groups],
+                             audio=audio, show_eps=show_eps,
+                             opts=opts, mpv=mpv)
+        for f in fields:              # adapt to the curses renderer's kinds
+            if f['kind'] == 'choice':
+                f['kind'] = 'radio'
+                f['opts'] = f['choices']
+            elif f['kind'] == 'flag':
+                f['kind'] = 'check'
+        return fields
+
+    fields = build_fields()
 
     def render(f, sel):
         if f['kind'] == 'check':
@@ -423,29 +389,7 @@ def _curses_form(opts, groups, mpv, show_eps=True, audio=False):
     fs = curses.wrapper(run)
     if fs is None:
         return None
-    by = {f['k']: f for f in fs}
-    out = dict(opts)
-    if labels:
-        out['f'] = labels[by['quality']['i']]
-    if audio:
-        out['audio'] = by['audio']['opts'][by['audio']['i']]
-    if show_eps:
-        e = (by['eps']['val'] or '').strip().lower()
-        if e in ('', 'a', 'all'):
-            out['a'], out['e'] = True, None
-        else:
-            out['a'], out['e'] = False, e
-    sm = by['skip']['opts'][by['skip']['i']]
-    out['skip'] = False if sm == 'off' else sm
-    out['skip_toggle'] = bool(by['toggle']['val'])
-    out['next'] = 0.60 if by['next']['val'] else False
-    out['nowait'] = bool(by['nowait']['val'])
-    c = (by['cut']['val'] or '').strip()
-    out['cut'] = int(c) if c.isdigit() else None
-    m = (by['extra']['val'] or '').split()
-    if by['full']['val'] and '--fullscreen' not in m:
-        m.append('--fullscreen')
-    return out, m
+    return form_result(fs, opts, mpv)       # shared model: nothing gets lost
 
 
 def _plain_form(opts, groups, mpv, show_eps=True, audio=False):
