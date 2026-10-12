@@ -212,6 +212,27 @@ def open_session(src: str, target: str, cfg, http, opts: dict = None,
         groups = prov.groups
         labels = dict(prov.episodes())
         audio = True
+        # SAME name sync as AGP: the AnimeX API usually only serves generic
+        # 'Episode N' - fill real names from the MAL/Simkl episode cache
+        mal = _safe_mal(meta, prov.title)
+        if mal:
+            labels = titles.labels(mal, labels)
+            missing = [n for n in labels
+                       if str(labels[n]).startswith('Episode ')]
+            if missing:
+                log.cprint(f'titles: looking up {len(missing)} missing '
+                           'episode name(s)...')
+                ax_th = threading.Thread(
+                    target=lambda: meta.refresh_titles(mal, prov.title),
+                    daemon=True)
+                ax_th.start()
+                if wait_titles:              # the curses menu wants names NOW
+                    ax_th.join(timeout=5)
+                    if ax_th.is_alive():
+                        log.cprint('titles: still fetching names in the '
+                                   'background (they will show next time)')
+                labels = titles.labels(mal, labels)      # re-read post-join
+                meta._refreshed.add(mal)
     elif src in ('tg', 'tgp'):
         from .providers.telegram import SingleFileProvider, TelegramProvider
         chat, msg_id = _telegram_target(target)
