@@ -64,7 +64,85 @@ def test_load_and_play():
     print('PASS gui_all loads a session and plays all')
 
 
+def test_sidebar_click_shows_source_choices():
+    try:
+        from PySide6 import QtWidgets  # noqa: F401
+    except Exception:
+        print('SKIP sidebar picker (no PySide6)')
+        return
+    import time
+
+    import tp.search as search_mod
+    import tp.log as tp_log
+
+    made = {}
+
+    class FakeSession:
+        title, groups, labels, resume = 'Exact Show', [{'label': 'X'}], {1: 'Ep'}, None
+        opts, mpv, audio, link = {}, [], [], None
+
+        def play(self, c, o, m): pass
+        def stop(self): pass
+        def close(self): pass
+        def status(self): return 'idle'
+
+    def loader(src, target):
+        made[target] = (src, target)
+        return FakeSession()
+
+    # two sources return results; deliberately scrambled order
+    fake = [
+        {'title': 'Exact Show (2024)', 'url': 'agp:ok',
+         'source': 'agp'},
+        {'title': 'Totally Different Thing', 'url': 'agp:wrong',
+         'source': 'agp'},
+        {'title': 'Exact Show', 'url': 'axp:ok', 'source': 'axp'},
+    ]
+    orig_search = search_mod.search_all
+    search_mod.search_all = lambda *a, **k: list(fake)
+    orig_sink = tp_log.SINK
+    try:
+        from tp import gui_all
+        from tp.gui_qt import _app as qt_app
+        qt_app()
+        w = gui_all.MainWindow(loader, cfg=None)
+        w.load_entry({'title': 'Exact Show'})
+        deadline = time.time() + 2
+        while not w._libq.qsize() and time.time() < deadline:
+            time.sleep(0.02)
+        w._drain_lib()
+        assert w.res_stack.currentWidget() is w.results
+        assert w.results.count() == 3, w.results.count()
+        # best match first (the exact axp row), not auto-loaded
+        it = w.results.item(0)
+        assert (it.data(C_QT_UserRole(w)) == 'axp:ok'), fake
+        assert 'Exact Show' in it.text()
+        assert w.state['session'] is None, 'nothing must auto-load'
+        # the user picks: click the agp row
+        w._pick_result(w.results.item(1))
+        assert 'agp:ok' in made, made      # the CHOSEN source got loaded
+        assert w.state['session'] is not None
+    finally:
+        search_mod.search_all = orig_search
+        tp_log.SINK = orig_sink
+        try:
+            w.state['closing'] = True
+            for t in (w.debounce, w.poll, w.log_timer, w.st_timer,
+                      w.side_timer):
+                t.stop()
+            w.deleteLater()
+        except Exception:
+            pass
+    print('PASS sidebar click shows source choices (no random pick)')
+
+
+def C_QT_UserRole(w):
+    from PySide6 import QtCore as C
+    return C.Qt.UserRole
+
+
 def main():
+    test_sidebar_click_shows_source_choices()
     test_load_and_play()
     print('GUI_ALL OK')
 

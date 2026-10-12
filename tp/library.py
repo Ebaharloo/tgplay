@@ -88,12 +88,22 @@ def _norm_title(t) -> str:
     return ' '.join(str(t or '').split()).casefold().strip()
 
 
+def ranked(results: List[dict], title: str) -> List[dict]:
+    """Search results ordered best-match first (so the GUI list starts with
+    the closest title). Ties go to AnimeX (English dub)."""
+    want = _norm_title(title)
+
+    def score(r):
+        got = _norm_title(r.get('title', ''))
+        return (difflib.SequenceMatcher(None, want, got).ratio(),
+                1 if r.get('source') == 'axp' else 0)
+
+    return sorted(results, key=score, reverse=True)
+
+
 def find_source(title: str, http: Optional[HttpClient] = None
                 ) -> Optional[Tuple[str, str]]:
-    """Best match for `title` on our sources -> (source_id, target).
-
-    Prefers the closest title match; ties go to AnimeX (English dub).
-    """
+    """Best match for `title` on our sources -> (source_id, target)."""
     if not title:
         return None
     try:
@@ -104,12 +114,5 @@ def find_source(title: str, http: Optional[HttpClient] = None
         return None
     if not results:
         return None
-    want = _norm_title(title)
-
-    def score(r):
-        got = _norm_title(r.get('title', ''))
-        return (difflib.SequenceMatcher(None, want, got).ratio(),
-                1 if r.get('source') == 'axp' else 0)
-
-    best = max(results, key=score)
+    best = ranked(results, title)[0]
     return (best.get('source') or 'agp', best.get('url'))

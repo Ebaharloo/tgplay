@@ -740,15 +740,16 @@ class MainWindow(W.QWidget):
     def load_entry(self, e):
         if not e:
             return
-        self.state['msg'] = f"finding “{e['title']}” on our sources…"
+        self.state['msg'] = f"searching “{e['title']}” on our sources…"
 
         def work():
             try:
-                from .library import find_source
-                res = find_source(e['title'], self._http)
+                from .search import search_all
+                res = search_all(e['title'], self._http,
+                                 sources=('agp', 'axp')) or []
             except Exception:
                 res = None
-            self._libq.put(('load', e, res))
+            self._libq.put(('show-results', e, res))
         threading.Thread(target=work, daemon=True).start()
 
     def add_current(self):
@@ -896,15 +897,25 @@ class MainWindow(W.QWidget):
                     self.hist.setItem(0, 2, W.QTableWidgetItem('no history'))
                 self.hist.setSortingEnabled(True)
                 self.hist.sortItems(0, C.Qt.DescendingOrder)  # newest first
-            elif msg[0] == 'load':
+            elif msg[0] == 'show-results':
+                # sidebar click: show ALL matches (both sources) in the
+                # results list instead of auto-loading one — the user picks
+                # the source they want (agp / axp)
                 _, entry, res = msg
-                if res:
-                    self.load_target(res[0], res[1])
-                    C.QTimer.singleShot(
-                        120, lambda ep=entry.get('next_ep'): self._goto_ep(ep))
-                else:
-                    self.state['msg'] = ("not found on our sources: "
+                if not res:
+                    self.state['msg'] = (f"not found on our sources: "
                                          f"{entry['title']}")
+                    return
+                from .library import ranked
+                res = ranked(res, entry['title'])
+                self.box.blockSignals(True)
+                self.box.setText(entry['title'])   # context for the list
+                self.box.blockSignals(False)
+                self._fill_results(res)
+                best = res[0].get('source', '?').upper()
+                self.state['msg'] = (f"{len(res)} result(s) for "
+                                     f"“{entry['title']}” — best match: {best}"
+                                     "  ·  click the one you want")
 
     @staticmethod
     def _row_entry(table, item):
