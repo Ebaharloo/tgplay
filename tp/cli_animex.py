@@ -20,7 +20,7 @@ from .prefetch import Prefetcher
 from .providers.animex import AnimeXProvider
 from .proxy import RangeProxy
 from .skip import SkipService
-from .cli import parse, _resume_ep, _resume_pos, _link_get, _log_show, _plan
+from .cli import parse, _resume_ep, _resume_pos, _log_show, _plan
 from . import setup
 from . import log
 
@@ -110,6 +110,23 @@ def main_axp(argv: Optional[List[str]] = None) -> int:
     res_ep = None
     chosen = None
 
+    # GUI path first: the unified window builds its own Session in place
+    # (fetches groups/episodes itself), so nothing is pre-loaded here.
+    if interactive and use_gui:
+        from .session import SessionLoader
+        from .gui_all import UnifiedWindow
+        try:
+            ui.recent_add(url)            # same recent list the dialog shows
+        except Exception:
+            pass
+        loader = SessionLoader(cfg, http, base_opts=opts, base_mpv=mpv)
+        try:
+            UnifiedWindow(loader, cfg, initial=('axp', url)).run()
+            return 0
+        except Exception as ex:
+            log.cprint(f'gui: {ex} - using the terminal menu')
+        use_gui = False                   # GUI failed -> the curses menu below
+
     if interactive:
         opts, mpv = setup.apply(opts, mpv, setup.load(cfg.ui, 'axp'))
         provider.set_audio(opts.get('audio') or audio)
@@ -157,61 +174,6 @@ def main_axp(argv: Optional[List[str]] = None) -> int:
                                 sync=(opts.get('sync', 'auto') != 'off'))
     playlist = Playlist(provider, proxy, cache, player, cfg,
                         skip=skip, prefetcher=prefetch, tracker=play_tracker)
-
-    if use_gui and interactive:
-        def _play(c, o, m):
-            player.stop()
-            provider.set_audio(o.get('audio') or audio)
-            provider.select(o['f'])
-            e2 = provider.episodes()
-            pl = [Episode(k, e2[k]) for k in c if k in e2]
-            if not pl:
-                return
-            st = resume_pt[1] if (resume_pt and pl[0].num == resume_pt[0]) else None
-            nf = ('cut' if (o['nowait'] and o['cut']) else o['next']) \
-                if o['next'] else False
-            setup.save(cfg.ui, o, m, 'axp')
-            playlist.run(pl, skip_mode=(o['skip'] or 'all'),
-                         skip_toggle=o['skip_toggle'], cut=o['cut'],
-                         start=st, next_frac=nf, extra=m)
-
-        def _status():
-            import json as _j
-            try:
-                e = _j.load(open(cfg.progress)).get(provider.title, {})
-            except Exception:
-                e = {}
-            ep, pos = e.get('ep'), int(e.get('pos') or 0)
-            if not ep:
-                return 'idle'
-            mm, ss = divmod(pos, 60)
-            return f'ep {ep}   {mm:02d}:{ss:02d}'
-
-        try:
-            gui.controller(provider.title, _link_get(cfg, provider.title),
-                           provider.groups, labels, res_ep, opts, mpv,
-                           _play, stop_fn=player.stop, status_fn=_status,
-                           audio=True)
-        except Exception as ex:
-            log.cprint(f'gui: {ex} - using the terminal menu')
-        else:
-            proxy.stop()
-            return 0
-        chosen = ui.pick_start(labels, res_ep)
-        if chosen is None:
-            proxy.stop()
-            print('menu: cancelled')
-            return 0
-        res = ui.gather(opts, provider.groups, mpv, show_eps=False, audio=True)
-        if res is None:
-            proxy.stop()
-            print('menu: cancelled')
-            return 0
-        opts, mpv = res
-        provider.set_audio(opts.get('audio') or audio)
-        provider.select(opts['f'])
-        eps = provider.episodes()
-        planned = [Episode(k, eps[k]) for k in chosen if k in eps]
 
     if not interactive:
         planned = _plan(provider, opts, playlist)

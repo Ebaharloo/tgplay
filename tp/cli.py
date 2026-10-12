@@ -319,6 +319,25 @@ def main(argv: Optional[List[str]] = None):
     res_ep = None
     chosen = None
 
+    from .tracking import Tracker
+    tracker = Tracker(cfg, http)          # "new episodes" checks, low priority
+    if tracker.enabled():
+        threading.Thread(target=lambda: _notify(tracker), daemon=True).start()
+
+    # GUI path: the unified window (one controller for every CLI) builds its
+    # own Session in place - no pre-loaded provider/services needed here.
+    if interactive and use_gui:
+        from .session import SessionLoader
+        from .gui_all import UnifiedWindow
+        ui.recent_add(url)
+        loader = SessionLoader(cfg, http, base_opts=opts, base_mpv=mpv)
+        try:
+            UnifiedWindow(loader, cfg, initial=('agp', url)).run()
+            return 0
+        except Exception as ex:
+            log.cprint(f'gui: {ex} - using the terminal menu')
+        use_gui = False                   # GUI failed -> the curses menu below
+
     # load the catalogue (groups + episodes)
     if interactive:
         opts, mpv = setup.apply(opts, mpv, setup.load(cfg.ui))  # from last time
@@ -370,10 +389,7 @@ def main(argv: Optional[List[str]] = None):
             eps = provider.episodes()
             planned = [Episode(k, eps[k]) for k in chosen if k in eps]
 
-    from .tracking import Tracker, make_tracker
-    tracker = Tracker(cfg, http)
-    if tracker.enabled():
-        threading.Thread(target=lambda: _notify(tracker), daemon=True).start()
+    from .tracking import make_tracker
     play_tracker = make_tracker(cfg, http,
                                 sync=(opts.get('sync', 'auto') != 'off'))
     proxy = RangeProxy(port=cfg.proxy_port).start()
@@ -383,61 +399,6 @@ def main(argv: Optional[List[str]] = None):
     player = Player()
     playlist = Playlist(provider, proxy, cache, player, cfg,
                         skip=skip, prefetcher=prefetch, tracker=play_tracker)
-
-    if use_gui and interactive:
-        # persistent window: Play runs in a background thread, so the window
-        # stays open to pick more episodes / change setup / Stop.
-        def _play(c, o, m):
-            player.stop()          # only one playback at a time
-            provider.select(o['f'])
-            e2 = provider.episodes()
-            pl = [Episode(k, e2[k]) for k in c if k in e2]
-            if not pl:
-                return
-            st = resume_pt[1] if (resume_pt and pl[0].num == resume_pt[0]) else None
-            nf = ('cut' if (o['nowait'] and o['cut']) else o['next']) \
-                if o['next'] else False
-            setup.save(cfg.ui, o, m)
-            playlist.run(pl, skip_mode=(o['skip'] or 'all'),
-                         skip_toggle=o['skip_toggle'], cut=o['cut'],
-                         start=st, next_frac=nf, extra=m)
-
-        def _status():
-            import json as _j
-            try:
-                e = _j.load(open(cfg.progress)).get(provider.title, {})
-            except Exception:
-                e = {}
-            ep, pos = e.get('ep'), int(e.get('pos') or 0)
-            if not ep:
-                return 'idle'
-            mm, ss = divmod(pos, 60)
-            return f'ep {ep}   {mm:02d}:{ss:02d}'
-
-        try:
-            gui.controller(provider.title, _link_get(cfg, provider.title),
-                           provider.groups, labels, res_ep, opts, mpv,
-                           _play, stop_fn=player.stop, status_fn=_status)
-        except Exception as ex:
-            log.cprint(f'gui: {ex} - using the terminal menu')
-        else:
-            proxy.stop()
-            return 0
-        # GUI could not start -> terminal menu with the same services
-        chosen = ui.pick_start(labels, res_ep)
-        if chosen is None:
-            proxy.stop()
-            print('menu: cancelled')
-            return 0
-        res = ui.gather(opts, provider.groups, mpv, show_eps=False)
-        if res is None:
-            proxy.stop()
-            print('menu: cancelled')
-            return 0
-        opts, mpv = res
-        provider.select(opts['f'])
-        eps = provider.episodes()
-        planned = [Episode(k, eps[k]) for k in chosen if k in eps]
 
     if not interactive:
         planned = _plan(provider, opts, playlist)

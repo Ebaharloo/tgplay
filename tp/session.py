@@ -6,8 +6,10 @@ can load a fresh Session in place when the user searches or pastes a new link,
 without restarting the app. This is the OOP seam between "pick a source" and
 "the window".
 """
+import threading
 from typing import Dict, List, Optional
 
+from . import log
 from .cache import Cache
 from .episodes import Episode
 from .player import Player
@@ -15,6 +17,40 @@ from .playlist import Playlist
 from .prefetch import Prefetcher
 from .proxy import RangeProxy
 from .skip import SkipService
+
+
+class SessionLoader:
+    """Builds a Session for (src, target), honoring remembered options.
+
+    The one loader the unified GUI (`gui_all`) uses. Options are merged in
+    strict precedence: CLI-provided `base_opts`/`base_mpv` > the setup saved
+    for that source (`setup.load(cfg.ui, src)`) > the defaults.
+    """
+
+    def __init__(self, cfg, http, base_opts: dict = None,
+                 base_mpv: List[str] = None):
+        self.cfg = cfg
+        self.http = http
+        self.base_opts = dict(base_opts or {})
+        self.base_mpv = list(base_mpv or [])
+
+    def opts_for(self, src: str):
+        """(opts, mpv) for a source: base + remembered setup for `src`."""
+        o = {'a': False, 'skip': False, 'skip_toggle': False, 'e': None,
+             'f': None, 'cut': None, 'next': False, 'nowait': False}
+        o.update(self.base_opts)
+        from . import setup
+        return setup.apply(o, list(self.base_mpv), setup.load(self.cfg.ui, src))
+
+    def __call__(self, src, target):
+        o, m = self.opts_for(str(src or 'agp'))
+        return open_session(str(src or 'agp'), target, self.cfg, self.http,
+                            o, m)
+
+
+def make_loader(cfg, http) -> SessionLoader:
+    """A `loader(src, target) -> Session`, shared by `tgplay`, `agp`, `axp`."""
+    return SessionLoader(cfg, http)
 
 
 def _resume(cfg, title):
@@ -56,6 +92,13 @@ class Session:
 
     # --- playback -------------------------------------------------------
     def play(self, chosen: List[int], o: dict, m: List[str]):
+        # remember this run's setup for the next launch (per source);
+        # the GUI changes opts per play, so the state lives in the Session
+        try:
+            from . import setup
+            setup.save(self.cfg.ui, o, m, self.src)
+        except Exception:
+            pass
         self._player.stop()
         if self.src == 'axp':
             self.provider.set_audio(o.get('audio') or 'dub')
@@ -174,6 +217,12 @@ def open_session(src: str, target: str, cfg, http, opts: dict = None,
         labels = titles.labels(mal, {n: f'Episode {n}' for n in eps})
         groups = prov.groups
         audio = False
+        if mal and any(labels.get(n, '').startswith('Episode ') for n in eps):
+            threading.Thread(
+                target=lambda: meta.refresh_titles(mal, prov.title),
+                daemon=True).start()          # fill missing names next time
+
+    log.cprint(f'>> {prov.title} - {len(labels)} episodes')
 
     link = _link_get(cfg, prov.title)
     if link is None and src != 'tg':

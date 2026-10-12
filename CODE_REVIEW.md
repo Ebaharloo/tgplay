@@ -34,17 +34,24 @@ proxy + cache + skip + prefetch + player + playlist, and `session.open_session()
 → Make every per-source CLI build a **`Session`** (`tp/session.open_session`) — one
 setup path, and `agp`/`axp`/`tgp` shrink to arg-parse + pick + `session.play()`.
 
-### 3. Two now-dead GUI controllers  (medium effort, big win)
-`gui_qt.controller` and `gui.controller` are only used by **`agp`/`axp` direct**; the
-unified app uses `gui_all`. They duplicate `gui_all`'s window.
-→ Route `agp`/`axp` through `gui_all`/`session`, then retire `gui_qt.controller`
-(keep `choose_url`/`launcher`/Tk fallback).
+### 3. Two now-dead GUI controllers  (done)
+`gui_qt.controller` (303 LN) and `gui.controller` (268 LN) are retired. Every
+GUI now goes through the unified window via the OOP seams:
+- `tp.session.SessionLoader` — loader(src, target) → Session, with option
+  precedence CLI base > remembered (`setup.load(cfg.ui, src)`) > defaults.
+- `tp.gui_all.UnifiedWindow` — the one window object, opened by `tgplay`
+  AND the `agp`/`axp` CLIs (unified branch before the provider pre-load, so
+  the catalogue isn't fetched twice; falls back to the curses menu if Qt
+  fails). `cli`/`cli_animex` no longer carry their own window code.
+- `Session.play` now remembers the last used setup (`setup.save`, per source)
+  — the old controllers did this and the unified window had silently lost it.
+- Kept from the old modules: `choose_url` (Qt + Tk pickers) and the Tk
+  `launcher` (no-PySide6 fallback) in `tp/gui.py`.
 
 ### 4. Large functions  (low risk, mechanical)
-`gui_all.app` (784 lines), `gui_qt.controller` (303), `gui.controller` (268),
-`cli.main` (218), `cli_animex.main_axp` (185), `ui._curses_form` (168), `playlist.run`
-(118).
-→ Split into small helpers / a window class (naturally solved by #2/#3).
+`gui_all.app` (784 lines), `cli.main` (218 → ~180 after #3), `cli_animex.main_axp`
+(185), `ui._curses_form` (168), `playlist.run` (118).
+→ Split into small helpers / a window class (naturally solved by #1/#2).
 
 ### 5. Tested-but-unused code  (low effort)
 `metadata.ep_title` + `simkl.episode_title` — covered by tests but not used at runtime
@@ -58,7 +65,8 @@ unified app uses `gui_all`. They duplicate `gui_all`'s window.
 
 ## Suggested order
 1. ✅ single-fetch overview (done).
-2. Retire the duplicate GUI controllers (#3) — the biggest duplication win.
+2. ✅ retire the duplicate GUI controllers (#3, done).
 3. Extract the shared Options model (#1).
-4. Collapse the CLIs onto `Session` (#2).
+4. Collapse the CLIs onto `Session` (#2 — the curses/direct paths still build
+   providers manually).
 5. Delete/relocate the unused title helpers (#5).

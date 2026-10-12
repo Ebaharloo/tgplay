@@ -195,37 +195,25 @@ def main_all(argv: Optional[List[str]] = None) -> int:
         return 2
 
     # interactive: one window (search + episodes/options in place)
-    from .cli import _pick_gui
     from . import ui
     force_curses = '--curses' in argv
-    gui = _pick_gui()
-    if (not force_curses and gui.available()
-            and str(getattr(gui, '__name__', '')).endswith('gui_qt')):
+    try:
+        from . import gui_qt
+        qt_ok = gui_qt.available()
+    except Exception:
+        qt_ok = False
+    if not force_curses and qt_ok:
         from .config import Config
         from .http import HttpClient
-        from .session import open_session
-        from . import setup
+        from .session import make_loader
         from . import gui_all
         cfg = Config().ensure()
-        http = HttpClient()
-
-        def loader(src, target):
-            o = {'a': False, 'skip': False, 'skip_toggle': False, 'e': None,
-                 'f': None, 'cut': None, 'next': False, 'nowait': False}
-            o, m = setup.apply(o, [], setup.load(cfg.ui, src))
-            return open_session(src, target, cfg, http, o, m)
-
-        gui_all.app(loader, cfg=cfg)
+        gui_all.app(make_loader(cfg, HttpClient()), cfg=cfg)
         return 0
 
-    res = None
-    if not force_curses and gui.available() and hasattr(gui, 'launcher'):
-        res = gui.launcher()          # Tk fallback picker (Qt uses gui_all above)
-    if res is None and ui.available():
-        res = _choose_plain()         # terminal chooser (also for --curses)
+    res = _choose_plain() if ui.available() else None
     if not res:
-        if not ui.available() and not (gui.available()
-                                       and hasattr(gui, 'launcher')):
+        if not ui.available():
             print(ALL_HELP)
         return 0
     return dispatch(res[0], res[1], flags)

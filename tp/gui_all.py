@@ -23,6 +23,27 @@ def _icon(G):
     return _app_icon(G)
 
 
+class UnifiedWindow:
+    """The ONE window controller (OOP facade over the unified GUI).
+
+    Every entry point opens `tgplay`'s window through this object: the
+    launcher (`tgplay`), and the per-source CLIs (`agp`, `axp`). It replaces
+    the retired per-source controllers (tp/gui_qt.controller, tp/gui.controller):
+    one Session per source, loaded in place by `loader(src, target)`.
+    """
+
+    def __init__(self, loader, cfg=None, initial=None, one_shot: bool = False):
+        self.loader = loader
+        self.cfg = cfg
+        self.initial = initial
+        self.one_shot = one_shot
+
+    def run(self) -> None:
+        """Open the window and block until it closes."""
+        return app(loader=self.loader, cfg=self.cfg,
+                   one_shot=self.one_shot, initial=self.initial)
+
+
 def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
         initial=None):
     """Open the unified window. `loader(src, target)` returns a Session."""
