@@ -82,6 +82,12 @@ def overview(cfg, http: Optional[HttpClient] = None, aired_days: int = 7,
     return {'cal': upcoming + aired, 'rem': rem, 'hist': hist[:hist_limit]}
 
 
+def _norm_title(t) -> str:
+    """Collapse newlines/wrapping (feed titles show on '2 lines' sometimes)
+    so a copy-pasted multi-line title still matches a search result."""
+    return ' '.join(str(t or '').split()).casefold().strip()
+
+
 def find_source(title: str, http: Optional[HttpClient] = None
                 ) -> Optional[Tuple[str, str]]:
     """Best match for `title` on our sources -> (source_id, target).
@@ -92,15 +98,16 @@ def find_source(title: str, http: Optional[HttpClient] = None
         return None
     try:
         from .search import search_all
-        results = search_all(title, http=http, sources=('agp', 'axp'))
+        results = search_all(_norm_title(title), http=http,
+                             sources=('agp', 'axp'))
     except Exception:
         return None
     if not results:
         return None
-    want = title.casefold().strip()
+    want = _norm_title(title)
 
     def score(r):
-        got = str(r.get('title', '')).casefold().strip()
+        got = _norm_title(r.get('title', ''))
         return (difflib.SequenceMatcher(None, want, got).ratio(),
                 1 if r.get('source') == 'axp' else 0)
 

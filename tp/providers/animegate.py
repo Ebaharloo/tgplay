@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Tuple
 
 from ..http import HttpClient, _quiet_close
 from ..sources import HttpSource
-from .base import Provider
+from .base import NoServersYet, Provider
 
 BASE = 'https://animegate.ir'
 
@@ -65,6 +65,9 @@ def slug_title(url: str) -> str:
 
 def pick_group(groups: List[dict], quality: Optional[str] = None,
                all_groups: bool = False, prompt=None) -> dict:
+    if not groups:
+        raise ValueError('no quality servers are published for this title '
+                         'on the site (movie too new / not out yet?)')
     if quality:
         gs = [g for g in groups if quality.lower() in str(g['label']).lower()]
         if not gs:
@@ -150,6 +153,10 @@ class AnimeGateProvider(Provider):
         if self.groups is None:
             self.fetch_groups()
         want = quality if quality is not None else self.quality
+        if not self.groups:
+            raise NoServersYet(
+                f'"{self.title}" has no release servers yet on AnimeGate '
+                '(movie / not out yet) — try another link or source')
         try:
             self.group = pick_group(self.groups, want, self.all_groups,
                                     self.prompt)

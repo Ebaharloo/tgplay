@@ -21,7 +21,7 @@ from typing import Dict, List, Optional
 from .. import log
 from ..http import HttpClient, DEFAULT_UA, _quiet_close
 from ..sources import DirectSource
-from .base import Provider
+from .base import NoServersYet, Provider
 
 SITE = 'https://animex.one'
 API = 'https://pp.animex.one'
@@ -209,6 +209,12 @@ class AnimeXProvider(Provider):
             self.fetch_groups()
         self._pref = self._parse_server(quality)
         self._resolve_audio()
+        if not self._providers.get(self._audio) \
+                and not self._providers.get('dub') \
+                and not self._providers.get('sub'):
+            raise NoServersYet(
+                f'"{self.title}" has no dub/sub streams on AnimeX yet'
+                ' — try another link or source')
         self._chosen = True
         self._loaded = False
         return self

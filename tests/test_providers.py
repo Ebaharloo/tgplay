@@ -42,7 +42,33 @@ def test_parse():
         raise AssertionError('expected no-match error')
     except ValueError:
         pass
+    # empty groups: the page exists but has no servers — must be a CLEAN
+    # user-readable error ('list index out of range' was the old bug)
+    try:
+        ag.pick_group([])
+        raise AssertionError('expected no-servers error')
+    except ValueError as ex:
+        assert 'no quality servers' in str(ex), ex
     print('PASS animegate parsing')
+
+
+def test_provider_no_servers():
+    # a movie page with no release servers (Fanren Mulan movie case):
+    # select() must raise the friendly NoServersYet, NOTHING like IndexError
+    from tp.providers.base import NoServersYet
+    ag.get_base = lambda url, cs, http: ([], 'CSRF', '14989')
+    ag.all_eps = lambda aid, gid, group, csrf, cs, http: {}
+    p = ag.AnimeGateProvider('https://animegate.ir/anime/fanren-xiu-xian-'
+                             'zhuan-mulan-zhi-zhan-21616', cookies={})
+    try:
+        p.select(None)
+        raise AssertionError('expected NoServersYet')
+    except NoServersYet as ex:
+        assert 'no release servers' in str(ex), ex
+    except Exception as ex:                    # the old bug shape
+        raise AssertionError(f'wrong error kind: {type(ex).__name__}: {ex}')
+    # quality never crashes either: pick another site page with the data
+    print('PASS animegate provider (no-servers page is a clean error)')
 
 
 def test_provider():
@@ -112,8 +138,31 @@ def test_retry_and_logout():
     print('PASS telegram retry rules + logout')
 
 
+def test_two_line_titles():
+    """Feed titles sometimes wrap on 2 lines; find_source must still match
+    (the 'A Record of Mortal's Journey to Immortality' case: the AX result
+    carries the English title, the AG results the romanized variants)."""
+    from tp import library as lib
+
+    def fake_search(q, http=None, sources=('agp', 'axp'), limit=12):
+        return [
+            {'title': 'Fanren Xiu Xian Zhuan: Mulan Zhi Zhan',
+             'url': 'https://animegate.ir/anime/...-21616', 'source': 'agp'},
+            {'title': "A Record Of Mortal's Journey To Immortality",
+             'url': 'axp:a-record-of-mortals-journey-to-immortality-psj88',
+             'source': 'axp'},
+        ]
+
+    got = lib.find_source("A Record of Mortal's\n"
+                          "Journey to Immortality", http=None)
+    assert got == ('axp', 'axp:a-record-of-mortals-journey-to-immortality-'
+                           'psj88'), got
+    print('PASS find_source matches a 2-line wrapped title')
+
+
 def main():
     test_parse()
+    test_two_line_titles()
     test_provider()
     test_telegram_source()
     test_retry_and_logout()

@@ -566,6 +566,12 @@ class MainWindow(W.QWidget):
         self.state['msg'] = ''
 
     # --- search ---------------------------------------------------------
+    # --- search ---------------------------------------------------------
+    def _typed(self) -> str:
+        """The search box text, normalized: '2 lines'/wrapping collapsed,
+        a separator/newline-free single line."""
+        return ' '.join(self.box.text().split()).strip()
+
     def _run_search(self, text):
         def work():
             try:
@@ -596,7 +602,7 @@ class MainWindow(W.QWidget):
 
     def _on_text(self):
         from .cli_all import route
-        t = self.box.text().strip()
+        t = self._typed()
         if not t:
             self.show_history()
             return
@@ -625,7 +631,7 @@ class MainWindow(W.QWidget):
         target = item.data(C.Qt.UserRole)
         if target:
             from .cli_all import route
-            q = self.box.text().strip()
+            q = self._typed()
             if self._cfg is not None and q and not route(q):
                 history.add(self._cfg, query=q)
             elif self._cfg is not None and not q:
@@ -636,7 +642,7 @@ class MainWindow(W.QWidget):
 
     def _accept_typed(self):
         from .cli_all import route
-        t = self.box.text().strip()
+        t = self._typed()
         r = route(t)
         if r:
             self._fill_results([])

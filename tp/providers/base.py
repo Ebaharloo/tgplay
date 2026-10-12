@@ -19,6 +19,16 @@ class Provider(ABC):
     def stream(self, num: int) -> MediaSource:
         """A byte source for episode `num` (re-resolves the link)."""
 
+    def select(self, quality=None) -> 'Provider':
+        """Apply the chosen quality/server label (no-op for single-quality
+        sources; re-selecting a narrowed Telegram view would renumber it)."""
+        return self
+
     def display_name(self, num: int):
         """Optional human/file name for an episode (None -> derive it)."""
         return None
+
+
+class NoServersYet(ValueError):
+    """The page exists but offers no playable servers yet (movie too new,
+    region link, ...) — a user-readable message, not a stacktrace."""
