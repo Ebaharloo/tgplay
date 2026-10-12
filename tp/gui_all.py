@@ -425,6 +425,8 @@ class MainWindow(W.QWidget):
         self.poll.start()
         self.results.itemClicked.connect(self._pick_result)
         self.results.itemActivated.connect(self._pick_result)
+        self.results.setContextMenuPolicy(C.Qt.CustomContextMenu)
+        self.results.customContextMenuRequested.connect(self._results_menu)
         self.hist_btn.clicked.connect(lambda *_: self.show_history(force=True))
         self.hist_tbl.cellClicked.connect(self._hist_click)
         self.feed_filter.currentTextChanged.connect(
@@ -558,11 +560,25 @@ class MainWindow(W.QWidget):
         except Exception as ex:
             self.state['msg'] = f'error: {ex}'
             self.state['loading'] = False
+            # keep the results list visible: the user picks another
+            # source / season from the same list (no random pick)
+            for r in range(self.results.count()):
+                if self.results.item(r).data(C.Qt.UserRole) == str(target):
+                    self.results.setCurrentRow(r)
+                    break
+            self.results.setVisible(True)
+            self.res_stack.setVisible(True)
+            self.res_stack.setCurrentWidget(self.results)
             return
         self.state['loading'] = False
         if self._cfg is not None:
             history.add(self._cfg, link=target)
         self.set_session(s)
+        # success: tidy the results area (the session is up in its place)
+        self.box.blockSignals(True)
+        self.box.clear()
+        self.box.blockSignals(False)
+        self._fill_results([])
         self.state['msg'] = ''
 
     # --- search ---------------------------------------------------------
@@ -590,8 +606,15 @@ class MainWindow(W.QWidget):
             if kind == 'query':
                 label = f'🔎  {title}     ·     recent search'
             else:
+                url = e.get('url')
                 label = f"{title}     ·     {e.get('source', '')}"
-            it = W.QListWidgetItem(label)
+                if url:
+                    # the link itself is visible, so the user can see the
+                    # exact page per source before choosing
+                    label = f"{label}\n ↳ {url}"
+                it = W.QListWidgetItem(label)
+                if url:
+                    it.setToolTip(str(url))
             it.setData(C.Qt.UserRole, e.get('url'))
             it.setData(C.Qt.UserRole + 1, e.get('source'))
             it.setData(C.Qt.UserRole + 2, title)
@@ -612,6 +635,29 @@ class MainWindow(W.QWidget):
                 [{'title': t, 'url': r[1], 'source': r[0]}])
             return
         self.debounce.start()
+
+    def _results_menu(self, pos):
+        """Right-click a result row: copy / open its link without loading."""
+        it = self.results.itemAt(pos)
+        if it is None:
+            return
+        url = it.data(C.Qt.UserRole)
+        if not url:
+            return
+        menu = W.QMenu(self.results)
+        a_copy = menu.addAction('⧉  Copy link')
+        a_open = menu.addAction('🔗  Open in browser')
+        pick = menu.exec(self.results.viewport().mapToGlobal(pos))
+        if pick is None:
+            return
+        try:
+            if pick == a_copy:
+                W.QApplication.clipboard().setText(str(url))
+                self.state['msg'] = f'link copied: {url}'
+            elif pick == a_open:
+                G.QDesktopServices.openUrl(C.QUrl(str(url)))
+        except Exception as ex:
+            self.state['msg'] = f'error: {ex}'
 
     def _drain_search(self):
         try:
@@ -636,8 +682,8 @@ class MainWindow(W.QWidget):
                 history.add(self._cfg, query=q)
             elif self._cfg is not None and not q:
                 history.add(self._cfg, link=target)  # record it NOW
-            self.box.clear()
-            self._fill_results([])
+            # keep the results list visible: if this source has nothing
+            # playable (NoServersYet), the user picks the next row
             self.load_target(str(src), str(target))
 
     def _accept_typed(self):
@@ -645,7 +691,6 @@ class MainWindow(W.QWidget):
         t = self._typed()
         r = route(t)
         if r:
-            self._fill_results([])
             self.load_target(r[0], r[1])
             return
         n = self.results.currentRow()
@@ -743,10 +788,12 @@ class MainWindow(W.QWidget):
         self.state['msg'] = f"searching “{e['title']}” on our sources…"
 
         def work():
+            # the Simkl name is not our sites' name: search the full title,
+            # then the base name (season/movie variants) so the site's own
+            # naming (e.g. 'Fanren Xiu Xian Zhuan …') shows up to pick from
             try:
-                from .search import search_all
-                res = search_all(e['title'], self._http,
-                                 sources=('agp', 'axp')) or []
+                from .library import search_variants
+                res = search_variants(e['title'], self._http)
             except Exception:
                 res = None
             self._libq.put(('show-results', e, res))
@@ -906,13 +953,11 @@ class MainWindow(W.QWidget):
                     self.state['msg'] = (f"not found on our sources: "
                                          f"{entry['title']}")
                     return
-                from .library import ranked
-                res = ranked(res, entry['title'])
                 self.box.blockSignals(True)
-                self.box.setText(entry['title'])   # context for the list
+                self.box.setText(' '.join(str(entry['title']).split()))
                 self.box.blockSignals(False)
                 self._fill_results(res)
-                best = res[0].get('source', '?').upper()
+                best = str(res[0].get('source', '?')).upper()
                 self.state['msg'] = (f"{len(res)} result(s) for "
                                      f"“{entry['title']}” — best match: {best}"
                                      "  ·  click the one you want")

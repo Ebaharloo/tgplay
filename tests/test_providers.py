@@ -42,13 +42,13 @@ def test_parse():
         raise AssertionError('expected no-match error')
     except ValueError:
         pass
-    # empty groups: the page exists but has no servers — must be a CLEAN
-    # user-readable error ('list index out of range' was the old bug)
+    # empty groups: the page exists but has no uploaded links — must be a
+    # CLEAN user-readable error ('list index out of range' was the old bug)
     try:
         ag.pick_group([])
         raise AssertionError('expected no-servers error')
     except ValueError as ex:
-        assert 'no quality servers' in str(ex), ex
+        assert 'nothing playable' in str(ex), ex
     print('PASS animegate parsing')
 
 
@@ -64,11 +64,56 @@ def test_provider_no_servers():
         p.select(None)
         raise AssertionError('expected NoServersYet')
     except NoServersYet as ex:
-        assert 'no release servers' in str(ex), ex
+        assert 'nothing playable' in str(ex), ex
     except Exception as ex:                    # the old bug shape
         raise AssertionError(f'wrong error kind: {type(ex).__name__}: {ex}')
     # quality never crashes either: pick another site page with the data
     print('PASS animegate provider (no-servers page is a clean error)')
+
+
+def test_title_variants_and_merge():
+    """Simkl's name is not the sites' name: the base-name variant search
+    must open the door to 'Fanren Xiu Xian Zhuan …' style results."""
+    from tp import library as lib
+    vs = lib.title_variants(
+        "A Record of Mortal's Journey to Immortality (2024)")
+    assert vs[0].startswith('A Record of Mortal'), vs
+    assert any('A Record of Mortal' in v and '(2024)' not in v for v in vs)
+    vs2 = lib.title_variants('Fanren Xiu Xian Zhuan: Xinghai Feichi Prologue')
+    assert 'Fanren Xiu Xian Zhuan' in vs2, vs2   # base name before ':'
+    vs3 = lib.title_variants('Renegade Immortal 2nd Season')
+    assert any(v == 'Renegade Immortal' for v in vs3), vs3
+
+    # search_variants merges + de-duplicates and ranks best match first
+    import tp.search as search_mod
+
+    calls = []
+
+    def fake(q, http=None, sources=('agp', 'axp'), limit=12):
+        calls.append(q)
+        if '2024' in q:            # full-name search: only a low-match row
+            return [{'title': 'Fanren Xiu Xian Zhuan: Mulan Zhi Zhan',
+                     'url': 'agp64', 'source': 'agp'}]
+        return [                   # base-name search: the real title family
+            {'title': 'Fanren Xiu Xian Zhuan', 'url': 'agp1', 'source': 'agp'},
+            {'title': 'Fanren Xiu Xian Zhuan', 'url': 'agp1', 'source': 'agp'},
+            {'title': "A Record Of Mortal's Journey To Immortality",
+             'url': 'axp:ok', 'source': 'axp'},
+        ]
+
+    orig = search_mod.search_all
+    search_mod.search_all = fake
+    try:
+        got = lib.search_variants(
+            "A Record of Mortal's Journey to Immortality (2024)")
+        urls = [r['url'] for r in got]
+        assert urls and len(urls) == len(set(urls)), got   # dedupe
+        assert 'axp:ok' in urls, got
+        assert got[0]['url'] == 'axp:ok', got              # exact match first
+        assert calls, 'search must run'
+    finally:
+        search_mod.search_all = orig
+    print('PASS title variants + merged variant search')
 
 
 def test_provider():
@@ -163,6 +208,7 @@ def test_two_line_titles():
 def main():
     test_parse()
     test_two_line_titles()
+    test_title_variants_and_merge()
     test_provider()
     test_telegram_source()
     test_retry_and_logout()

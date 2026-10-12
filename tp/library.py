@@ -88,6 +88,70 @@ def _norm_title(t) -> str:
     return ' '.join(str(t or '').split()).casefold().strip()
 
 
+_YEAR = None
+
+
+def title_variants(title: str) -> List[str]:
+    """Search variants for a title, widest last.
+
+    The Simkl/library name is not what our sites use: a show can live on
+    AnimeGate as 'Fanren Xiu Xian Zhuan: Xinghai Feichi Prologue' while Simkl
+    says 'A Record of Mortal's Journey to Immortality (2024)'. We search the
+    full name first, then the base name (without the season/movie qualifier)
+    so the site's own naming shows up in the results.
+    """
+    import re
+    t = ' '.join(str(title or '').split())
+    if not t:
+        return []
+    out = [t]
+    t2 = re.sub(r'\s*\(\d{4}\)\s*$', '', t).strip()          # '(2024)' year
+    if t2 and t2 != t:
+        out.append(t2)
+    # strip the part after ':' or ' - ' (season/movie subtitles), then bare
+    t3 = re.split(r'\s*[:–—-]\s{1,}', t2)[0].strip() if ':' in t2 or ' – ' in t2 else t2
+    base = re.sub(
+        r'\s+(\d+(?:st|nd|rd|th)?\s+(?:season|part)|season\s+\d+|part\s+\d+'
+        r'|movies?|ova(?:\s*s?)|specials?|prologue|recap|volume\s+\d+)$',
+        '', t2, flags=re.I).strip()
+    if base and base != t2 and base not in out:
+        out.append(base)
+    if t3 and t3 not in out and t3 != base:
+        out.append(t3)
+    return out
+
+
+def search_variants(title: str, http: Optional[HttpClient] = None,
+                    limit_each: int = 12) -> List[dict]:
+    """Results for all title_variants merged + de-duplicated, best first.
+
+    Stops widening (base-name search) as soon as an exact-name hit exists,
+    so the common case stays one network search like before.
+    """
+    out: List[dict] = []
+    seen = set()
+    for q in title_variants(title):
+        try:
+            from .search import search_all
+            got = search_all(q, http=http, sources=('agp', 'axp'),
+                             limit=limit_each) or []
+        except Exception:
+            got = []
+        for r in got:
+            u = r.get('url')
+            if u and u not in seen:
+                seen.add(u)
+                out.append(r)
+        if _norm_has_exact(out, title) or len(out) >= limit_each:
+            break                       # confident enough, no wider search
+    return ranked(out, title)
+
+
+def _norm_has_exact(results, title) -> bool:
+    want = _norm_title(title)
+    return any(_norm_title(r.get('title', '')) == want for r in results)
+
+
 def ranked(results: List[dict], title: str) -> List[dict]:
     """Search results ordered best-match first (so the GUI list starts with
     the closest title). Ties go to AnimeX (English dub)."""
@@ -106,13 +170,8 @@ def find_source(title: str, http: Optional[HttpClient] = None
     """Best match for `title` on our sources -> (source_id, target)."""
     if not title:
         return None
-    try:
-        from .search import search_all
-        results = search_all(_norm_title(title), http=http,
-                             sources=('agp', 'axp'))
-    except Exception:
+    got = search_variants(title, http=http)
+    if not got:
         return None
-    if not results:
-        return None
-    best = ranked(results, title)[0]
+    best = got[0]
     return (best.get('source') or 'agp', best.get('url'))

@@ -118,6 +118,12 @@ def test_sidebar_click_shows_source_choices():
         assert (it.data(C_QT_UserRole(w)) == 'axp:ok'), fake
         assert 'Exact Show' in it.text()
         assert w.state['session'] is None, 'nothing must auto-load'
+        # the LINK of each source is visible on its row (so the user can
+        # see the exact page per service before choosing)
+        for i in range(w.results.count()):
+            it = w.results.item(i)
+            assert it.data(C_QT_UserRole(w)) and \
+                f"↳ {it.data(C_QT_UserRole(w))}" in it.text(), it.text()
         # the user picks: click the agp row
         w._pick_result(w.results.item(1))
         assert 'agp:ok' in made, made      # the CHOSEN source got loaded
