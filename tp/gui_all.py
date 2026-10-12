@@ -111,10 +111,47 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
     srow.addWidget(hist_btn)
     root.addLayout(srow)
 
+    # history gets a real table (Date | Source | Link | ✕); search results
+    # keep a plain list — a QStackedWidget swaps between the two views.
     results = W.QListWidget()
     results.setMaximumHeight(170)
-    results.setVisible(False)
-    root.addWidget(results)
+
+    def _fmt_ts(ts):
+        ts = int(ts or 0)
+        if not ts:
+            return '(old)'
+        age = max(0, int(__import__('time').time()) - ts)
+        if age < 60:
+            return 'just now'
+        if age < 3600:
+            return f'{age // 60}m ago'
+        if age < 86400:
+            return f'{age // 3600}h ago'
+        if age < 7 * 86400:
+            return f'{age // 86400}d ago'
+        return __import__('time').strftime('%Y-%m-%d', __import__('time').localtime(ts))
+
+    hist_tbl = W.QTableWidget(0, 4)
+    hist_tbl.setHorizontalHeaderLabels(['Date', 'Source', 'Link', ''])
+    hist_tbl.verticalHeader().setVisible(False)
+    hist_tbl.setEditTriggers(W.QAbstractItemView.NoEditTriggers)
+    hist_tbl.setSelectionBehavior(W.QAbstractItemView.SelectRows)
+    hist_tbl.setSelectionMode(W.QAbstractItemView.SingleSelection)
+    hist_tbl.setShowGrid(False)
+    hist_tbl.setAlternatingRowColors(True)
+    hist_tbl.setMaximumHeight(170)
+    hh = hist_tbl.horizontalHeader()
+    hh.setSectionResizeMode(0, W.QHeaderView.ResizeToContents)
+    hh.setSectionResizeMode(1, W.QHeaderView.ResizeToContents)
+    hh.setSectionResizeMode(2, W.QHeaderView.Stretch)
+    hh.setSectionResizeMode(3, W.QHeaderView.Fixed)
+    hist_tbl.setColumnWidth(3, 30)
+    res_stack = W.QStackedWidget()
+    res_stack.addWidget(results)        # page 0: search / typeahead
+    res_stack.addWidget(hist_tbl)       # page 1: local history picker
+    res_stack.setMaximumHeight(170)
+    res_stack.setVisible(False)
+    root.addWidget(res_stack)
 
     # --- header ---------------------------------------------------------
     head = W.QLabel('Search or paste a link to start')
@@ -372,6 +409,7 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
 
     def fill_results(items):
         results.clear()
+        res_stack.setCurrentWidget(results)
         for e in items:
             kind = e.get('kind') or 'result'
             title = e.get('title', '')
@@ -386,10 +424,72 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
             it.setData(C.Qt.UserRole + 3, kind)
             results.addItem(it)
         results.setVisible(bool(items))
+        res_stack.setVisible(bool(items))
+
+    def _hist_rows():
+        items = history.recent(cfg) if cfg is not None else []
+        filtered = []
+        seen = set()
+        for e in items:                     # drop duplicate titles (same link
+            if e['title'] in seen:          # can appear once per source)
+                continue
+            seen.add(e['title'])
+            filtered.append(e)
+        return filtered
 
     def show_history():
-        items = history.recent(cfg) if cfg is not None else []
-        fill_results(items)
+        hist_tbl.setRowCount(0)
+        items = _hist_rows()
+        hist_tbl.setVisible(True)
+        for e in items:
+            r = hist_tbl.rowCount()
+            hist_tbl.insertRow(r)
+            it_d = _SortItem(_fmt_ts(e.get('ts')))
+            it_d.setData(C.Qt.UserRole, str(e.get('ts') or 0))
+            hist_tbl.setItem(r, 0, it_d)
+            src = 'search' if e['kind'] == 'query' else str(
+                e.get('source') or 'link')
+            hist_tbl.setItem(r, 1, W.QTableWidgetItem(src))
+            it_l = _SortItem(e['title'])
+            it_l.setData(C.Qt.UserRole + 1, e)
+            it_l.setToolTip('')
+            hist_tbl.setItem(r, 2, it_l)
+            x = W.QToolButton()
+            x.setText('✕')
+            x.setToolTip('remove from history')
+            x.clicked.connect(lambda _c=False, row=r, e=e: _hist_del(row, e))
+            hist_tbl.setCellWidget(r, 3, x)
+        if not items:
+            hist_tbl.insertRow(0)
+            hist_tbl.setItem(0, 2, W.QTableWidgetItem('no history yet'))
+        hist_tbl.show()
+        res_stack.setCurrentWidget(hist_tbl)
+        res_stack.setVisible(True)
+
+    def _hist_del(_row, e):
+        try:
+            if e['kind'] == 'query':
+                history.remove(cfg, query=e['title'])
+            else:
+                history.remove(cfg, link=e['url'])
+        except Exception:
+            pass
+        show_history()
+
+    def _hist_click(row, col):
+        if col == 3:
+            return
+        it = hist_tbl.item(row, 2)
+        e = it.data(C.Qt.UserRole + 1) if it else None
+        if not e:
+            return
+        if e['kind'] == 'query':                # replay a past search
+            box.setText(e['title'])
+            return
+        if cfg is not None:
+            history.add(cfg, link=e['url'])     # record NOW, before loading
+        box.clear()
+        load_target(str(e.get('source') or 'agp'), str(e['url']))
 
     def load_target(src, target):
         if state.get('loading'):
@@ -443,6 +543,9 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
             q = box.text().strip()
             if cfg is not None and q and not route(q):
                 history.add(cfg, query=q)
+            elif cfg is not None and not q:
+                history.add(cfg, link=target)   # picked a result: record it now
+            box.clear()
             box.clear()
             fill_results([])
             load_target(str(src), str(target))
@@ -639,6 +742,7 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
                     hist.insertRow(0)
                     hist.setItem(0, 2, W.QTableWidgetItem('no history'))
                 hist.setSortingEnabled(True)
+                hist.sortItems(0, C.Qt.DescendingOrder)   # newest watched first
             elif msg[0] == 'load':
                 _, entry, res = msg
                 if res:
@@ -716,6 +820,9 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
             lambda pos, t=_t: _context(t, pos))
 
     hist_btn.clicked.connect(show_history)
+    hist_tbl.cellClicked.connect(_hist_click)
+    hist_btn.setToolTip('Your recent links and searches, with their date and source.\n'
+                        '✕ removes one entry.')
     add_btn.clicked.connect(add_current)
     side_btn.clicked.connect(load_side)
     feed_filter.currentTextChanged.connect(lambda _t: render_feed())
