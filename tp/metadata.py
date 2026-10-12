@@ -328,6 +328,35 @@ class Metadata:
             except Exception:
                 self._mark_down('mal')
         self.bangumi_titles(mal_id, title)
+        self.simkl_titles(mal_id, title)
+
+    def simkl_titles(self, mal_id, title=None) -> Dict[int, str]:
+        """Simkl episode names (the third named source): resolve the show via
+        its MAL id, merge non-generic titles under 'simkl:{mal_id}' — the
+        exact key `TitleService.labels()` reads. Missing names only; older
+        cached names are never overwritten."""
+        if self.simkl is None or not mal_id:
+            return {}
+        if not self.simkl.available() or self.down('simkl'):
+            return {}
+        try:
+            sid = self.simkl.resolve(mal=mal_id)
+            if not sid:
+                return {}
+            eps = self.simkl.episodes(sid) or {}
+        except Exception:
+            self._mark_down('simkl')
+            return {}
+        cache = _read(self.cfg.ep_titles, {})
+        shows = cache.get(f'simkl:{mal_id}') or {}
+        before = len(shows)
+        for n, t in list(eps.items()):
+            if t and not _GENERIC_EP.match(str(t)):
+                shows.setdefault(str(n), str(t))
+        if len(shows) != before:
+            cache[f'simkl:{mal_id}'] = shows
+            _write(self.cfg.ep_titles, cache)
+        return eps
 
     def _merge(self, mal_id, titles: Dict[int, str]) -> None:
         if not titles:

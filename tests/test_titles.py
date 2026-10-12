@@ -23,6 +23,43 @@ def test_labels_instant():
     print('PASS labels instant from cache')
 
 
+def test_simkl_titles_merged():
+    """The THIRD named source (after MAL and Bangumi-Chinese): Simkl episode
+    names merge under 'simkl:{mal}' - exactly the key TitleService reads."""
+    cfg = Config(home=tempfile.mkdtemp(prefix='tgplay-simkl-t-')).ensure()
+    m = Metadata(cfg)
+
+    class FakeSimkl:
+        def __init__(self):
+            self._eps = {1: 'Real Name One', 2: 'Episode 2', 3: 'Real Name 3'}
+
+        def available(self):
+            return True
+
+        def resolve(self, mal=None, anilist=None, query=None):
+            return 424242
+
+        def episodes(self, simkl_id):
+            assert simkl_id == 424242
+            return dict(self._eps)
+
+    m.simkl = FakeSimkl()
+    got = m.simkl_titles(46000)
+    assert got[1] == 'Real Name One', got
+    cache = json.load(open(cfg.ep_titles))
+    merged = cache['simkl:46000']
+    assert merged == {'1': 'Real Name One', '3': 'Real Name 3'}, merged \
+        # generic 'Episode 2' is never stored
+    ts = TitleService(m, cfg)
+    labels = ts.labels(46000, {1: 'Episode 1', 2: 'Episode 2', 3: 'Episode 3'})
+    assert labels[1] == 'Real Name One' and labels[3] == 'Real Name 3', labels
+    assert labels[2] == 'Episode 2', labels        # generic stays placeholder
+    # names already cached are never overwritten (the merge-once rule)
+    SanityCheck = m.simkl_titles(46000)
+    assert SanityCheck[1] == 'Real Name One'
+    print('PASS Simkl episode names merged + read by labels')
+
+
 def test_metadata_title_merge():
     cfg = Config(home=tempfile.mkdtemp(prefix='tgplay-mtitles-')).ensure()
     m = Metadata(cfg)
@@ -85,6 +122,7 @@ def test_labels_translated():
 
 def main():
     test_labels_instant()
+    test_simkl_titles_merged()
     test_labels_translated()
     test_metadata_title_merge()
     test_retry_missing_each_run()
