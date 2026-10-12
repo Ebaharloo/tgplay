@@ -146,6 +146,7 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
     hh.setSectionResizeMode(2, W.QHeaderView.Stretch)
     hh.setSectionResizeMode(3, W.QHeaderView.Fixed)
     hist_tbl.setColumnWidth(3, 30)
+    hist_tbl.setSortingEnabled(True)
     res_stack = W.QStackedWidget()
     res_stack.addWidget(results)        # page 0: search / typeahead
     res_stack.addWidget(hist_tbl)       # page 1: local history picker
@@ -437,7 +438,10 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
             filtered.append(e)
         return filtered
 
-    def show_history():
+    def show_history(force=False):
+        sc = hist_tbl.horizontalHeader().sortIndicatorSection()
+        so = hist_tbl.horizontalHeader().sortIndicatorOrder()
+        hist_tbl.setSortingEnabled(False)
         hist_tbl.setRowCount(0)
         items = _hist_rows()
         hist_tbl.setVisible(True)
@@ -451,8 +455,8 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
                 e.get('source') or 'link')
             hist_tbl.setItem(r, 1, W.QTableWidgetItem(src))
             it_l = _SortItem(e['title'])
+            it_l.setData(C.Qt.UserRole, e['title'])   # sort by the link text
             it_l.setData(C.Qt.UserRole + 1, e)
-            it_l.setToolTip('')
             hist_tbl.setItem(r, 2, it_l)
             x = W.QToolButton()
             x.setText('✕')
@@ -462,9 +466,13 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
         if not items:
             hist_tbl.insertRow(0)
             hist_tbl.setItem(0, 2, W.QTableWidgetItem('no history yet'))
-        hist_tbl.show()
+        hist_tbl.setSortingEnabled(True)
+        if sc < 0:
+            hist_tbl.sortItems(0, C.Qt.DescendingOrder)  # newest first default
+        else:
+            hist_tbl.sortItems(sc, so)      # keep the user's chosen sort
         res_stack.setCurrentWidget(hist_tbl)
-        res_stack.setVisible(True)
+        res_stack.setVisible(bool(items) or force)
 
     def _hist_del(_row, e):
         try:
@@ -474,7 +482,7 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
                 history.remove(cfg, link=e['url'])
         except Exception:
             pass
-        show_history()
+        show_history(force=True)
 
     def _hist_click(row, col):
         if col == 3:
@@ -819,10 +827,10 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
         _t.customContextMenuRequested.connect(
             lambda pos, t=_t: _context(t, pos))
 
-    hist_btn.clicked.connect(show_history)
+    hist_btn.clicked.connect(lambda *_: show_history(force=True))
     hist_tbl.cellClicked.connect(_hist_click)
     hist_btn.setToolTip('Your recent links and searches, with their date and source.\n'
-                        '✕ removes one entry.')
+                        'Click a header (Date/Source/Link) to sort · ✕ removes one entry.')
     add_btn.clicked.connect(add_current)
     side_btn.clicked.connect(load_side)
     feed_filter.currentTextChanged.connect(lambda _t: render_feed())
