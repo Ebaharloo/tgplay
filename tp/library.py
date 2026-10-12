@@ -1,9 +1,10 @@
-"""tp.library - the watch list (Simkl-backed) + "play from the list".
+"""tp.library - the watch list (Simkl-backed): calendar, backlog, history.
 
-`entries()` reads the user's Simkl library (watching + plan-to-watch) and
-normalises it; `up_next()` keeps the shows with a next unwatched episode;
-`find_source()` resolves a list title to one of our sources (axp dub / agp sub)
-so the app can jump straight into the player.
+`overview()` does **one** library fetch + **one** calendar fetch and derives:
+  cal  = 📅 upcoming episodes (next `cal_days`) + ✅ aired in the last `aired_days`
+  rem  = every started show with a next unwatched episode (continue watching)
+  hist = recently watched
+`find_source()` resolves a list title to one of our sources (axp dub / agp sub).
 """
 import difflib
 import json
@@ -16,45 +17,13 @@ from .simkl_account import SimklAccount
 CAL = 'https://data.simkl.in/calendar/v2/anime.json'
 
 
-def entries(cfg, http: Optional[HttpClient] = None,
-            statuses=('watching', 'plantowatch')) -> List[dict]:
-    try:
-        return SimklAccount(cfg, http).library(statuses)
-    except Exception:
-        return []
-
-
-def up_next(cfg, http: Optional[HttpClient] = None) -> List[dict]:
-    try:
-        return SimklAccount(cfg, http).up_next()
-    except Exception:
-        return []
-
-
-def _all(cfg, http=None) -> List[dict]:
-    try:
-        return SimklAccount(cfg, http).library(
-            ('watching', 'plantowatch', 'hold', 'completed', 'dropped'))
-    except Exception:
-        return []
-
-
-def calendar(cfg, http: Optional[HttpClient] = None, days: int = 21,
-             limit: int = 40) -> List[dict]:
-    """Upcoming episodes **for the user's own shows**, from Simkl's public
-    calendar (`data.simkl.in`, no auth). This is the real 'what airs next'."""
+def _fetch_calendar(http, client_id: Optional[str], ids: set, days: int) -> List[dict]:
+    """Upcoming episodes (next `days`) for the given Simkl ids, soonest first."""
     from datetime import datetime, timedelta, timezone
-    acc = SimklAccount(cfg, http)
-    try:
-        ids = {e['simkl'] for e in acc.library(('watching', 'plantowatch'))
-               if e.get('simkl')}
-    except Exception:
-        ids = set()
     if not ids:
         return []
-    http = http or HttpClient()
     url = CAL + '?' + urllib.parse.urlencode(
-        {'client_id': acc.client_id or '', 'app-name': 'tgplay',
+        {'client_id': client_id or '', 'app-name': 'tgplay',
          'app-version': '1.0'})
     try:
         r = http.open(http.request(url, headers={'User-Agent': 'tgplay/1.0'}))
@@ -83,42 +52,34 @@ def calendar(cfg, http: Optional[HttpClient] = None, days: int = 21,
                     'air_date': e.get('date'), 'next_ep': ep.get('episode'),
                     'ep_title': ep.get('title'), 'kind': 'upcoming'})
     out.sort(key=lambda x: str(x.get('air_date')))
-    return out[:limit]
+    return out
 
 
-def recently_aired(cfg, http: Optional[HttpClient] = None, days: int = 7,
-                   limit: int = 40) -> List[dict]:
-    """Episodes of your shows that aired in the **last `days`** (new to watch)."""
+def overview(cfg, http: Optional[HttpClient] = None, aired_days: int = 7,
+             cal_days: int = 14, hist_limit: int = 15) -> dict:
+    """Fetch the library once (+ the calendar once) and derive everything."""
     from datetime import date, timedelta
-    rows = _all(cfg, http)
+    acc = SimklAccount(cfg, http)
+    http = http or HttpClient()
+    rows = acc.library(('watching', 'plantowatch', 'hold', 'completed', 'dropped'))
+    watch_ids = {e['simkl'] for e in rows
+                 if e.get('status') in ('watching', 'plantowatch') and e.get('simkl')}
     today = date.today()
-    cut = (today - timedelta(days=days)).isoformat()
-    out = []
+    cut = (today - timedelta(days=aired_days)).isoformat()
+    upcoming = _fetch_calendar(http, acc.client_id, watch_ids, cal_days)
+    aired = []
     for e in rows:
         d = str(e.get('air_date') or '')[:10]
         if d and cut <= d < today.isoformat():
             e['kind'] = 'aired'
-            out.append(e)
-    out.sort(key=lambda e: str(e['air_date']), reverse=True)
-    return out[:limit]
-
-
-def remaining(cfg, http: Optional[HttpClient] = None, limit: int = 80) -> List[dict]:
-    """The 'continue watching' backlog: every started show that still has a
-    next unwatched episode (however old), most recent first."""
-    out = []
-    for e in up_next(cfg, http):
-        e['kind'] = 'remaining'
-        out.append(e)
-    out.sort(key=lambda e: str(e.get('air_date') or ''), reverse=True)
-    return out[:limit]
-
-
-def recent(cfg, http: Optional[HttpClient] = None, limit: int = 15) -> List[dict]:
-    """What you watched most recently (the history rail)."""
-    rows = [e for e in _all(cfg, http) if e.get('last_watched')]
-    rows.sort(key=lambda e: str(e['last_watched']), reverse=True)
-    return rows[:limit]
+            aired.append(e)
+    aired.sort(key=lambda e: str(e['air_date']), reverse=True)
+    rem = [dict(e, kind='remaining') for e in rows
+           if e.get('status') == 'watching' and e.get('next_ep') and e.get('title')]
+    rem.sort(key=lambda e: str(e.get('air_date') or ''), reverse=True)
+    hist = [e for e in rows if e.get('last_watched')]
+    hist.sort(key=lambda e: str(e['last_watched']), reverse=True)
+    return {'cal': upcoming + aired, 'rem': rem, 'hist': hist[:hist_limit]}
 
 
 def find_source(title: str, http: Optional[HttpClient] = None

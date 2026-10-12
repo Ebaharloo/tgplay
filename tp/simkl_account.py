@@ -246,11 +246,14 @@ class SimklAccount:
         }
 
     def library(self, statuses=('watching', 'plantowatch')) -> List[dict]:
-        out: List[dict] = []
-        for st in statuses:
-            for it in self._items('anime', st):
-                out.append(self._norm(it))
-        return out
+        """The anime library in **one** request, optionally filtered by status."""
+        try:
+            rows = self._items('anime')
+        except Exception:
+            rows = []
+        if statuses:
+            rows = [r for r in rows if r.get('status') in statuses]
+        return [self._norm(r) for r in rows]
 
     def up_next(self) -> List[dict]:
         return [e for e in self.library(('watching',))

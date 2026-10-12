@@ -83,7 +83,7 @@ class Cache:
                 e['partial'] = True
         now = time.time()
         out = []
-        for base, e in sorted(fam.items(), key=lambda kv: kv[1]['mtime']):
+        for _base, e in sorted(fam.items(), key=lambda kv: kv[1]['mtime']):
             disp = None
             for f in e['files']:
                 b = os.path.basename(f)

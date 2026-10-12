@@ -543,11 +543,9 @@ def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
                 libq.put(('feed', None, None))
                 return
             try:
-                from .library import (calendar, recently_aired, remaining,
-                                      recent)
-                cal = calendar(cfg, http) + recently_aired(cfg, http)
-                rem = remaining(cfg, http)
-                rc = recent(cfg, http)
+                from .library import overview
+                ov = overview(cfg, http)
+                cal, rem, rc = ov['cal'], ov['rem'], ov['hist']
             except Exception:
                 cal, rem, rc = [], [], []
             libq.put(('feed', {'cal': cal, 'rem': rem}, rc))
