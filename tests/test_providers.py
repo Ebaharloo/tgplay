@@ -205,6 +205,32 @@ def test_two_line_titles():
     print('PASS find_source matches a 2-line wrapped title')
 
 
+def test_gate_auth_alive():
+    """The AnimeGate session health object: expired vs logged-in, and the
+    GUI's dead-marker list recognizes the exact provider errors."""
+    import re as _re
+    from tp.providers import animegate as ag
+    from tp.providers.animegate import GateAuth
+
+    ag.fetch_page = lambda url, cs, http: '<a href="/login">login</a>'
+    g = GateAuth(cookies={'animegate_mr_session': 'x'})
+    ok, why = g.alive()
+    assert ok is False and 'logged out' in why, (ok, why)
+    assert g.session_cookie() == 'x'
+
+    ag.fetch_page = lambda url, cs, http: '<a href="/logout">logout</a> ok'
+    ok, why = g.alive()
+    assert ok is True and why == 'ok', (ok, why)
+
+    from tp.gui_all import MainWindow
+    for msg in ('no links (logged out / cookie expired?)',
+                'no csrf token (page changed)',
+                'no firefox cookies (log in...)',
+                'HTTP Error 403: Forbidden'):
+        assert _re.search(MainWindow._GATE_MARKERS, msg, _re.I), msg
+    print('PASS GateAuth alive/expired + GUI dead-marker detection')
+
+
 def main():
     test_parse()
     test_two_line_titles()
@@ -212,6 +238,7 @@ def main():
     test_provider()
     test_telegram_source()
     test_retry_and_logout()
+    test_gate_auth_alive()
     print('PROVIDERS OK')
 
 

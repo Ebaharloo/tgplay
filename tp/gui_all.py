@@ -8,6 +8,7 @@ the Simkl sidebar and the log are all here.
 """
 import os
 import queue
+import re
 import threading
 import time
 from typing import Callable, List, Optional
@@ -561,10 +562,15 @@ class MainWindow(W.QWidget):
         try:
             s = self._loader(src, target)
         except Exception as ex:
-            self.state['msg'] = f'error: {ex}'
             self.state['loading'] = False
+            dead = self._gate_dead(str(src), str(target), ex)
+            self.state['msg'] = (f'AnimeGate session dead ({dead}) - links '
+                                 'need a new login; re-choose after signing in'
+                                 if dead else f'error: {ex}')
             # keep the results list visible: the user picks another
-            # source / season from the same list (no random pick)
+            # source / season from the same list (no random pick); the
+            # app keeps working with the data it has (results, history,
+            # last session) while authentication is down
             for r in range(self.results.count()):
                 if self.results.item(r).data(C.Qt.UserRole) == str(target):
                     self.results.setCurrentRow(r)
@@ -572,6 +578,10 @@ class MainWindow(W.QWidget):
             self.results.setVisible(True)
             self.res_stack.setVisible(True)
             self.res_stack.setCurrentWidget(self.results)
+            if dead:
+                threading.Thread(
+                    target=lambda: self._gate_auth_flow(src, target, dead),
+                    daemon=True).start()
             return
         self.state['loading'] = False
         self.set_session(s)
@@ -583,6 +593,71 @@ class MainWindow(W.QWidget):
         self.box.blockSignals(False)
         self._fill_results([])
         self.state['msg'] = ''
+
+    # --- auth health (AnimeGate cookie session) -------------------------
+    _GATE_MARKERS = (r'logged out|cookie expired|no csrf token|'
+                     r'no links \(logged|no firefox cookies|'
+                     r'HTTP Error (401|403)')
+
+    @classmethod
+    def _gate_dead(cls, src: str, target: str, ex) -> Optional[str]:
+        """A reason string when a load failed ONLY because the AnimeGate
+        cookie session is dead (so the user is asked to re-authenticate)."""
+        if 'animegate' not in f'{src} {target}'.lower():
+            return None
+        m = str(ex)
+        return m if re.search(cls._GATE_MARKERS, m, re.I) else None
+
+    def _gate_auth_flow(self, src, target, dead: str):
+        """Ask the user to open the AnimeGate login page and re-authenticate;
+        once signed in, one click reloads the show with fresh cookies.
+        While auth stays unavailable the app works with its cache."""
+        self.state['gate_last'] = (src, target)
+        C.QTimer.singleShot(0, self._gate_nag)
+
+    def _gate_nag(self):
+        from .providers.animegate import GateAuth
+        if self.state.get('gate_nagged'):
+            return
+        self.state['gate_nagged'] = True
+        box = W.QMessageBox(self)
+        box.setWindowTitle('AnimeGate login expired')
+        box.setText('AnimeGate reports the browser session is logged out,\n'
+                    'so its links are dead until you authenticate again.')
+        box.setInformativeText(
+            'Open the login page and sign in - tgplay re-reads the cookies\n'
+            'on the next load. Until then it keeps working with the data it\n'
+            'has (results, history, the last loaded show, cache).')
+        b_open = box.addButton('🌐 Open AnimeGate login',
+                               W.QMessageBox.AcceptRole)
+        box.addButton('Continue with cache', W.QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is b_open:
+            try:
+                GateAuth().open_login()
+            except Exception as ex:
+                self.state['msg'] = f'error: {ex}'
+            W.QMessageBox.information(
+                self, 'After signing in…',
+                'Log in to AnimeGate in Firefox, then press OK.\n'
+                'The show reloads with fresh cookies.')
+            self._gate_retry()
+
+    def _gate_retry(self):
+        """Re-run the last failed AGP target (fresh cookie read)."""
+        last = self.state.get('gate_last')
+        if last is not None:
+            self.load_target(*last)
+
+    def _gate_health(self):
+        def work():
+            try:
+                from .providers.animegate import GateAuth
+                ok, reason = GateAuth().alive()
+            except Exception as ex:
+                ok, reason = True, f'check failed ({ex})'
+            self._libq.put(('gate-health', ok, reason))
+        threading.Thread(target=work, daemon=True).start()
 
     # --- search ---------------------------------------------------------
     def _typed(self) -> str:
@@ -963,6 +1038,12 @@ class MainWindow(W.QWidget):
                                      f"“{entry['title']}” — best match: {best}"
                                      "  ·  click the one you want")
 
+            elif msg[0] == 'gate-health':
+                ok, reason = msg[1], msg[2]
+                if not ok:
+                    self.state['msg'] = f'AnimeGate auth: {reason}'
+                    C.QTimer.singleShot(0, self._gate_nag)
+
     @staticmethod
     def _row_entry(table, item):
         try:
@@ -1098,6 +1179,7 @@ class MainWindow(W.QWidget):
             pass
         self.load_side()
 
+        C.QTimer.singleShot(4000, self._gate_health)   # one background check
         mode = os.environ.get('AGP_GUI_TEST')
         if initial:
             self.load_target(initial[0], initial[1])

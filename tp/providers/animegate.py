@@ -122,6 +122,56 @@ def all_eps(aid, gid, group, csrf, cookies, http) -> Dict[int, str]:
 
 
 # --- provider ---------------------------------------------------------------
+class GateAuth:
+    """AnimeGate session health (OO): is the Firefox cookie login alive?
+
+    `alive()` fetches the site home with the current browser cookies and
+    reports whether the session still passes ('logged out' / cookie expired
+    detection, matching the errors `parse_page` raises on real loads).
+    `open_login()` opens the login page in the user's browser.
+    While auth is down, callers keep working with the data they have
+    (results list, history, last session) - nothing is wiped."""
+
+    LOGIN_URL = BASE + '/login'
+
+    def __init__(self, http=None, cookies: Dict[str, str] = None):
+        self.http = http or HttpClient()
+        self._cookies = cookies
+        self._page: Optional[str] = None
+
+    def cookies(self) -> Dict[str, str]:
+        if self._cookies is None:
+            try:
+                self._cookies = firefox_cookies()
+            except Exception:
+                self._cookies = {}
+        return self._cookies
+
+    def alive(self) -> Tuple[bool, str]:
+        """(session-ok, reason) for the current cookie login."""
+        cks = self.cookies()
+        if not cks:
+            return False, ('no AnimeGate cookies - log in to animegate '
+                           'in Firefox, then retry')
+        try:
+            page = self._page = fetch_page(BASE, cks, self.http)
+        except Exception as ex:
+            return False, f'AnimeGate unreachable ({type(ex).__name__}: {ex})'
+        if re.search(r'logout', page, re.I):
+            return True, 'ok'
+        if re.search(r'href="[^"]*/login"', page, re.I):
+            return False, 'AnimeGate session is logged out - open the login page'
+        return True, 'site up (login state unknown)'
+
+    def open_login(self) -> None:
+        import webbrowser
+        webbrowser.open(self.LOGIN_URL)
+
+    def session_cookie(self) -> Optional[str]:
+        """The live session cookie name/value (None after logout/expiry)."""
+        return self.cookies().get('animegate_mr_session')
+
+
 class AnimeGateProvider(Provider):
     def __init__(self, url, quality=None, all_groups=False, http=None,
                  cookies=None, prompt=None):
