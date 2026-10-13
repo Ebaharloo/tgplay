@@ -22,6 +22,7 @@ from typing import Dict, Optional
 from .http import HttpClient, _quiet_close
 from .bangumi import Bangumi, cjk_title as _cjk
 from .translate import Translator
+from .titles import clean_ep_name
 
 ANILIST = 'https://graphql.anilist.co'
 _SEARCH = ('query($s:String){Page(page:1,perPage:8){media(search:$s,type:ANIME){'
@@ -233,19 +234,19 @@ class Metadata:
         """MAL episode name first, then Bangumi (Chinese), then Simkl."""
         if mal_id and not self.down('mal'):
             try:
-                t = self._mal_title(mal_id, ep, title)
+                t = clean_ep_name(self._mal_title(mal_id, ep, title))
                 self._mark_up('mal')
                 if t and not _GENERIC_EP.match(t):
                     return t
             except Exception:
                 self._mark_down('mal')
         if mal_id:
-            bt = self.bangumi_titles(mal_id, title).get(str(ep))
+            bt = clean_ep_name(self.bangumi_titles(mal_id, title).get(str(ep)))
             if bt and not _GENERIC_EP.match(bt):
                 return bt
         key = f'simkl:{mal_id}' if mal_id else f'simkl:anilist:{anilist_id}'
         cache = _read(self.cfg.ep_titles, {})
-        st = cache.get(key, {}).get(str(ep))
+        st = clean_ep_name(cache.get(key, {}).get(str(ep)))
         if st:
             return st
         if self.simkl is not None and self.simkl.available() \
@@ -257,6 +258,7 @@ class Metadata:
             except Exception:
                 st = None
                 self._mark_down('simkl')
+            st = clean_ep_name(st)
             if st and not _GENERIC_EP.match(st):
                 cache.setdefault(key, {})[str(ep)] = st
                 _write(self.cfg.ep_titles, cache)
@@ -291,6 +293,7 @@ class Metadata:
         shows = cache.get(str(mal_id)) or {}
         before = len(shows)
         for n, t in eps.items():
+            t = clean_ep_name(t)
             if t and not _GENERIC_EP.match(t):
                 shows.setdefault(str(n), t)
         if len(shows) != before:
@@ -351,8 +354,9 @@ class Metadata:
         shows = cache.get(f'simkl:{mal_id}') or {}
         before = len(shows)
         for n, t in list(eps.items()):
-            if t and not _GENERIC_EP.match(str(t)):
-                shows.setdefault(str(n), str(t))
+            t = clean_ep_name(t)
+            if t and not _GENERIC_EP.match(t):
+                shows.setdefault(str(n), t)
         if len(shows) != before:
             cache[f'simkl:{mal_id}'] = shows
             _write(self.cfg.ep_titles, cache)
@@ -365,7 +369,9 @@ class Metadata:
         shows = cache.get(str(mal_id)) or {}
         before = len(shows)
         for n, t in titles.items():
-            shows.setdefault(str(n), t)   # keep the first name we ever saw
+            t = clean_ep_name(t)
+            if t and not _GENERIC_EP.match(t):
+                shows.setdefault(str(n), t)   # keep the first name we saw
         if len(shows) != before:
             shows.setdefault('_done', '1')
             cache[str(mal_id)] = shows

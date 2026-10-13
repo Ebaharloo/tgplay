@@ -120,9 +120,35 @@ def test_labels_translated():
     print('PASS labels translated to English')
 
 
+def test_release_date_prefix_cleaned():
+    """Bangumi names unaired episodes 'Release: 2026/09/03 15:00 GMT - name';
+    the episode list must show the NAME, never a date prefix."""
+    from tp.titles import clean_ep_name
+    assert clean_ep_name('Release: 2026/09/03 15:00 GMT - My Little Sis Is '
+                         'Popular, Nya') == 'My Little Sis Is Popular, Nya'
+    assert clean_ep_name('Release: 2026/09/03 - Kyoto Trip') == 'Kyoto Trip'
+    assert clean_ep_name('Release: 2026-09-03 15:00 UTC - X') == 'X'
+    assert clean_ep_name('Release: 2026/09/03 15:00 GMT') == ''  # date only
+    assert clean_ep_name('Normal Name') == 'Normal Name'
+
+    cfg = Config(home=tempfile.mkdtemp(prefix='tgplay-rel-')).ensure()
+    json.dump({'777': {'9': 'Release: 2026/09/03 15:00 GMT - Little Sis',
+                       '10': 'Already Fine'},
+               'simkl:777': {'11': 'Release: 2026/09/24 15:00 GMT - Final'}},
+              open(cfg.ep_titles, 'w'))
+    ts = TitleService(Metadata(cfg), cfg)
+    labels = ts.labels(777, {9: 'Episode 9', 10: 'Episode 10',
+                             11: 'Episode 11'})
+    assert labels[9] == 'Little Sis', labels          # legacy cache: cleaned
+    assert labels[10] == 'Already Fine', labels
+    assert labels[11] == 'Final', labels              # simkl key too
+    print('PASS release-date prefix stripped from episode names')
+
+
 def main():
     test_labels_instant()
     test_simkl_titles_merged()
+    test_release_date_prefix_cleaned()
     test_labels_translated()
     test_metadata_title_merge()
     test_retry_missing_each_run()

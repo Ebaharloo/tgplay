@@ -18,6 +18,30 @@ def _generic(t: str) -> bool:
     return bool(_GENERIC.match(t or ''))
 
 
+_RELEASE_PREFIX = re.compile(
+    r'^\s*(?:release|已播出?放送)\s*[:：]?\s*'
+    r'\d{4}[-/]\d{2}[-/]\d{2}'
+    r'(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?'
+    r'(?:\s*(?:GMT|UTC)\S*)?'
+    r'\s*[-–—]?\s*', re.I)
+# Bangumi writes unaired episodes as "Release: 2026/09/03 15:00 GMT - name";
+# the real name follows the dash (and sometimes a date is ALL it has).
+_RELEASE_ALL = re.compile(r'^\s*(?:release|放送)\s*[:：]?\s*'
+                          r'\d{4}[-/]\d{2}[-/]\d{2}(?:\s*[^\W\d_]{2,4})?'
+                          r'(?:\s+\d{1,2}:\d{2})?(?:\s*(?:GMT|UTC)\S*)?\s*$',
+                          re.I)
+
+
+def clean_ep_name(t) -> str:
+    """Strip the 'Release: date - ' prefix (and date-only names) from
+    episode titles; empty string when nothing is left."""
+    t = str(t or '').strip()
+    t = _RELEASE_PREFIX.sub('', t)
+    if _RELEASE_ALL.match(t):
+        return ''
+    return t.strip()
+
+
 class TitleService:
     def __init__(self, metadata, cfg):
         self.meta = metadata
@@ -38,10 +62,10 @@ class TitleService:
     def get(self, series, num: int) -> Optional[str]:
         c = self._cache()
         for key in (f'simkl:{series}', str(series)):
-            t = c.get(key, {}).get(str(num))
+            t = clean_ep_name(c.get(key, {}).get(str(num)))
             if t and t != '?' and not _generic(t):
                 en = self._trans().get(t, t) if has_cjk(t) else t
-                return en if not _generic(en) else None
+                return clean_ep_name(en) if en and not _generic(en) else None
         return None
 
     def labels(self, series, eps: Dict[int, str]) -> Dict[int, str]:
@@ -53,11 +77,12 @@ class TitleService:
         c = self._cache()
         tr = self._trans()
         for n in eps:
-            t = (c.get(f'simkl:{series}', {}).get(str(n))
-                 or c.get(str(series), {}).get(str(n)))
+            t = clean_ep_name(
+                (c.get(f'simkl:{series}', {}).get(str(n))
+                 or c.get(str(series), {}).get(str(n))))
             if not t or t == '?' or _generic(t):
                 continue
-            en = tr.get(t, t) if has_cjk(t) else t
+            en = clean_ep_name(tr.get(t, t) if has_cjk(t) else t)
             if en and not _generic(en):
                 out[n] = en
         return out
