@@ -63,7 +63,7 @@ def test_opts_precedence():
 def test_loader_delegates():
     opened = {}
 
-    def fake_open(src, target, cfg, http, opts=None, mpv=None):
+    def fake_open(src, target, cfg, http, opts=None, mpv=None, **kw):
         opened['args'] = (src, target, opts, mpv)
         return 'SESSION'
 

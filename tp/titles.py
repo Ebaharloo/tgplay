@@ -91,28 +91,31 @@ class TitleService:
         `series` must be a resolved identifier (the MAL id) — id-pinning
         upstream decides WHICH series these names belong to.
 
-        PAINT GUARD: names are painted by episode NUMBER, so they may only
-        be applied when the stored list lines up with this page (same
-        episode count). An id pinned by search fixes WHICH entry the names
-        come from, but never guarantees the site page and that entry number
-        their episodes the same way (a merged 48-ep page vs a 17-ep S1
-        list would paint season 1's names onto the wrong episodes). When
-        the numbers do not line up, nothing is painted — placeholders are
-        honest, wrong names are not."""
+        PAINT RULE: names are painted by episode NUMBER, so they apply only
+        when the cached list COVERS every number on this page (site pages
+        are often the first part of an arc - a 8-ep page under a 9-name list
+        is a correct prefix). A page LONGER than the cache is a merged /
+        later-season split we cannot align - paint NOTHING there, placeholders
+        are honest, wrong names are not."""
         out = dict(eps)
         if series is None:
             return out
-        if self.cache_count(series) != len(eps):
-            return out                      # numbering mismatch: do not paint
         c = self._cache()
         tr = self._trans()
+        # merged usable names per number, best key wins (bgm > simkl > legacy)
+        merged: Dict[int, str] = {}
+        for key in (f'bgm:{series}', f'simkl:{series}', str(series)):
+            for k, v in (c.get(key) or {}).items():
+                if not k.isdigit():
+                    continue
+                t = clean_ep_name(v)
+                if t and t != '?' and not _generic(t):
+                    merged.setdefault(int(k), t)
+        if not all(n in merged for n in eps):
+            return out                       # not fully covered: no painting
         for n in eps:
-            t = None
-            for key in (f'bgm:{series}', f'simkl:{series}', str(series)):
-                t = clean_ep_name(c.get(key, {}).get(str(n)))
-                if t and not _generic(t):
-                    break
-            if not t or t == '?' or _generic(t):
+            t = merged.get(n)
+            if not t:
                 continue
             en = clean_ep_name(tr.get(t, t) if has_cjk(t) else t)
             if en and not _generic(en):

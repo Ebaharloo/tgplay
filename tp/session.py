@@ -29,11 +29,14 @@ class SessionLoader:
     """
 
     def __init__(self, cfg, http, base_opts: dict = None,
-                 base_mpv: List[str] = None):
+                 base_mpv: List[str] = None, wait_titles: bool = True):
         self.cfg = cfg
         self.http = http
         self.base_opts = dict(base_opts or {})
         self.base_mpv = list(base_mpv or [])
+        # the window draws labels right away: a brief wait (<=5 s) on the
+        # FIRST open means real names now instead of placeholders next time
+        self.wait_titles = wait_titles
 
     def opts_for(self, src: str):
         """(opts, mpv) for a source: base + remembered setup for `src`."""
@@ -46,7 +49,7 @@ class SessionLoader:
     def __call__(self, src, target):
         o, m = self.opts_for(str(src or 'agp'))
         return open_session(str(src or 'agp'), target, self.cfg, self.http,
-                            o, m)
+                            o, m, wait_titles=self.wait_titles)
 
 
 def make_loader(cfg, http) -> SessionLoader:

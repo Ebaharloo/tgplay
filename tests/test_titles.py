@@ -22,10 +22,13 @@ def test_labels_instant():
     eps = {1: 'قسمت: 1', 2: 'قسمت: 2', 3: 'قسمت: 3'}
     got = ts.labels(51289, eps)
     assert got[1] == 'One' and got[2] == 'Two' and got[3] == 'Three', got
-    # mismatched count (a merged 2-ep page) paints NOTHING - placeholders keep
-    # the show honest instead of showing another season's names
+    # coverage rule: a page SHORTER than the cached list (site shows the
+    # first part of an arc) paints fully - correct prefix alignment
     got2 = ts.labels(51289, {1: 'Episode 1', 2: 'Episode 2'})
-    assert got2[1] == 'Episode 1' and got2[2] == 'Episode 2', got2
+    assert got2[1] == 'One' and got2[2] == 'Two', got2
+    # a page LONGER than the cache cannot be aligned: paint NOTHING
+    got4 = ts.labels(51289, {n: f'Episode {n}' for n in range(1, 6)})
+    assert got4 == {n: f'Episode {n}' for n in range(1, 6)}, got4
     assert ts.get(51289, 2) == 'Two' and ts.get(51289, 9) is None
     # chinese-numbering rows (第一百六十六集) are generic - never painted
     json.dump({'777': {'1': '第一百六十六集', '2': '第一百六十七集'}},
