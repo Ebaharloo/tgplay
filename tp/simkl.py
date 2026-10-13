@@ -31,13 +31,18 @@ _OPENER = urllib.request.build_opener(_NoRedirect)
 
 
 def _dig(obj, key):
-    """Pull `key` out of ids{...} from a Simkl search/redirect response."""
+    """Pull `key` out of ids{...} from a Simkl search/redirect response.
+
+    The API names it inconsistently: /redirect & /search/id use 'simkl',
+    /search/anime uses 'simkl_id' - accept both (missing this made
+    title-query resolve silently return None)."""
     if isinstance(obj, list):
         obj = obj[0] if obj else None
     if isinstance(obj, dict):
         ids = obj.get('ids') or {}
-        if key in ids:
-            return ids[key]
+        for k in (key, f'{key}_id'):
+            if k in ids:
+                return ids[k]
         if key in obj:
             return obj[key]
     return None

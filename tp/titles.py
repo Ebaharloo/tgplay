@@ -11,7 +11,8 @@ from typing import Dict, Optional
 from .translate import has_cjk
 
 _GENERIC = re.compile(
-    r'^\s*(episode\s*\d+|ep\s*\d+|第?\s*\d+\s*[集话話話])[\s.:。-]*$', re.I)
+    r'^\s*(episode\s*\d+|ep\s*\d+|第?\s*\d+\s*[集话話回]|'
+    r'第\s*[零〇一二三四五六七八九十百千两]+\s*[集话話回])[\s.:。-]*$', re.I)
 
 
 def _generic(t: str) -> bool:
@@ -69,29 +70,40 @@ class TitleService:
         return None
 
     def cache_count(self, series) -> int:
-        """How many numbered episode names the cache holds for `series`
-        (any key). 0 when nothing usable is stored."""
+        """How many episode NUMBERS the cache holds real names for, across
+        all keys (bgm/simkl/legacy) as a UNION - so names spread over
+        several sources still count together. This is the painting guard's
+        denominator: a page is only painted when the cache covers exactly
+        its set of episode numbers."""
         c = self._cache()
-        best = 0
+        covered = set()
         for key in (f'bgm:{series}', f'simkl:{series}', str(series)):
-            rows = c.get(key) or {}
-            n = sum(1 for k, v in rows.items()
-                    if k.isdigit() and clean_ep_name(v)
-                    and not _generic(clean_ep_name(v)))
-            best = max(best, n)
-        return best
+            for k, v in (c.get(key) or {}).items():
+                if k.isdigit() and clean_ep_name(v) \
+                        and not _generic(clean_ep_name(v)):
+                    covered.add(int(k))
+        return len(covered)
 
     def labels(self, series, eps: Dict[int, str]) -> Dict[int, str]:
         """Cached titles now (instant); generic 'Episode N' is ignored so the
         caller's fallback shows instead; Chinese is translated when cached.
 
         `series` must be a resolved identifier (the MAL id) — id-pinning
-        upstream decides WHICH series these names belong to. Bangumi
-        (Chinese + translator) is read first, then Simkl, then the legacy
-        key, so old junk rows can't shadow the better data."""
+        upstream decides WHICH series these names belong to.
+
+        PAINT GUARD: names are painted by episode NUMBER, so they may only
+        be applied when the stored list lines up with this page (same
+        episode count). An id pinned by search fixes WHICH entry the names
+        come from, but never guarantees the site page and that entry number
+        their episodes the same way (a merged 48-ep page vs a 17-ep S1
+        list would paint season 1's names onto the wrong episodes). When
+        the numbers do not line up, nothing is painted — placeholders are
+        honest, wrong names are not."""
         out = dict(eps)
         if series is None:
             return out
+        if self.cache_count(series) != len(eps):
+            return out                      # numbering mismatch: do not paint
         c = self._cache()
         tr = self._trans()
         for n in eps:

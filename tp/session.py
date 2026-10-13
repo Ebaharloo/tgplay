@@ -162,16 +162,14 @@ class Session:
         return f'ep {ep}   {mm:02d}:{ss:02d}'
 
 
-def _safe_mal(meta, title, eps_count: int = None, titles=None):
+def _safe_mal(meta, title):
+    """Fuzzy title -> MAL id (never raises); the found id is pinned to the
+    link by the caller. Whether its names may be PAINTED onto a page is
+    decided by the paint guard in TitleService.labels()."""
     try:
         mal = meta.cached_mal(title)
-        if mal is not None and eps_count is not None and titles is not None \
-                and titles.cache_count(mal) != eps_count:
-            # stale wrong-season cache entry (a compilation page remembered
-            # under season 1's id): drop it, resolve again by episode count
-            mal = None
         if mal is None:
-            mal = meta.resolve_mal(title, ask=False, eps_count=eps_count)
+            mal = meta.resolve_mal(title, ask=False)
         return mal
     except Exception:
         return None
@@ -230,6 +228,14 @@ def open_session(src: str, target: str, cfg, http, opts: dict = None,
         if mal:
             labels = titles.labels(mal, labels)
             meta.remember_link_mal(str(target), mal)
+            missing_now = [n for n in labels
+                           if str(labels[n]).startswith('Episode ')]
+            if missing_now and len(missing_now) == len(labels):
+                cached = titles.cache_count(mal)
+                if cached and cached != len(labels):
+                    log.cprint(f'titles: kept clean - MAL lists {cached} '
+                               f'episodes but this page has {len(labels)}; '
+                               'painting would mix seasons')
         missing = [n for n in labels if str(labels[n]).startswith('Episode ')]
         if missing and mal:
             log.cprint(f'titles: looking up {len(missing)} missing '
@@ -272,6 +278,13 @@ def open_session(src: str, target: str, cfg, http, opts: dict = None,
         labels = titles.labels(mal, {n: f'Episode {n}' for n in eps})
         missing = [n for n in labels
                    if str(labels[n]).startswith('Episode ')]
+        if mal and missing and len(missing) == len(labels):
+            cached = titles.cache_count(mal)
+            if cached and cached != len(eps):
+                log.cprint(f'titles: kept clean - MAL lists {cached} '
+                           f'episodes but this page has {len(eps)}; painting '
+                           'would mix seasons (pick the per-season link to '
+                           'get the right names)')
         th = None
         if missing and mal:
             log.cprint(f'titles: looking up {len(missing)} missing '

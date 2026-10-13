@@ -99,10 +99,15 @@ def test_sidebar_click_shows_source_choices():
          'source': 'agp'},
         {'title': 'Totally Different Thing', 'url': 'agp:wrong',
          'source': 'agp'},
-        {'title': 'Exact Show', 'url': 'axp:ok', 'source': 'axp'},
+        {'title': 'Exact Show', 'url': 'axp:ok', 'source': 'axp',
+         'malId': '46000'},
     ]
+    import tp.finder as finder_mod
     orig_search = search_mod.search_all
+    orig_one = finder_mod.ShowFinder._search_one
     search_mod.search_all = lambda *a, **k: list(fake)
+    finder_mod.ShowFinder._search_one = staticmethod(
+        lambda src, name: [r for r in fake if r['source'] == src])
     orig_sink = tp_log.SINK
     try:
         from tp import gui_all
@@ -137,6 +142,7 @@ def test_sidebar_click_shows_source_choices():
         assert w.state['session'] is not None
     finally:
         search_mod.search_all = orig_search
+        finder_mod.ShowFinder._search_one = orig_one
         tp_log.SINK = orig_sink
         try:
             w.state['closing'] = True

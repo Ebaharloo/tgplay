@@ -14,13 +14,25 @@ from tp.titles import TitleService  # noqa: E402
 
 def test_labels_instant():
     cfg = Config(home=tempfile.mkdtemp(prefix='tgplay-labels-')).ensure()
-    json.dump({'51289': {'1': 'One', '2': 'Two'}}, open(cfg.ep_titles, 'w'))
+    # painting guard: names apply only when the cached list lines up with
+    # this page's episode count (an id pins WHICH entry, not the numbering)
+    json.dump({'51289': {'1': 'One', '2': 'Two', '3': 'Three'}},
+              open(cfg.ep_titles, 'w'))
     ts = TitleService(Metadata(cfg), cfg)
     eps = {1: 'قسمت: 1', 2: 'قسمت: 2', 3: 'قسمت: 3'}
     got = ts.labels(51289, eps)
-    assert got[1] == 'One' and got[2] == 'Two' and got[3] == 'قسمت: 3', got
+    assert got[1] == 'One' and got[2] == 'Two' and got[3] == 'Three', got
+    # mismatched count (a merged 2-ep page) paints NOTHING - placeholders keep
+    # the show honest instead of showing another season's names
+    got2 = ts.labels(51289, {1: 'Episode 1', 2: 'Episode 2'})
+    assert got2[1] == 'Episode 1' and got2[2] == 'Episode 2', got2
     assert ts.get(51289, 2) == 'Two' and ts.get(51289, 9) is None
-    print('PASS labels instant from cache')
+    # chinese-numbering rows (第一百六十六集) are generic - never painted
+    json.dump({'777': {'1': '第一百六十六集', '2': '第一百六十七集'}},
+              open(cfg.ep_titles, 'w'))
+    got3 = ts.labels(777, {1: 'Episode 1', 2: 'Episode 2'})
+    assert got3 == {1: 'Episode 1', 2: 'Episode 2'}, got3
+    print('PASS labels instant (guarded painting) + generic CJK skipped')
 
 
 def test_simkl_titles_merged():
@@ -51,13 +63,19 @@ def test_simkl_titles_merged():
     assert merged == {'1': 'Real Name One', '3': 'Real Name 3'}, merged \
         # generic 'Episode 2' is never stored
     ts = TitleService(m, cfg)
-    labels = ts.labels(46000, {1: 'Episode 1', 2: 'Episode 2', 3: 'Episode 3'})
+    # paint guard: names may only be painted when the cached numbers line
+    # up with the page; the merged list covers {1,3} so a matching 2-ep
+    # page gets them...
+    labels = ts.labels(46000, {1: 'Episode 1', 3: 'Episode 3'})
     assert labels[1] == 'Real Name One' and labels[3] == 'Real Name 3', labels
-    assert labels[2] == 'Episode 2', labels        # generic stays placeholder
+    # ...while a 3-ep page (different numbering) paints NOTHING - no mixing
+    labels2 = ts.labels(46000, {1: 'Episode 1', 2: 'Episode 2',
+                                3: 'Episode 3'})
+    assert labels2 == {1: 'Episode 1', 2: 'Episode 2', 3: 'Episode 3'}, labels2
     # names already cached are never overwritten (the merge-once rule)
     SanityCheck = m.simkl_titles(46000)
     assert SanityCheck[1] == 'Real Name One'
-    print('PASS Simkl episode names merged + read by labels')
+    print('PASS Simkl episode names merged + paint-guard honored')
 
 
 def test_metadata_title_merge():

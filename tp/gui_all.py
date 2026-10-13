@@ -668,8 +668,9 @@ class MainWindow(W.QWidget):
     def _run_search(self, text):
         def work():
             try:
-                from .search import search_all
-                self._rq.put(search_all(text, sources=('agp', 'axp')) or [])
+                from .finder import ShowFinder
+                self._rq.put(ShowFinder(self._cfg, self._http).find(
+                    title=text) or [])
             except Exception:
                 self._rq.put([])
         threading.Thread(target=work, daemon=True).start()
@@ -685,15 +686,17 @@ class MainWindow(W.QWidget):
                 it.setText(f'🔎  {title}     ·     recent search')
             else:
                 url = e.get('url')
+                tag = ' · ✓ same id' if e.get('matched') == 'id' else ''
                 # show the anime name — the raw link stays in the tooltip
                 # and in the right-click 'Copy link / Open in browser'
-                it.setText(f"{title}     ·     {e.get('source', '')}")
+                it.setText(f"{title}     ·     {e.get('source', '')}{tag}")
                 if url:
                     it.setToolTip(str(url))
             it.setData(C.Qt.UserRole, e.get('url'))
             it.setData(C.Qt.UserRole + 1, e.get('source'))
             it.setData(C.Qt.UserRole + 2, title)
             it.setData(C.Qt.UserRole + 3, kind)
+            it.setData(C.Qt.UserRole + 4, e.get('ids') or {})
             self.results.addItem(it)
         self.results.setVisible(bool(items))
         self.res_stack.setVisible(bool(items))
@@ -757,9 +760,26 @@ class MainWindow(W.QWidget):
                 history.add(self._cfg, query=q)
             elif self._cfg is not None and not q:
                 history.add(self._cfg, link=target)  # record it NOW
+            self._pin_ids(item, str(target))
             # keep the results list visible: if this source has nothing
             # playable (NoServersYet), the user picks the next row
             self.load_target(str(src), str(target))
+
+    def _pin_ids(self, item, target: str):
+        """Write the candidate's MAL id onto the link BEFORE loading, so
+        open_session paints episode names from the RIGHT entry — not from a
+        fuzzy title guess of some other season."""
+        try:
+            ids = item.data(C.Qt.UserRole + 4)
+        except Exception:
+            ids = None
+        if not ids or self._cfg is None:
+            return
+        try:
+            from .finder import ShowFinder
+            ShowFinder(self._cfg, self._http).pin({'url': target, 'ids': ids})
+        except Exception:
+            pass
 
     def _accept_typed(self):
         from .cli_all import route
@@ -864,14 +884,20 @@ class MainWindow(W.QWidget):
         self.state['msg'] = f"searching “{e['title']}” on our sources…"
 
         def work():
-            # the Simkl name is not our sites' name: search the full title,
-            # then the base name (season/movie variants) so the site's own
-            # naming (e.g. 'Fanren Xiu Xian Zhuan …') shows up to pick from
+            # the row carries real ids (mal/anilist/simkl): the finder
+            # searches by them (AnimeX answers by id exactly) and by the
+            # site's own name forms from the Simkl record - no title guess.
             try:
-                from .library import search_variants
-                res = search_variants(e['title'], self._http)
+                from .finder import ShowFinder
+                res = ShowFinder(self._cfg, self._http).find(entry=e)
             except Exception:
                 res = None
+            if not res:                      # fallback: old name search
+                try:
+                    from .library import search_variants
+                    res = search_variants(e['title'], self._http)
+                except Exception:
+                    res = None
             self._libq.put(('show-results', e, res))
         threading.Thread(target=work, daemon=True).start()
 
