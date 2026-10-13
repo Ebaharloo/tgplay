@@ -135,6 +135,7 @@ class AnimeGateProvider(Provider):
         self.group = None
         self.groups = None
         self._loaded = False
+        self._sizes: Dict[int, int] = {}
         self._eps: Dict[int, str] = {}
         self._aid = self._gid = self._csrf = None
         self._cs: Dict[str, str] = {}
@@ -185,6 +186,22 @@ class AnimeGateProvider(Provider):
             self.load()
         return {k: (self._labels.get(k) or f'Episode {k}')
                 for k in sorted(self._eps)}
+
+    def size(self, num: int) -> int:
+        """File size in bytes for `num` (probes the signed CDN link once,
+        then caches; 0 when unknown/unprobed)."""
+        try:
+            if not self._loaded:
+                self.load()
+            if num not in self._eps:
+                return 0
+            if self._sizes.get(num) is None:
+                src = HttpSource(self._eps[num], headers=hdrs(self._cs),
+                                 http=self.http)
+                self._sizes[num] = src.size or 0
+            return int(self._sizes.get(num) or 0)
+        except Exception:
+            return 0
 
     def stream(self, num: int) -> HttpSource:
         if not self._loaded:

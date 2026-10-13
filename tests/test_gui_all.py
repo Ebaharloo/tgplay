@@ -17,6 +17,7 @@ class FakeSession:
         self.groups = groups
         self.labels = labels
         self.resume = None
+        self.src = 'agp'
         self.opts = {'skip': 'all',
                      'f': groups[0]['label'] if groups else None,
                      'audio': 'dub'}
@@ -78,7 +79,9 @@ def test_sidebar_click_shows_source_choices():
     made = {}
 
     class FakeSession:
-        title, groups, labels, resume = 'Exact Show', [{'label': 'X'}], {1: 'Ep'}, None
+        title, groups, labels, resume = ('Exact Show', [{'label': 'X'}],
+                                         {1: 'Ep'}, None)
+        src = 'agp'
         opts, mpv, audio, link = {}, [], [], None
 
         def play(self, c, o, m): pass
@@ -118,12 +121,16 @@ def test_sidebar_click_shows_source_choices():
         assert (it.data(C_QT_UserRole(w)) == 'axp:ok'), fake
         assert 'Exact Show' in it.text()
         assert w.state['session'] is None, 'nothing must auto-load'
-        # the LINK of each source is visible on its row (so the user can
-        # see the exact page per service before choosing)
+        # rows show ANIME NAMES (site titles), not raw links; the link is
+        # kept in the tooltip (right-click: copy / open)
         for i in range(w.results.count()):
             it = w.results.item(i)
-            assert it.data(C_QT_UserRole(w)) and \
-                f"↳ {it.data(C_QT_UserRole(w))}" in it.text(), it.text()
+            u = it.data(C_QT_UserRole(w))
+            assert u and it.toolTip() == u, (it.text(), u)
+            assert it.text().strip(), it.text()      # a name, not a URL
+            assert '://' not in it.text() and not it.text().startswith('axp:')
+        best = w.results.item(0)
+        assert 'Exact Show' in best.text(), best.text()   # best match first
         # the user picks: click the agp row
         w._pick_result(w.results.item(1))
         assert 'agp:ok' in made, made      # the CHOSEN source got loaded

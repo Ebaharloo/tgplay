@@ -26,7 +26,7 @@ from .titles import clean_ep_name
 
 ANILIST = 'https://graphql.anilist.co'
 _SEARCH = ('query($s:String){Page(page:1,perPage:8){media(search:$s,type:ANIME){'
-           'idMal title{romaji english native} synonyms}}}')
+           'idMal episodes title{romaji english native} synonyms}}}')
 _GENERIC_EP = re.compile(
     r'^\s*(episode\s*\d+|ep\s*\d+|第?\s*\d+\s*[集话話話])[\s.:。-]*$', re.I)
 _MAL_SEARCH = 'https://myanimelist.net/search/prefix.json'
@@ -168,11 +168,32 @@ class Metadata:
 
     def resolve_mal(self, title: str, ask: bool = True, prompt=None
                     ) -> Optional[int]:
-        """Cached title -> MAL id. MAL search first, AniList as fallback."""
+        """Fuzzy title -> MAL id (MAL search first, AniList scored fallback).
+
+        The result is pinned to the link by the caller (`remember_link_mal`),
+        so the same page always keeps the same id."""
         cache = _read(self.cfg.mal_ids, {})
         for k, v in cache.items():
             if k.casefold() == title.casefold():
                 return v
+        # AniList scored candidates (also used by callers with a prompt)
+        scored = []
+        if not self.down('anilist'):
+            try:
+                media = self._post(_SEARCH,
+                                   {'s': title})['data']['Page']['media']
+                self._mark_up('anilist')
+                for m in media or []:
+                    if not m.get('idMal'):
+                        continue
+                    names = [v for v in m['title'].values() if v]
+                    names += [s for s in (m.get('synonyms') or []) if s]
+                    best = max((difflib.SequenceMatcher(
+                        None, title.casefold(), n.casefold()).ratio()
+                        for n in names), default=0.0)
+                    scored.append((best, m['idMal'], names))
+            except Exception:
+                self._mark_down('anilist')
         # MAL (primary)
         if not self.down('mal'):
             try:
@@ -183,27 +204,9 @@ class Metadata:
                     return mid
             except Exception:
                 self._mark_down('mal')
-        # AniList (fallback)
-        if self.down('anilist'):
-            return None
-        try:
-            media = self._post(_SEARCH, {'s': title})['data']['Page']['media']
-            self._mark_up('anilist')
-        except Exception:
-            self._mark_down('anilist')
-            return None
-        scored = []
-        for m in media:
-            if not m.get('idMal'):
-                continue
-            names = [v for v in m['title'].values() if v]
-            names += [s for s in (m.get('synonyms') or []) if s]
-            best = max(difflib.SequenceMatcher(
-                None, title.casefold(), n.casefold()).ratio() for n in names)
-            scored.append((best, m['idMal'], names))
-        scored.sort(reverse=True)
         if not scored:
             return None
+        scored.sort(reverse=True)
         top = scored[0]
         if top[0] >= 0.85 or (len(scored) == 1 and top[0] >= 0.6):
             self._remember(title, top[1])
@@ -214,6 +217,17 @@ class Metadata:
                 self._remember(title, pick)
                 return pick
         return None
+
+    # --- per-link id pinning (an id found once sticks to the page) ------
+    def link_mal(self, link: str) -> Optional[int]:
+        return _read(self.cfg.mal_ids, {}).get(f'link:{str(link)}')
+
+    def remember_link_mal(self, link: str, mal_id) -> None:
+        cache = _read(self.cfg.mal_ids, {})
+        key = f'link:{str(link)}'
+        if cache.get(key) != mal_id:
+            cache[key] = mal_id
+            _write(self.cfg.mal_ids, cache)
 
     def _post(self, query, variables):
         req = self.http.request(ANILIST, method='POST',

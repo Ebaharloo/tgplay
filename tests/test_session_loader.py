@@ -33,6 +33,7 @@ class Cfg:
         self.tg_session = ''
         self.translations = os.path.join(os.path.dirname(p), 'translations.json')
         self.ep_titles = os.path.join(os.path.dirname(p), 'ep_titles.json')
+        self.mal_ids = os.path.join(os.path.dirname(p), 'mal_ids.json')
 
 
 def test_opts_precedence():
@@ -89,7 +90,9 @@ def test_unified_window():
     from tp import gui_all
 
     class FakeSession:
-        title, groups, labels, resume = 'ok', [{'label': '720p'}], {1: 'Ep'}, None
+        title, groups, labels, resume = ('ok', [{'label': '720p'}],
+                                         {1: 'Ep'}, None)
+        src = 'agp'
         opts, mpv, audio, link = {}, [], [], 'https://x'
 
         def play(self, c, o, m): pass

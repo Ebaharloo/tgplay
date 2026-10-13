@@ -24,6 +24,11 @@ class Provider(ABC):
         sources; re-selecting a narrowed Telegram view would renumber it)."""
         return self
 
+    def size(self, num: int) -> int:
+        """File size of episode `num` in bytes (0 = unknown/not fixed,
+        e.g. the HLS DirectSource AnimeX plays through mpv)."""
+        return 0
+
     def display_name(self, num: int):
         """Optional human/file name for an episode (None -> derive it)."""
         return None

@@ -230,6 +230,15 @@ class TelegramProvider(_TelegramBase, Provider):
             self.load()
         return self._view[num - 1][1]
 
+    def size(self, num: int) -> int:
+        """Real Telegram file size (known from the message document)."""
+        if not self._loaded:
+            self.load()
+        try:
+            return int(self._view[num - 1][2])
+        except Exception:
+            return 0
+
     def stream(self, num: int) -> TelegramSource:
         if not self._loaded:
             self.load()
@@ -280,6 +289,12 @@ class SingleFileProvider(_TelegramBase, Provider):
         if not self._loaded:
             self.load()
         return TelegramSource(self.client, self.loop, self._msg, self._size)
+
+    def size(self, num: int) -> int:
+        """The single Telegram file's size in bytes (0 when unknown)."""
+        if not self._loaded:
+            self.load()
+        return int(self._size or 0)
 
 
 def _doc_name(doc) -> str:

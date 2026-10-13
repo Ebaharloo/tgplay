@@ -162,11 +162,16 @@ class Session:
         return f'ep {ep}   {mm:02d}:{ss:02d}'
 
 
-def _safe_mal(meta, title):
+def _safe_mal(meta, title, eps_count: int = None, titles=None):
     try:
         mal = meta.cached_mal(title)
+        if mal is not None and eps_count is not None and titles is not None \
+                and titles.cache_count(mal) != eps_count:
+            # stale wrong-season cache entry (a compilation page remembered
+            # under season 1's id): drop it, resolve again by episode count
+            mal = None
         if mal is None:
-            mal = meta.resolve_mal(title, ask=False)
+            mal = meta.resolve_mal(title, ask=False, eps_count=eps_count)
         return mal
     except Exception:
         return None
@@ -217,26 +222,29 @@ def open_session(src: str, target: str, cfg, http, opts: dict = None,
                   for n, t in dict(prov.episodes()).items()}
         audio = True
         # SAME name sync as AGP: the AnimeX API usually only serves generic
-        # 'Episode N' - fill real names from the MAL/Simkl episode cache
-        mal = _safe_mal(meta, prov.title)
+        # 'Episode N' - fill real names from the MAL/Simkl episode cache.
+        # The provider carries the EXACT MAL id of the entry (AnimeX gives
+        # us malId); the id is pinned to the link so it never re-resolves.
+        mal = getattr(prov, 'mal_id', None) or meta.link_mal(str(target)) \
+            or _safe_mal(meta, prov.title)
         if mal:
             labels = titles.labels(mal, labels)
-            missing = [n for n in labels
-                       if str(labels[n]).startswith('Episode ')]
-            if missing:
-                log.cprint(f'titles: looking up {len(missing)} missing '
-                           'episode name(s)...')
-                ax_th = threading.Thread(
-                    target=lambda: meta.refresh_titles(mal, prov.title),
-                    daemon=True)
-                ax_th.start()
-                if wait_titles:              # the curses menu wants names NOW
-                    ax_th.join(timeout=5)
-                    if ax_th.is_alive():
-                        log.cprint('titles: still fetching names in the '
-                                   'background (they will show next time)')
-                labels = titles.labels(mal, labels)      # re-read post-join
-                meta._refreshed.add(mal)
+            meta.remember_link_mal(str(target), mal)
+        missing = [n for n in labels if str(labels[n]).startswith('Episode ')]
+        if missing and mal:
+            log.cprint(f'titles: looking up {len(missing)} missing '
+                       'episode name(s)...')
+            ax_th = threading.Thread(
+                target=lambda: meta.refresh_titles(mal, prov.title),
+                daemon=True)
+            ax_th.start()
+            if wait_titles:              # the curses menu wants names NOW
+                ax_th.join(timeout=5)
+                if ax_th.is_alive():
+                    log.cprint('titles: still fetching names in the '
+                               'background (they will show next time)')
+            labels = titles.labels(mal, labels)      # re-read post-join
+            meta._refreshed.add(mal)
     elif src in ('tg', 'tgp'):
         from .providers.telegram import SingleFileProvider, TelegramProvider
         chat, msg_id = _telegram_target(target)
@@ -258,10 +266,14 @@ def open_session(src: str, target: str, cfg, http, opts: dict = None,
         prov.fetch_groups()
         prov.select(opts.get('f'))
         eps = prov.episodes()
-        mal = _safe_mal(meta, prov.title)
-        missing = [n for n in eps if mal and titles.get(mal, n) is None]
+        # MAL id: pinned link id first, else fuzzy title resolution — find
+        # it once and it sticks to this page forever
+        mal = meta.link_mal(str(target)) or _safe_mal(meta, prov.title)
+        labels = titles.labels(mal, {n: f'Episode {n}' for n in eps})
+        missing = [n for n in labels
+                   if str(labels[n]).startswith('Episode ')]
         th = None
-        if missing:
+        if missing and mal:
             log.cprint(f'titles: looking up {len(missing)} missing '
                        'episode name(s)...')
             th = threading.Thread(
@@ -273,9 +285,10 @@ def open_session(src: str, target: str, cfg, http, opts: dict = None,
                 if th.is_alive():
                     log.cprint('titles: still fetching names in the '
                                'background (they will show next time)')
-            if mal:
-                meta._refreshed.add(mal)
-        labels = titles.labels(mal, {n: f'Episode {n}' for n in eps})
+            labels = titles.labels(mal, {n: f'Episode {n}' for n in eps})
+            meta._refreshed.add(mal)
+        if mal:
+            meta.remember_link_mal(str(target), mal)
         groups = prov.groups
         audio = False
 

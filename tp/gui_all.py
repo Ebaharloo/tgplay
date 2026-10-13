@@ -55,6 +55,19 @@ def _fmt_date(s) -> str:
         return str(s)[:10]
 
 
+def _fmt_size(b: int) -> str:
+    """Episode file size, human readable ('2.1GB', '740MB'); '—' unknown."""
+    b = int(b or 0)
+    if not b:
+        return '—'
+    for unit, div in (('TB', 1024 ** 4), ('GB', 1024 ** 3), ('MB', 1024 ** 2),
+                      ('KB', 1024)):
+        if b >= div:
+            return f'{b / div:.1f}{unit}'
+    return f'{b}B'
+
+
+
 class _SortItem(W.QTableWidgetItem):
     """Sorts by the numeric/string key in UserRole, not the shown text."""
 
@@ -350,8 +363,8 @@ class MainWindow(W.QWidget):
     def _build_episodes(self, root: W.QLayout, outer: W.QLayout):
         self.ebox = W.QGroupBox('Episodes')
         ev = W.QVBoxLayout(self.ebox)
-        self.table = W.QTableWidget(0, 2)
-        self.table.setHorizontalHeaderLabels(['#', 'Episode name'])
+        self.table = W.QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(['#', 'Episode name', 'Size'])
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(W.QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(W.QAbstractItemView.SelectRows)
@@ -361,6 +374,7 @@ class MainWindow(W.QWidget):
         hdr = self.table.horizontalHeader()
         hdr.setSectionResizeMode(0, W.QHeaderView.ResizeToContents)
         hdr.setSectionResizeMode(1, W.QHeaderView.Stretch)
+        hdr.setSectionResizeMode(2, W.QHeaderView.ResizeToContents)
         ev.addWidget(self.table)
         root.addWidget(self.ebox, 1)
 
@@ -538,6 +552,8 @@ class MainWindow(W.QWidget):
             self.table.setItem(i, 0, it0)
             self.table.setItem(i, 1, W.QTableWidgetItem(
                 s.labels.get(n, f'Episode {n}')))
+            self.table.setItem(i, 2, W.QTableWidgetItem(
+                '—' if s.src in ('axp',) else '…'))
         self.ebox.setTitle(f'Episodes ({len(nums)})')
         if nums:
             row = nums.index(s.resume[0]) if (s.resume and
@@ -545,14 +561,37 @@ class MainWindow(W.QWidget):
             self.table.selectRow(row)
             self.table.setCurrentCell(row, 1)
             self.table.scrollToItem(self.table.item(row, 1))
+        self._probe_sizes(s)
+
+    def _probe_sizes(self, s):
+        """Fill the Size column from the provider (AGP probes its signed
+        CDN links in a background thread; Telegram/TGP know right away;
+        AnimeX is HLS - no size)."""
+        if s is None or s.src == 'axp' or s.src not in ('agp', 'tg', 'tgp'):
+            return
+        nums = sorted(s.labels)
+
+        def work():
+            for n in nums:
+                if self.state.get('closing') or \
+                        self.state['session'] is not s:
+                    return                          # the show changed / closed
+                try:
+                    sz = int(s.provider.size(n) or 0)
+                except Exception:
+                    sz = 0
+                self._libq.put(('size', s, n, sz))
+        threading.Thread(target=work, daemon=True).start()
 
     def load_target(self, src, target):
         if self.state.get('loading'):
             return                          # ignore repeat clicks while loading
         self.state['loading'] = True
-        self.state['msg'] = f'loading  {target} …'
+        nice = (history.name_of(self._cfg, target)
+                if self._cfg is not None else None) or target
+        self.state['msg'] = f'loading  {nice} …'
         try:
-            self.head.setText(f'loading  {target} …')
+            self.head.setText(f'loading  {nice} …')
         except Exception:
             pass
         try:
@@ -571,9 +610,9 @@ class MainWindow(W.QWidget):
             self.res_stack.setCurrentWidget(self.results)
             return
         self.state['loading'] = False
-        if self._cfg is not None:
-            history.add(self._cfg, link=target)
         self.set_session(s)
+        if self._cfg is not None:
+            history.add(self._cfg, link=target, name=s.title)
         # success: tidy the results area (the session is up in its place)
         self.box.blockSignals(True)
         self.box.clear()
@@ -581,7 +620,6 @@ class MainWindow(W.QWidget):
         self._fill_results([])
         self.state['msg'] = ''
 
-    # --- search ---------------------------------------------------------
     # --- search ---------------------------------------------------------
     def _typed(self) -> str:
         """The search box text, normalized: '2 lines'/wrapping collapsed,
@@ -603,16 +641,14 @@ class MainWindow(W.QWidget):
         for e in items:
             kind = e.get('kind') or 'result'
             title = e.get('title', '')
+            it = W.QListWidgetItem()
             if kind == 'query':
-                label = f'🔎  {title}     ·     recent search'
+                it.setText(f'🔎  {title}     ·     recent search')
             else:
                 url = e.get('url')
-                label = f"{title}     ·     {e.get('source', '')}"
-                if url:
-                    # the link itself is visible, so the user can see the
-                    # exact page per source before choosing
-                    label = f"{label}\n ↳ {url}"
-                it = W.QListWidgetItem(label)
+                # show the anime name — the raw link stays in the tooltip
+                # and in the right-click 'Copy link / Open in browser'
+                it.setText(f"{title}     ·     {e.get('source', '')}")
                 if url:
                     it.setToolTip(str(url))
             it.setData(C.Qt.UserRole, e.get('url'))
@@ -726,8 +762,9 @@ class MainWindow(W.QWidget):
                 e.get('source') or 'link')
             self.hist_tbl.setItem(r, 1, W.QTableWidgetItem(src))
             it_l = _SortItem(e['title'])
-            it_l.setData(C.Qt.UserRole, e['title'])   # sort by the link text
+            it_l.setData(C.Qt.UserRole, e['title'])   # sort by the shown name
             it_l.setData(C.Qt.UserRole + 1, e)
+            it_l.setToolTip(str(e.get('url') or e['title']))  # raw link here
             self.hist_tbl.setItem(r, 2, it_l)
             x = W.QToolButton()
             x.setText('✕')
@@ -961,6 +998,16 @@ class MainWindow(W.QWidget):
                 self.state['msg'] = (f"{len(res)} result(s) for "
                                      f"“{entry['title']}” — best match: {best}"
                                      "  ·  click the one you want")
+            elif msg[0] == 'size':
+                _, s, n, sz = msg[0], msg[1], msg[2], msg[3]
+                if self.state['session'] is not s:
+                    continue
+                for r in range(self.table.rowCount()):
+                    it = self.table.item(r, 0)
+                    if it and int(it.data(C.Qt.UserRole)) == int(n):
+                        self.table.setItem(r, 2, W.QTableWidgetItem(
+                            _fmt_size(sz)))
+                        break
 
     @staticmethod
     def _row_entry(table, item):

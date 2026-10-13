@@ -169,6 +169,24 @@ class AnimeXProvider(Provider):
             _quiet_close(r)
 
     # --- catalog --------------------------------------------------------
+    def _m3u8_quality(self, url) -> str:
+        """The HLS rendition size of one server ('1080p', '~3Mbps')."""
+        try:
+            r = self.http.open(self.http.request(url, headers={
+                'Referer': MEDIA_REFERER, 'User-Agent': DEFAULT_UA}))
+            body = r.read().decode('utf-8', 'replace')
+        except Exception:
+            return ''
+        for line in body.splitlines():
+            if line.startswith('#EXT-X-STREAM-INF'):
+                m = re.search(r'RESOLUTION=(\d+)x(\d+)', line)
+                if m:
+                    return f'{m.group(2)}p'
+                bw = re.search(r'BANDWIDTH=(\d+)', line)
+                if bw:
+                    return f'~{int(bw.group(1)) // 1000000:.0f}Mbps'
+        return ''
+
     def fetch_groups(self) -> List[dict]:
         self._resolve()
         srv = self._json(f'{API}/rest/api/servers?id={self.slug}&epNum=1')
@@ -190,8 +208,22 @@ class AnimeXProvider(Provider):
         groups: List[dict] = []
         for pid in order:
             tags = [a for a in ('dub', 'sub') if pid in self._providers[a]]
-            groups.append({'id': pid, 'provider': pid,
-                           'label': f"{pid}  ({'+'.join(tags)})"})
+            label = f"{pid}  ({'+'.join(tags)})"
+            # the video size, the way AGP lists 480P/720P/1080P: probe ONE
+            # episode of that server and read the HLS rendition
+            try:
+                d = self._json(f'{API}/rest/api/sources?id={self.slug}'
+                               f'&epNum=1&type={"sub" if pid not in self._providers["dub"] else "dub"}'
+                               f'&providerId={pid}')
+                url = next((s.get('url') for s in (d.get('sources') or [])
+                            if s.get('url')), None)
+                if url:
+                    q = self._m3u8_quality(url)
+                    if q:
+                        label = f"{pid}  ({'+'.join(tags)})  ·  {q}"
+            except Exception:
+                pass
+            groups.append({'id': pid, 'provider': pid, 'label': label})
         self.groups = groups
         return groups
 

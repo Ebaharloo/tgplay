@@ -68,9 +68,25 @@ class TitleService:
                 return clean_ep_name(en) if en and not _generic(en) else None
         return None
 
+    def cache_count(self, series) -> int:
+        """How many numbered episode names the cache holds for `series`
+        (either key). 0 when nothing usable is stored."""
+        c = self._cache()
+        best = 0
+        for key in (f'simkl:{series}', str(series)):
+            rows = c.get(key) or {}
+            n = sum(1 for k, v in rows.items()
+                    if k.isdigit() and clean_ep_name(v)
+                    and not _generic(clean_ep_name(v)))
+            best = max(best, n)
+        return best
+
     def labels(self, series, eps: Dict[int, str]) -> Dict[int, str]:
         """Cached titles now (instant); generic 'Episode N' is ignored so the
-        caller's fallback shows instead; Chinese is translated when cached."""
+        caller's fallback shows instead; Chinese is translated when cached.
+
+        `series` must be a resolved identifier (the MAL id) — id-pinning
+        upstream decides WHICH series these names belong to."""
         out = dict(eps)
         if series is None:
             return out
