@@ -20,6 +20,97 @@ from . import log as _log
 from .options import PlaybackOptions
 
 
+class LogView(W.QTextBrowser):
+    """The in-window log: coloured, icon-prefixed, timestamped lines.
+
+    Lines arrive exactly as the terminal prints them (tp.log already tags
+    each kind with an emoji - 🔎 search, 🎬 playing, 🔔 sync, ⬇ download...).
+    Each kind gets a colour + the line is stamped with its clock time so
+    you can read the story (and the gaps) of a session at a glance."""
+
+    # leading-emoji -> css colour; first match wins
+    KINDS = [
+        ('❌', '#e06c75'),   # errors / failures
+        ('🎬', '#98c379'),   # streaming started
+        ('🏁', '#e5c07b'),   # playlist finished
+        ('🔎', '#c678dd'),   # searches (with duration)
+        ('📡', '#61afef'),   # session loaded
+        ('🏷', '#56b6c2'),   # episode-name sync
+        ('🔗', '#98c379'),   # fresh signed links
+        ('⏭', '#c678dd'),   # skip flags
+        ('🔜', '#98c379'),   # next prefetch trigger
+        ('⬇', '#61afef'),   # downloads / prefetch
+        ('🗃', '#d19a66'),   # cache mirror
+        ('🔔', '#56b6c2'),   # tracker sync
+        ('▶', '#98c379'),   # resume / start position
+        ('👁', '#abb2bf'),   # watched fraction
+        ('📅', '#61afef'),   # feed / calendar refresh
+        ('📥', '#c678dd'),   # load timings
+        ('🎞', '#e5c07b'),   # mpv window-up
+        ('📺', '#56b6c2'),   # show link
+        ('🅼', '#e06c7b'),   # MAL / simkl meta
+        ('🆂', '#56b6c2'),
+    ]
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setReadOnly(True)
+        self.setOpenExternalLinks(True)
+        self.setMaximumHeight(150)
+        try:
+            self.setFont(G.QFontDatabase.systemFont(G.QFontDatabase.FixedFont))
+        except Exception:
+            pass
+        self._max = 2500
+        self._follow = True
+
+    def _trim(self):
+        """Keep the last ~2500 lines (QTextBrowser lacks the block cap)."""
+        from PySide6 import QtGui
+        doc = self.document()
+        extra = doc.blockCount() - self._max
+        if extra <= 0:
+            return
+        c = QtGui.QTextCursor(doc)
+        c.movePosition(QtGui.QTextCursor.Start)
+        for _ in range(extra):
+            c.select(QtGui.QTextCursor.LineUnderCursor)
+            c.removeSelectedText()
+            c.deleteChar()               # drop the newline too
+
+    def _color(self, line):
+        for e, col in self.KINDS:
+            if line.startswith(e):
+                return col
+        return '#abb2bf'
+
+    def feed(self, line):
+        import html
+        import time as _t
+        col = self._color(line)
+        ts = _t.strftime('%H:%M:%S')
+        # auto-scroll only if the user is at the bottom (don't yank view)
+        sb = self.verticalScrollBar()
+        self._follow = sb.value() >= sb.maximum() - 6
+        self.append(
+            f'<span style="color:#5c6370">{ts}</span>  '
+            f'<span style="color:{col}">{html.escape(line)}</span>')
+        self._trim()
+        if self._follow:
+            sb.setValue(sb.maximum())
+
+    def seed(self, lines):
+        import html
+        import time as _t
+        now = _t.strftime('%H:%M:%S')
+        parts = []
+        for line in lines:
+            parts.append(f'<span style="color:#5c6370">{now}</span>  '
+                         f'<span style="color:{self._color(line)}">'
+                         f'{html.escape(line)}</span>')
+        self.setHtml('<br>'.join(parts))
+
+
 def _app_main() -> 'W.QApplication':
     from .gui_qt import _app as app
     return app()
@@ -373,18 +464,10 @@ class MainWindow(W.QWidget):
     def _build_log(self, root: W.QLayout):
         lbox = W.QGroupBox('Log')
         lv = W.QVBoxLayout(lbox)
-        self.logbox = W.QPlainTextEdit()
-        self.logbox.setReadOnly(True)
-        self.logbox.setMaximumBlockCount(3000)
-        self.logbox.setFixedHeight(150)
-        try:
-            self.logbox.setFont(G.QFontDatabase.systemFont(
-                G.QFontDatabase.FixedFont))
-        except Exception:
-            pass
+        self.logbox = LogView()
         lv.addWidget(self.logbox)
         if _log.HISTORY:
-            self.logbox.setPlainText('\n'.join(list(_log.HISTORY)))
+            self.logbox.seed(list(_log.HISTORY))
         root.addWidget(lbox)
 
     def _build_buttons(self, root: W.QLayout):
@@ -560,7 +643,9 @@ class MainWindow(W.QWidget):
         except Exception:
             pass
         try:
-            s = self._loader(src, target)
+            with _log.span('load') as sp:
+                sp.result(f'"{nice}"')
+                s = self._loader(src, target)
         except Exception as ex:
             self.state['loading'] = False
             dead = self._gate_dead(str(src), str(target), ex)
@@ -669,8 +754,11 @@ class MainWindow(W.QWidget):
         def work():
             try:
                 from .finder import ShowFinder
-                self._rq.put(ShowFinder(self._cfg, self._http).find(
-                    title=text) or [])
+                with _log.span('search') as s:
+                    items = ShowFinder(self._cfg, self._http).find(
+                        title=text) or []
+                    s.result(f'{len(items)} hit(s)')
+                self._rq.put(items)
             except Exception:
                 self._rq.put([])
         threading.Thread(target=work, daemon=True).start()
@@ -947,8 +1035,11 @@ class MainWindow(W.QWidget):
                 return
             try:
                 from .library import overview
-                ov = overview(self._cfg, self._http)
-                cal, rem, rc = ov['cal'], ov['rem'], ov['hist']
+                with _log.span('feed') as s:
+                    ov = overview(self._cfg, self._http)
+                    cal, rem, rc = ov['cal'], ov['rem'], ov['hist']
+                    s.result(f'{len(cal)} upcoming · {len(rem)} to-watch '
+                             f'· {len(rc)} watched')
             except Exception:
                 cal, rem, rc = [], [], []
             self._libq.put(('feed', {'cal': cal, 'rem': rem}, rc))
@@ -1146,9 +1237,8 @@ class MainWindow(W.QWidget):
             except queue.Empty:
                 break
         if lines:
-            self.logbox.appendPlainText('\n'.join(lines))
-            self.logbox.verticalScrollBar().setValue(
-                self.logbox.verticalScrollBar().maximum())
+            for ln in lines:
+                self.logbox.feed(ln)
             if any(('synced:' in ln) or ('marked ep' in ln) for ln in lines):
                 self.side_timer.start()          # auto-refresh feed/history
 

@@ -7,6 +7,7 @@ without restarting the app. This is the OOP seam between "pick a source" and
 "the window".
 """
 import threading
+import time
 from typing import Dict, List, Optional
 
 from . import log
@@ -205,6 +206,7 @@ def open_session(src: str, target: str, cfg, http, opts: dict = None,
 
     opts = dict(opts or {})
     mpv = list(mpv or [])
+    t_open = time.monotonic()
     meta = Metadata(cfg, http)
     titles = TitleService(meta, cfg)
     src = (src or 'agp').lower()
@@ -308,7 +310,8 @@ def open_session(src: str, target: str, cfg, http, opts: dict = None,
         groups = prov.groups
         audio = False
 
-    log.cprint(f'>> {prov.title} - {len(labels)} episodes')
+    log.cprint(f'>> {prov.title} - {len(labels)} episodes '
+               f'({time.monotonic() - t_open:.1f}s)')
 
     link = _link_get(cfg, prov.title)
     if link is None and src != 'tg':

@@ -11,18 +11,30 @@ import sys
 import time
 
 _STYLES = [
-    (r'(FAILED|no links|no episodes|^ERROR)', '❌ ', '1;31'),
+    (r'(FAILED|no links|no episodes|^ERROR|^error)', '❌ ', '1;31'),
     (r'^timing:',            '⏱ ',  '90'),
+    (r'^search:',            '🔎 ',  '95'),
+    (r'^load:',              '📥 ',  '94'),
+    (r'^feed:',              '📅 ',  '96'),
+    (r'^download:',          '⬇ ',  '32'),
+    (r'^mpv:',               '🎞 ',  '92'),
     (r'^link:',              '🔗 ',  '36'),
     (r'^skip:',              '⏭ ',  '35'),
+    (r'^skip\[',             '⏭ ',  '35'),
     (r'^next:',              '🔜 ',  '34'),
     (r'^prefetch:',          '⬇ ',  '32'),
+    (r'^titles:',            '🏷 ',  '93'),
     (r'^cache:',             '🗃 ',  '33'),
     (r'^>> streaming',       '🎬 ',  '1;32'),
     (r'^>> done',            '🏁 ',  '1'),
+    (r'^>>',                 '📡 ',  '92'),
     (r'^track:',             '🔔 ',  '1;36'),
+    (r'^sync:',              '🔔 ',  '1;36'),
+    (r'^watched:',           '👁 ',  '92'),
+    (r'^start:',             '▶ ',   '92'),
     (r'^show:',              '📺 ',  '36'),
     (r'^mal:',               '🅼 ',  '36'),
+    (r'^simkl:',             '🆂 ',  '36'),
 ]
 _RULES = [(re.compile(p), e, s) for p, e, s in _STYLES]
 _COLOR = sys.stdout.isatty() and not os.environ.get('NO_COLOR')
@@ -95,3 +107,35 @@ def cprint(*args, **kw):
 def style(text, ansi='1;33'):
     """Explicit colour for the rare case a caller needs it (e.g. Ctrl+C bye)."""
     return f'\033[{ansi}m{text}\033[0m' if _COLOR else text
+
+
+class span:
+    """Times a step and prints ONE line on completion (failures too).
+
+        with log.span('search') as s:
+            hits = finder.find(q)
+            s.result(f'{len(hits)} hit(s)')
+        # -> 'search: 12 hit(s) in 1.4s'   (⏱ styled by the rules above)
+    """
+
+    def __init__(self, label, echo=True):
+        self.label = label
+        self.echo = echo
+        self.detail = ''
+        self._t0 = 0.0
+
+    def result(self, txt):
+        self.detail = str(txt or '')
+        return self
+
+    def __enter__(self):
+        self._t0 = time.monotonic()
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if self.echo:
+            dur = time.monotonic() - self._t0
+            tail = f': {self.detail}' if self.detail else ''
+            err = f' FAILED ({exc})' if exc else ''
+            cprint(f'{self.label}{tail} in {dur:.1f}s{err}')
+        return False                 # never swallow exceptions

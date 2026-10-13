@@ -8,7 +8,10 @@ available; the portable path uses the source's own ranged reads.
 import json
 import os
 import threading
+import time
 from typing import Callable, Dict, Optional
+
+from . import log
 
 HEAD = 8 * 1024 * 1024
 TAIL = 2 * 1024 * 1024
@@ -43,12 +46,14 @@ class Prefetcher:
         part = path + '.part'
         stop = self.stop_event(name)
         if self.complete(name):
+            log.cprint(f'download: {name} already cached')
             return path
         if stop.is_set():
             return None
         total = source.size
         if not total:
             return None
+        t0 = time.monotonic()
         lo = min(int(total * lo_f), max(total - TAIL, 0))
         hi = max(int(total * hi_f), HEAD)
         lo, hi = max(lo - HEAD, 0), min(hi + TAIL, total)
@@ -77,5 +82,7 @@ class Prefetcher:
         if got >= want and not stop.is_set():
             os.replace(part, path)
             self.cache.set_geometry(name, lo, total, got)
+            log.cprint(f'download: {name} · {got // 1048576}MB in '
+                       f'{time.monotonic() - t0:.0f}s')
             return path
         return None

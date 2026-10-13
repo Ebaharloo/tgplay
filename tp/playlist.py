@@ -8,6 +8,7 @@ import json
 import os
 import re
 import threading
+import time
 import urllib.parse
 from typing import List, Optional
 
@@ -22,8 +23,10 @@ WATCHED_FRAC = float(os.environ.get('AGP_WATCHED_FRAC', '0.70'))
 def _safe(fn, *a, **k):
     try:
         fn(*a, **k)
+        return True
     except Exception as ex:
         log.cprint(f'track: sync failed ({ex})')
+        return False
 
 
 class Playlist:
@@ -88,8 +91,10 @@ class Playlist:
             nxt = episodes[i + 1] if i + 1 < len(episodes) else None
             attempt = 0
             while True:
+                t_ep = time.monotonic()
                 stream = self.provider.stream(ep.num)
                 name = self._name(ep, stream)
+                t_link = time.monotonic() - t_ep
                 direct = getattr(stream, 'direct', False)
                 extra_direct: List[str] = []
                 if direct:
@@ -106,8 +111,12 @@ class Playlist:
                     self.proxy.prewarm(name, ready)
                     ready.wait(25)
                     url = self.proxy.url(name)
+                    t_link = time.monotonic() - t_ep   # incl. head warm-up
+                log.cprint(f'load: ep{ep.num} link + head ready in '
+                           f'{t_link:.1f}s ({"hls" if direct else "proxy"})')
 
                 flags, note = [], 'off'
+                t_sk = time.monotonic()
                 if self.skip is not None:
                     try:
                         flags, note = self.skip.flags(
@@ -118,7 +127,8 @@ class Playlist:
                     except Exception as ex:
                         flags, note = [], f'failed ({ex})'
                 if i == 0:
-                    log.cprint(f'skip[{skip_mode}]: {note}')
+                    log.cprint(f'skip[{skip_mode}]: {note} '
+                               f'in {time.monotonic() - t_sk:.1f}s')
 
                 sock = f'/tmp/tgplay-{os.getpid()}-{ep.num}.ipc'
                 fire = None
@@ -138,9 +148,18 @@ class Playlist:
                         except Exception:
                             pass
 
+                fired = [False]
+
+                def _tick(p, _n=ep.num):
+                    if not fired[0]:
+                        fired[0] = True
+                        log.cprint(f'mpv: ep{_n} window up in '
+                                   f'{time.monotonic() - t_ep:.1f}s')
+                    self._save(title, _n, p)
+
                 watcher = PosWatcher(
                     sock, self.interval,
-                    on_pos=lambda p, _n=ep.num: self._save(title, _n, p),
+                    on_pos=_tick,
                     fire_when=fire, on_fire=on_fire)
                 ep_start = start if i == 0 else None
                 if i == 0 and start is not None:
@@ -216,7 +235,10 @@ class Playlist:
                     mal = meta.resolve_mal(self.provider.title, ask=False)
                 except Exception:
                     mal = None
-        threading.Thread(
-            target=lambda: _safe(self.tracker.mark_watched, self.provider.title,
-                                 num, mal=mal, anilist=anilist),
-            daemon=True).start()
+        def work():
+            t0 = time.monotonic()
+            if _safe(self.tracker.mark_watched, self.provider.title,
+                     num, mal=mal, anilist=anilist):
+                log.cprint(f'track: ep{num} synced in '
+                           f'{time.monotonic() - t0:.1f}s')
+        threading.Thread(target=work, daemon=True).start()
