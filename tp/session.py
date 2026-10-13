@@ -17,6 +17,7 @@ from .playlist import Playlist
 from .prefetch import Prefetcher
 from .proxy import RangeProxy
 from .skip import SkipService
+from .titles import clean_ep_name
 
 
 class SessionLoader:
@@ -210,7 +211,10 @@ def open_session(src: str, target: str, cfg, http, opts: dict = None,
         prov.fetch_groups()
         prov.select(opts.get('f'))
         groups = prov.groups
-        labels = dict(prov.episodes())
+        # the AnimeX API embeds Bangumi's 'Release: date - ' marker in the
+        # titles of (already-aired) episodes — clean BEFORE anything reads
+        labels = {n: (clean_ep_name(t) or t)
+                  for n, t in dict(prov.episodes()).items()}
         audio = True
         # SAME name sync as AGP: the AnimeX API usually only serves generic
         # 'Episode N' - fill real names from the MAL/Simkl episode cache

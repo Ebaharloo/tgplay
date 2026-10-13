@@ -27,6 +27,12 @@ class Cfg:
     def __init__(self, p):
         self.progress = p
         self.ui = p
+        self.cache_dir = os.path.join(os.path.dirname(p), 'cache')
+        self.cache_budget = 1
+        self.proxy_port = 0
+        self.tg_session = ''
+        self.translations = os.path.join(os.path.dirname(p), 'translations.json')
+        self.ep_titles = os.path.join(os.path.dirname(p), 'ep_titles.json')
 
 
 def test_opts_precedence():
@@ -106,9 +112,47 @@ def test_unified_window():
     print('PASS UnifiedWindow opens the unified app with the given loader')
 
 
+def test_axp_episode_labels_cleaned():
+    """The AnimeX API embeds Bangumi's 'Release: date - ' marker in episode
+    titles of ALREADY-aired episodes; sessions must present the name only."""
+    reload = os.environ.setdefault  # noqa - keep imports local like the file
+
+    class FakeAX:
+        title = 'Chainsmoker Cat'
+
+        def __init__(self, target, quality=None, audio=None, http=None):
+            self.groups = []
+            self._eps = {9: 'Release: 2026/09/03 15:00 GMT - Little Sis',
+                         10: 'Fine Name'}
+
+        def set_audio(self, a):
+            return self
+
+        def fetch_groups(self):
+            return []
+
+        def select(self, q=None):
+            return self
+
+        def episodes(self):
+            return dict(self._eps)
+
+    home = tempfile.mkdtemp(prefix='tgplay-axp-labels-')
+    cfg = Cfg(os.path.join(home, 'progress.json'))
+    with mock.patch('tp.providers.animex.AnimeXProvider', FakeAX), \
+            mock.patch('tp.session._safe_mal', lambda *a, **k: None), \
+            mock.patch('tp.cli._link_get', lambda *a, **k: 'https://x'):
+        s = session.open_session('axp', 'axp:whatever', cfg, http=None,
+                                 opts={}, mpv=[])
+    assert s.labels[9] == 'Little Sis', s.labels
+    assert s.labels[10] == 'Fine Name', s.labels
+    print('PASS axp session labels cleaned of release-date prefixes')
+
+
 def main():
     test_opts_precedence()
     test_loader_delegates()
+    test_axp_episode_labels_cleaned()
     test_unified_window()
     print('SESSION-LOADER OK')
 
