@@ -55,18 +55,6 @@ def _fmt_date(s) -> str:
         return str(s)[:10]
 
 
-def _fmt_size(b: int) -> str:
-    """Episode file size, human readable ('2.1GB', '740MB'); '—' unknown."""
-    b = int(b or 0)
-    if not b:
-        return '—'
-    for unit, div in (('TB', 1024 ** 4), ('GB', 1024 ** 3), ('MB', 1024 ** 2),
-                      ('KB', 1024)):
-        if b >= div:
-            return f'{b / div:.1f}{unit}'
-    return f'{b}B'
-
-
 
 class _SortItem(W.QTableWidgetItem):
     """Sorts by the numeric/string key in UserRole, not the shown text."""
@@ -363,8 +351,8 @@ class MainWindow(W.QWidget):
     def _build_episodes(self, root: W.QLayout, outer: W.QLayout):
         self.ebox = W.QGroupBox('Episodes')
         ev = W.QVBoxLayout(self.ebox)
-        self.table = W.QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(['#', 'Episode name', 'Size'])
+        self.table = W.QTableWidget(0, 2)
+        self.table.setHorizontalHeaderLabels(['#', 'Episode name'])
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(W.QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(W.QAbstractItemView.SelectRows)
@@ -374,7 +362,6 @@ class MainWindow(W.QWidget):
         hdr = self.table.horizontalHeader()
         hdr.setSectionResizeMode(0, W.QHeaderView.ResizeToContents)
         hdr.setSectionResizeMode(1, W.QHeaderView.Stretch)
-        hdr.setSectionResizeMode(2, W.QHeaderView.ResizeToContents)
         ev.addWidget(self.table)
         root.addWidget(self.ebox, 1)
 
@@ -552,8 +539,6 @@ class MainWindow(W.QWidget):
             self.table.setItem(i, 0, it0)
             self.table.setItem(i, 1, W.QTableWidgetItem(
                 s.labels.get(n, f'Episode {n}')))
-            self.table.setItem(i, 2, W.QTableWidgetItem(
-                '—' if s.src in ('axp',) else '…'))
         self.ebox.setTitle(f'Episodes ({len(nums)})')
         if nums:
             row = nums.index(s.resume[0]) if (s.resume and
@@ -561,27 +546,6 @@ class MainWindow(W.QWidget):
             self.table.selectRow(row)
             self.table.setCurrentCell(row, 1)
             self.table.scrollToItem(self.table.item(row, 1))
-        self._probe_sizes(s)
-
-    def _probe_sizes(self, s):
-        """Fill the Size column from the provider (AGP probes its signed
-        CDN links in a background thread; Telegram/TGP know right away;
-        AnimeX is HLS - no size)."""
-        if s is None or s.src == 'axp' or s.src not in ('agp', 'tg', 'tgp'):
-            return
-        nums = sorted(s.labels)
-
-        def work():
-            for n in nums:
-                if self.state.get('closing') or \
-                        self.state['session'] is not s:
-                    return                          # the show changed / closed
-                try:
-                    sz = int(s.provider.size(n) or 0)
-                except Exception:
-                    sz = 0
-                self._libq.put(('size', s, n, sz))
-        threading.Thread(target=work, daemon=True).start()
 
     def load_target(self, src, target):
         if self.state.get('loading'):
@@ -998,16 +962,6 @@ class MainWindow(W.QWidget):
                 self.state['msg'] = (f"{len(res)} result(s) for "
                                      f"“{entry['title']}” — best match: {best}"
                                      "  ·  click the one you want")
-            elif msg[0] == 'size':
-                _, s, n, sz = msg[0], msg[1], msg[2], msg[3]
-                if self.state['session'] is not s:
-                    continue
-                for r in range(self.table.rowCount()):
-                    it = self.table.item(r, 0)
-                    if it and int(it.data(C.Qt.UserRole)) == int(n):
-                        self.table.setItem(r, 2, W.QTableWidgetItem(
-                            _fmt_size(sz)))
-                        break
 
     @staticmethod
     def _row_entry(table, item):

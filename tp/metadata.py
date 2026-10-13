@@ -57,7 +57,18 @@ class Metadata:
         self._refreshed = set()  # mal ids already refreshed this run
         if simkl is None:
             from .simkl import Simkl
-            simkl = Simkl(http=self.http)
+
+            def auth_fn():
+                # the user's Simkl token (search + user endpoints need it)
+                try:
+                    d = json.load(open(os.path.join(
+                        os.path.dirname(self.cfg.progress),
+                        'simkl_auth.json')))
+                    tok = d.get('access_token')
+                    return f'Bearer {tok}' if tok else None
+                except Exception:
+                    return None
+            simkl = Simkl(http=self.http, auth_fn=auth_fn)
         self.simkl = simkl
         self.bangumi = Bangumi()
         self._bgm_done = set()
@@ -303,18 +314,18 @@ class Metadata:
             return cur
         if not eps:
             return cur
-        cache = _read(self.cfg.ep_titles, {})
-        shows = cache.get(str(mal_id)) or {}
-        before = len(shows)
+        # Bangumi names are authoritative fresh from the source and live in
+        # their OWN cache key ('bgm:{mal}'), read first by TitleService — so
+        # legacy noise under str(mal) can never block the better data.
+        shows = {}
         for n, t in eps.items():
             t = clean_ep_name(t)
             if t and not _GENERIC_EP.match(t):
                 shows.setdefault(str(n), t)
-        if len(shows) != before:
-            shows.setdefault('_done', '1')
-            cache[str(mal_id)] = shows
-            _write(self.cfg.ep_titles, cache)
-        self.translator.ensure(list(eps.values()))  # zh -> en (cached)
+        cache = _read(self.cfg.ep_titles, {})
+        cache[f'bgm:{mal_id}'] = shows
+        _write(self.cfg.ep_titles, cache)
+        self.translator.ensure(list(shows.values()))  # zh -> en (cached)
         return shows
 
     def _mal_title(self, mal_id, ep: int,

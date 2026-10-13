@@ -61,7 +61,7 @@ class TitleService:
 
     def get(self, series, num: int) -> Optional[str]:
         c = self._cache()
-        for key in (f'simkl:{series}', str(series)):
+        for key in (f'bgm:{series}', f'simkl:{series}', str(series)):
             t = clean_ep_name(c.get(key, {}).get(str(num)))
             if t and t != '?' and not _generic(t):
                 en = self._trans().get(t, t) if has_cjk(t) else t
@@ -70,10 +70,10 @@ class TitleService:
 
     def cache_count(self, series) -> int:
         """How many numbered episode names the cache holds for `series`
-        (either key). 0 when nothing usable is stored."""
+        (any key). 0 when nothing usable is stored."""
         c = self._cache()
         best = 0
-        for key in (f'simkl:{series}', str(series)):
+        for key in (f'bgm:{series}', f'simkl:{series}', str(series)):
             rows = c.get(key) or {}
             n = sum(1 for k, v in rows.items()
                     if k.isdigit() and clean_ep_name(v)
@@ -86,16 +86,20 @@ class TitleService:
         caller's fallback shows instead; Chinese is translated when cached.
 
         `series` must be a resolved identifier (the MAL id) — id-pinning
-        upstream decides WHICH series these names belong to."""
+        upstream decides WHICH series these names belong to. Bangumi
+        (Chinese + translator) is read first, then Simkl, then the legacy
+        key, so old junk rows can't shadow the better data."""
         out = dict(eps)
         if series is None:
             return out
         c = self._cache()
         tr = self._trans()
         for n in eps:
-            t = clean_ep_name(
-                (c.get(f'simkl:{series}', {}).get(str(n))
-                 or c.get(str(series), {}).get(str(n))))
+            t = None
+            for key in (f'bgm:{series}', f'simkl:{series}', str(series)):
+                t = clean_ep_name(c.get(key, {}).get(str(n)))
+                if t and not _generic(t):
+                    break
             if not t or t == '?' or _generic(t):
                 continue
             en = clean_ep_name(tr.get(t, t) if has_cjk(t) else t)

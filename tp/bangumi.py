@@ -14,6 +14,11 @@ from typing import Dict, List, Optional, Tuple
 API = 'https://api.bgm.tv'
 UA = 'tgplay/1 (https://github.com/; tgplay@example.com)'
 
+# Bangumi stores un-named episodes as pure numbering ('第一百六十六集')
+# - those are NOT names; keep them out of the merged cache.
+_GENERIC_NUM = re.compile(
+    r'^\s*第?\s*[0-9一二三四五六七八九十百千零〇两]+\s*[集话話回]?\s*$', re.I)
+
 
 class Bangumi:
     def __init__(self, http=None, timeout: int = 20):
@@ -40,21 +45,29 @@ class Bangumi:
         return out
 
     def seasons(self, keyword: str) -> List[int]:
-        """Subject ids whose name/name_cn contains `keyword`, release order.
+        """Subject ids whose name/name_cn contains `keyword`, best first.
 
-        For '牧神记' this returns season 1,2,3,4 -> we can stitch them into one
-        episode numbering when a site lists a whole multi-season show."""
+        The EXACT title (S1) comes first; clips/recap/movies come last so
+        they can't hijack the main subject when it exists."""
         hits = [(i, n, cn) for i, n, cn in self.search(keyword)
                 if keyword in (n or '') or keyword in (cn or '')]
+        # '一念永恒小剧场' style side-entries drop behind the main ones
+        _special = re.compile(r'小剧场|上海剧场|合集|剧场版|特别篇|pv|？广播',
+                              re.I)
+        hits.sort(key=lambda t: (bool(_special.search(t[1])), bool(t[2]),
+                                 t[0]))
         if hits:
-            hits.sort(key=lambda t: t[0])  # ascending id ~ release order
             return [i for i, _n, _cn in hits]
         sid = self.subject_id(keyword)
         return [sid] if sid else []
 
     def grouped_episodes(self, keyword: str) -> Dict[int, str]:
-        """{global episode number: title} across all seasons of `keyword`,
-        offset by each season's episode count."""
+        """{global episode number: title} across all seasons of `keyword`.
+
+        The offset advances by each season's SPAN even when a season has no
+        curated names — that skip is exactly what mis-aligned later seasons
+        before (numbering drifted, names got wrong). Pure-number titles
+        (第一百六十六集-style) are dropped too."""
         out: Dict[int, str] = {}
         offset = 0
         for sid in self.seasons(keyword):
@@ -62,7 +75,8 @@ class Bangumi:
             if not eps:
                 continue
             for n, t in eps.items():
-                out[offset + n] = t
+                if t and not _GENERIC_NUM.match(t):
+                    out.setdefault(offset + n, t)
             offset += max(eps)
         return out
 
@@ -87,6 +101,8 @@ class Bangumi:
         return sid
 
     def episodes(self, subject_id: int) -> Dict[int, str]:
+        """{episode number: title}; '' when a subject has ep rows but no
+        curated names (grouped_episodes still needs the season span)."""
         out: Dict[int, str] = {}
         offset = 0
         while True:
@@ -95,9 +111,9 @@ class Bangumi:
             data = d.get('data') or []
             for e in data:
                 ep = e.get('ep')
-                t = e.get('name_cn') or e.get('name')
-                if isinstance(ep, int) and t:
-                    out[ep] = t
+                t = e.get('name_cn') or e.get('name') or ''
+                if isinstance(ep, int):
+                    out[ep] = str(t or '')
             total = d.get('total') or 0
             offset += len(data)
             if not data or offset >= total:

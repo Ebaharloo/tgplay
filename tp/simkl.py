@@ -14,7 +14,7 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Dict, Optional
+from typing import Callable, Dict, Optional
 
 from .http import HttpClient, _quiet_close
 
@@ -45,10 +45,11 @@ def _dig(obj, key):
 
 class Simkl:
     def __init__(self, client_id: Optional[str] = None,
-                 http: Optional[HttpClient] = None):
+                 http: Optional[HttpClient] = None, auth_fn: Callable = None):
         self.client_id = (client_id or os.environ.get('AGP_SIMKL_CLIENT_ID')
                           or self._file_id())
         self.http = http or HttpClient(timeout=25)
+        self.auth_fn = auth_fn      # -> 'Bearer <token>' when the user logged in
         self._ids: Dict[tuple, Optional[int]] = {}
         self._eps: Dict[int, Dict[int, str]] = {}
         self._records: Dict[int, Optional[dict]] = {}
@@ -66,7 +67,15 @@ class Simkl:
     def _get(self, path, **params):
         params['client_id'] = self.client_id
         url = f'{API}{path}?{urllib.parse.urlencode(params)}'
-        r = self.http.open(self.http.request(url))
+        headers = {}
+        if self.auth_fn:            # /search + user endpoints need the token
+            try:
+                auth = self.auth_fn()
+                if auth:
+                    headers['Authorization'] = auth
+            except Exception:
+                pass
+        r = self.http.open(self.http.request(url, headers=headers))
         try:
             return json.load(r)
         finally:
