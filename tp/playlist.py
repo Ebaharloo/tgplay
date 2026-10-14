@@ -97,6 +97,7 @@ class Playlist:
                 t_link = time.monotonic() - t_ep
                 direct = getattr(stream, 'direct', False)
                 extra_direct: List[str] = []
+                head_warm = False
                 if direct:
                     # HLS/DASH: mpv plays the remote URL itself (no proxy)
                     url = stream.url
@@ -109,10 +110,13 @@ class Playlist:
                     self.proxy.register(name, stream)
                     ready = threading.Event()
                     self.proxy.prewarm(name, ready)
-                    ready.wait(25)
+                    # brief head peek only - then start: the prewarm keeps
+                    # filling the head in the background and the proxy
+                    # live-reads any gap mpv asks for in the meantime
+                    head_warm = ready.wait(2)
                     url = self.proxy.url(name)
                     t_link = time.monotonic() - t_ep   # incl. head warm-up
-                log.cprint(f'load: ep{ep.num} link + head ready in '
+                log.cprint(f'load: ep{ep.num} link + head peek in '
                            f'{t_link:.1f}s ({"hls" if direct else "proxy"})')
 
                 flags, note = [], 'off'
@@ -121,8 +125,9 @@ class Playlist:
                     try:
                         flags, note = self.skip.flags(
                             title=title, ep=ep.num,
-                            url=None if direct else url, mode=skip_mode,
-                            toggle=skip_toggle,
+                            url=url if (not direct and head_warm) else None,
+                            mode=skip_mode,
+                            toggle=skip_toggle, timeout=6,
                             mal_id=getattr(self.provider, 'mal_id', None))
                     except Exception as ex:
                         flags, note = [], f'failed ({ex})'

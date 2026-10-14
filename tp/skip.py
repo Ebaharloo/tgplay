@@ -70,7 +70,7 @@ class AniSkip:
         if toggle:
             args.append('--toggle')
         try:
-            r = subprocess.run(args, capture_output=True, text=True, timeout=60)
+            r = subprocess.run(args, capture_output=True, text=True, timeout=15)
         except Exception:
             return None
         out = (r.stdout or '').strip()
