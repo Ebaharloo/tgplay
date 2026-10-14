@@ -138,6 +138,11 @@ def test_sidebar_click_shows_source_choices():
         assert 'Exact Show' in best.text(), best.text()   # best match first
         # the user picks: click the agp row
         w._pick_result(w.results.item(1))
+        # the load is async now - deliver it like the poll timer would
+        deadline = time.time() + 3
+        while w.state['session'] is None and time.time() < deadline:
+            time.sleep(0.02)
+            w._drain_lib()
         assert 'agp:ok' in made, made      # the CHOSEN source got loaded
         assert w.state['session'] is not None
     finally:

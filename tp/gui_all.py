@@ -642,12 +642,23 @@ class MainWindow(W.QWidget):
             self.head.setText(f'loading  {nice} …')
         except Exception:
             pass
-        try:
-            with _log.span('load') as sp:
-                sp.result(f'"{nice}"')
-                s = self._loader(src, target)
-        except Exception as ex:
-            self.state['loading'] = False
+
+        def work():
+            # the whole loader (catalogue, MAL/simkl lookups, title wait)
+            # runs OFF the UI thread - the window stays responsive
+            try:
+                with _log.span('load') as sp:
+                    sp.result(f'"{nice}"')
+                    s = self._loader(src, target)
+                self._libq.put(('loaded', src, target, s, None))
+            except Exception as ex:
+                self._libq.put(('loaded', src, target, None, ex))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _apply_loaded(self, src, target, s, ex):
+        """GUI-thread completion of load_target (delivered via _libq)."""
+        self.state['loading'] = False
+        if ex is not None:
             dead = self._gate_dead(str(src), str(target), ex)
             self.state['msg'] = (f'AnimeGate session dead ({dead}) - links '
                                  'need a new login; re-choose after signing in'
@@ -664,11 +675,8 @@ class MainWindow(W.QWidget):
             self.res_stack.setVisible(True)
             self.res_stack.setCurrentWidget(self.results)
             if dead:
-                threading.Thread(
-                    target=lambda: self._gate_auth_flow(src, target, dead),
-                    daemon=True).start()
+                self._gate_auth_flow(src, target, dead)
             return
-        self.state['loading'] = False
         self.set_session(s)
         if self._cfg is not None:
             history.add(self._cfg, link=target, name=s.title)
@@ -1106,6 +1114,9 @@ class MainWindow(W.QWidget):
                 return
             if msg[0] == 'feed-refresh':
                 self.load_side()
+            elif msg[0] == 'loaded':
+                # async completion of load_target (worker -> GUI thread)
+                self._apply_loaded(msg[1], msg[2], msg[3], msg[4])
             elif msg[0] == 'feed':
                 _, payload, rc = msg
                 if payload is None:
@@ -1300,13 +1311,21 @@ class MainWindow(W.QWidget):
         if initial:
             self.load_target(initial[0], initial[1])
         if mode == 'play':
-            C.QTimer.singleShot(300, self._from_here)
+            C.QTimer.singleShot(300, lambda: self._when_ready(self._from_here))
         elif mode == 'all':
             C.QTimer.singleShot(
-                300, lambda: self._do_play(self._all_nums()))
+                300, lambda: self._when_ready(
+                    lambda: self._do_play(self._all_nums())))
         elif mode == 'close':
             C.QTimer.singleShot(300, self.close_window)
         return W.QApplication.instance().exec()
+
+    def _when_ready(self, fn, tries=40):
+        """Run fn once the async load landed (or the window is closing)."""
+        if self.state.get('session') is not None or self.state.get('closing'):
+            fn()
+        elif tries > 0:
+            C.QTimer.singleShot(100, lambda: self._when_ready(fn, tries - 1))
 
 
 def app(loader: Callable[[str, str], object], cfg=None, one_shot: bool = False,
