@@ -9,6 +9,7 @@ the Simkl sidebar and the log are all here.
 import os
 import queue
 import re
+import tempfile
 import threading
 import time
 from typing import Callable, List, Optional
@@ -127,20 +128,42 @@ class CastDialog(W.QDialog):
         self.resize(820, 500)
         self._q: 'queue.Queue' = queue.Queue()
         self._pix = {}                       # image url -> QPixmap
+        self._img_file = {}                  # image url -> local file (big)
+        self._tmp = tempfile.mkdtemp(prefix='tgplay-cast-')
+        self._all_rows: List[dict] = []
         self._rows: List[dict] = []
         self._anilist_show = None
         self._closing = False
+        self.resize(900, 560)
 
         lay = W.QHBoxLayout(self)
+        left = W.QVBoxLayout()
+        bar = W.QHBoxLayout()
+        self.search = W.QLineEdit()
+        self.search.setPlaceholderText(
+            'search name / native / voice actor / bio…')
+        self.search.setClearButtonEnabled(True)
+        bar.addWidget(self.search, 1)
+        self.origin_cb = W.QComboBox()
+        self.origin_cb.addItems(['All', 'Anime', 'Manga', 'Novel', 'CN'])
+        bar.addWidget(self.origin_cb)
+        left.addLayout(bar)
         self.lst = W.QListWidget()
-        self.lst.setMinimumWidth(340)
+        self.lst.setMinimumWidth(360)
         self.lst.setAlternatingRowColors(True)
-        lay.addWidget(self.lst)
+        left.addWidget(self.lst, 1)
+        self.count_lbl = W.QLabel('')
+        self.count_lbl.setStyleSheet('color:#888;')
+        left.addWidget(self.count_lbl)
+        lay.addLayout(left)
         self.pane = W.QTextBrowser()
         self.pane.setOpenExternalLinks(True)
         self.pane.setHtml(self._hint())
         lay.addWidget(self.pane, 1)
         self.lst.currentRowChanged.connect(self._show_row)
+        self.search.textChanged.connect(lambda _t: self._apply_filter())
+        self.origin_cb.currentTextChanged.connect(
+            lambda _t: self._apply_filter())
 
         rec = None
         if self._svc is not None:
@@ -173,7 +196,9 @@ class CastDialog(W.QDialog):
         except Exception:
             rec = None
         self._q.put(('rec', rec))
-        for r in (rec or {}).get('rows') or []:
+        # avatars: cap the downloads (novel casts can be huge; the list is
+        # filterable, and images for non-shown rows aren't worth fetching)
+        for r in ((rec or {}).get('rows') or [])[:80]:
             u = r.get('image')
             if u and u not in self._pix:
                 data = self._dl(u)
@@ -212,53 +237,99 @@ class CastDialog(W.QDialog):
                 pm = G.QPixmap()
                 if pm.loadFromData(data):
                     self._pix[url] = pm
+                    try:                    # a file for the big portrait
+                        p = os.path.join(self._tmp,
+                                         f'{abs(hash(url))}.img')
+                        with open(p, 'wb') as f:
+                            f.write(data)
+                        self._img_file[url] = p
+                    except Exception:
+                        pass
                     self._reicon(url)
 
     @staticmethod
     def _mkicon(pm):
-        return G.QIcon(pm.scaled(28, 28, C.Qt.KeepAspectRatio,
+        return G.QIcon(pm.scaled(44, 44, C.Qt.KeepAspectRatio,
                                  C.Qt.SmoothTransformation))
 
     def _fill(self, rec):
-        sel = self.lst.currentRow()
-        self._rows = rec.get('rows') or []
+        self._all_rows = rec.get('rows') or []
         self._anilist_show = rec.get('anilist_id')
+        self._apply_filter()
+
+    def _apply_filter(self, *_):
+        q = (self.search.text() if hasattr(self, 'search') else '').strip()
+        origin = (self.origin_cb.currentText()
+                  if hasattr(self, 'origin_cb') else 'All')
+        want = {'Anime': 'anime', 'Manga': 'manga', 'Novel': 'novel',
+                'CN': 'bangumi'}.get(origin)
+        rows = []
+        for r in self._all_rows:
+            if want and (r.get('from') or 'anime') != want:
+                continue
+            if q:
+                blob = ' '.join(str(r.get(k) or '') for k in
+                                ('name', 'native', 'va', 'desc', 'from'))
+                if q.casefold() not in blob.casefold():
+                    continue
+            rows.append(r)
+        cur = None
+        it = self.lst.currentItem()
+        if it is not None and isinstance(it.data(C.Qt.UserRole), dict):
+            cur = it.data(C.Qt.UserRole).get('cid')
+        self._rows = rows
         self.lst.blockSignals(True)
         self.lst.clear()
-        for r in self._rows:
+        for r in rows:
             role = {'main': '★ main', 'supporting': 'supporting'}.get(
                 r.get('role', ''), r.get('role') or '?')
             label = r['name']
             if r.get('native'):
                 label += f"  ({r['native']})"
-            line = f"{label}   ·   {role}"
+            src = {'anime': '', 'manga': ' · manga', 'novel': ' · novel',
+                   'bangumi': ' · CN'}.get(r.get('from') or 'anime', '')
+            line = f"{label}   ·   {role}{src}"
             if r.get('va'):
                 line += f"   ·   {r['va']}"
-            it = W.QListWidgetItem(line)
-            it.setToolTip(r.get('url') or '')
+            item = W.QListWidgetItem(line)
+            item.setData(C.Qt.UserRole, r)
+            item.setToolTip(r.get('url') or '')
             pm = self._pix.get(r.get('image') or '')
             if pm is not None:
-                it.setIcon(self._mkicon(pm))
-            self.lst.addItem(it)
+                item.setIcon(self._mkicon(pm))
+            self.lst.addItem(item)
+            if cur and r.get('cid') == cur:
+                self.lst.setCurrentRow(self.lst.count() - 1)
         self.lst.blockSignals(False)
-        if not self._rows:
-            self.lst.addItem('no cast found on AniList/Bangumi')
-        if 0 <= sel < len(self._rows):
-            self.lst.setCurrentRow(sel)
+        capped = len(rows) < len(self._all_rows)
+        self.count_lbl.setText(
+            f'{len(rows)} character(s)'
+            + (f' · {len(self._all_rows)} loaded' if capped else ''))
+        if not rows:
+            self.lst.addItem('no matching character - clear the search')
+            self.pane.setHtml(self._hint())
+        elif self.lst.currentRow() < 0:
+            self.lst.setCurrentRow(0)
 
     def _reicon(self, url):
-        for i, r in enumerate(self._rows):
-            if r.get('image') == url:
-                it = self.lst.item(i)
+        for i in range(self.lst.count()):
+            it = self.lst.item(i)
+            r = it.data(C.Qt.UserRole) if it is not None else None
+            if isinstance(r, dict) and r.get('image') == url:
                 pm = self._pix.get(url)
-                if it is not None and pm is not None:
+                if pm is not None:
                     it.setIcon(self._mkicon(pm))
+        it = self.lst.currentItem()
+        r = it.data(C.Qt.UserRole) if it is not None else None
+        if isinstance(r, dict) and r.get('image') == url:
+            self._show_row(self.lst.currentRow())
 
     def _show_row(self, row):
-        if not (0 <= row < len(self._rows)):
+        it = self.lst.item(row) if 0 <= row < self.lst.count() else None
+        r = it.data(C.Qt.UserRole) if it is not None else None
+        if not isinstance(r, dict):
             return
         import html as _h
-        r = self._rows[row]
         head = '<h3>' + _h.escape(r['name'])
         if r.get('native'):
             head += (" <span style='color:#888'>"
@@ -273,6 +344,8 @@ class CastDialog(W.QDialog):
             bits.append('voice actor: <b>' + _h.escape(r['va'])
                         + (' (' + _h.escape(r['va_lang']) + ')'
                            if r.get('va_lang') else '') + '</b>')
+        if (r.get('from') or 'anime') != 'anime':
+            bits.append('source: <b>' + _h.escape(r['from']) + '</b>')
         parts = [head]
         if bits:
             parts.append(' · '.join(bits))
@@ -288,7 +361,16 @@ class CastDialog(W.QDialog):
                          + '/characters">full cast on AniList ↗</a>')
         if links:
             parts.append(' &nbsp; &nbsp;'.join(links))
-        self.pane.setHtml('<br>'.join(parts))
+        body = '<br>'.join(parts)
+        img = self._img_file.get(r.get('image') or '')
+        if img:
+            # big portrait in a box, the name/links sit next to it
+            self.pane.setHtml(
+                '<table cellspacing="0" cellpadding="6"><tr>'
+                f'<td valign="top"><img src="file://{img}" width="200"></td>'
+                f'<td valign="top">{body}</td></tr></table>')
+        else:
+            self.pane.setHtml(body)
 
     def done(self, r):                          # close: stop polling
         self._closing = True

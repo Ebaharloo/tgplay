@@ -37,7 +37,7 @@ MEDIA = {
 
 
 def test_parse():
-    rows = ch._rows_from_anilist(MEDIA)
+    rows = ch._rows_from_media(MEDIA, "anime")
     assert len(rows) == 2, rows
     assert rows[0]['name'] == 'Li Han' and rows[0]['native'] == '韩立'
     assert rows[0]['role'] == 'main' and rows[0]['va'] == 'Wenqing Qian'
@@ -50,7 +50,7 @@ def _mk_rec():
     return {'fetched': time.time(), 'anilist_id': MEDIA['id'],
             'mal': 41219, 'show': 'Fanren Xiu Xian Zhuan',
             'native_titles': ['凡人修仙传：风起天南'],
-            'rows': ch._rows_from_anilist(MEDIA)}
+            'rows': ch._rows_from_media(MEDIA, "anime")}
 
 
 def test_cache_first():
@@ -133,14 +133,75 @@ def test_dialog_headless():
     html = dlg.pane.toHtml()
     assert 'Li Han' in html and 'Wenqing Qian' in html
     assert 'anilist.co/character/230157' in html       # clickable link
+    # search filters the list live
+    dlg.search.setText('nan gong')
+    assert dlg.lst.count() == 1, dlg.lst.count()
+    assert 'Nan Gong' in dlg.lst.item(0).text()
+    dlg.search.setText('')
+    assert dlg.lst.count() == 2, dlg.lst.count()
+    # source filter: only the anime rows here
+    dlg.origin_cb.setCurrentText('Novel')
+    assert dlg.lst.count() == 1 and \
+        'no matching' in dlg.lst.item(0).text(), dlg.lst.count()
+    dlg.origin_cb.setCurrentText('All')
+    assert dlg.lst.count() == 2, dlg.lst.count()
     dlg.done(0)
-    print('PASS CastDialog renders rows + detail pane (headless)')
+    print('PASS CastDialog renders rows + detail pane + search/source filter')
+
+
+def test_pagination_and_source_material():
+    """ALL anime pages are fetched, and the manga/novel relation's cast is
+    merged in (tagged 'novel'), with duplicates dropped (anime wins)."""
+    cfg = Config(home=tempfile.mkdtemp(prefix='tgplay-cast-')).ensure()
+    svc = ch.CharactersService(cfg, http=None)
+
+    def row(cid, name, native=''):
+        return {'role': 'SUPPORTING', 'voiceActors': [],
+                'node': {'id': cid, 'name': {'full': name, 'native': native},
+                         'image': {}, 'favourites': 0, 'description': '',
+                         'siteUrl': ''}}
+
+    def fake_gql(query, variables):
+        if query is ch.RELATIONS_QUERY:
+            # the anime does NOT link its novel (the real Renegade case)
+            return {'Media': {'id': 900, 'relations': {'edges': []}}}
+        if query is ch.SEARCH_SOURCE_QUERY:
+            return {'Page': {'media': [
+                {'id': 501, 'type': 'MANGA', 'format': 'NOVEL',
+                 'title': {'romaji': 'Xian Ni'}}]}}
+        if variables.get('id'):                 # the novel's cast
+            return {'Media': {'id': 501, 'type': 'MANGA', 'format': 'NOVEL',
+                              'title': {'romaji': 'Xian Ni'},
+                              'characters': {'pageInfo': {'hasNextPage': False},
+                                             'edges': [
+                     row(7001, 'Wang Lin', '王林'),
+                     row(230157, 'Li Han')]}}}  # duplicate -> anime wins
+        page = int(variables.get('page') or 1)  # anime pages
+        return {'Media': {
+            'id': 115844, 'idMal': 41219, 'title': {'romaji': 'Xian Ni'},
+            'characters': {
+                'pageInfo': {'hasNextPage': page == 1},
+                'edges': [row(230157, 'Li Han', '韩立') if page == 1
+                          else row(3002, 'Situ Nan')]}}}
+
+    svc._gql = fake_gql
+    rec = svc.fetch(mal_id=41219)
+    names = [r['name'] for r in rec['rows']]
+    assert 'Li Han' in names and 'Situ Nan' in names, names   # both pages
+    assert 'Wang Lin' in names, names                         # novel merged
+    assert names.count('Li Han') == 1, names                  # deduped
+    origins = {r['name']: r['from'] for r in rec['rows']}
+    assert origins['Wang Lin'] == 'novel' and origins['Li Han'] == 'anime'
+    assert len(rec['rows']) == 3, rec['rows']
+    assert svc.cached(mal_id=41219), 'merged cast must be cached'
+    print('PASS paginated anime cast + manga/novel merge + dedupe')
 
 
 def main():
     test_parse()
     test_cache_first()
     test_bangumi_boost()
+    test_pagination_and_source_material()
     test_dialog_headless()
     print('CHARACTERS OK')
 

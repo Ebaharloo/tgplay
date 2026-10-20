@@ -192,16 +192,20 @@ title cache.
 
 - Header button (enabled once a show is loaded) opens **`CastDialog`**: every
   character's name + native (CJK) name, role (main/supporting), voice actor,
-  favourites, bio and a **link to the character's page** + the show's full-cast
-  page (AniList).
-- Sources: **AniList GraphQL** by the pinned MAL id (verified schema: cast is
-  in `characters.edges` with role + voiceActors on the edge, the person under
-  `node`), with a **Bangumi** pass for donghua (native CN names + Chinese voice
-  actors, merged only when genuinely missing).
-- **Cache-first & non-blocking**: opens instantly from `characters.json` (30-day
-  TTL), network refresh + avatar downloads happen on a worker thread; avatars
-  stream in as they arrive. The pinned MAL id (from the id-first finder) keys
-  the lookup — no title guessing, no network on reopen.
+  favourites, bio, a **large portrait**, and links to the character's page +
+  the show's full-cast page.
+- **Deep cast**: the anime's cast is fetched **paginated (all pages)** AND the
+  manga / light-novel / novel entries' casts are merged in (tagged `manga` /
+  `novel`): the anime entry often lists only a handful while the source novel
+  has dozens/hundreds (e.g. Renegade Immortal: 7 anime + 17 source rows).
+  Sources are found via AniList relations first, then by a title search of
+  AniList's manga/novel entries (many donghua never link their novel), with
+  close-title matching and de-duplication (anime row wins).
+- **Search + filter**: a live search box (name / native / voice actor / bio)
+  and a source filter (All / Anime / Manga / Novel / CN).
+- **Cache-first & non-blocking**: opens instantly from `characters.json`
+  (30-day TTL); big portraits + 44px avatars stream in on a worker thread.
+  The pinned MAL id (id-first finder) keys the lookup.
 
 ---
 
