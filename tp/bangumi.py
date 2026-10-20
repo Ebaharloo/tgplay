@@ -100,6 +100,15 @@ class Bangumi:
         self._subjects[keyword] = sid
         return sid
 
+    def subject_characters(self, subject_id: int) -> List[dict]:
+        """bgm.tv characters of a subject (CN names + Chinese voice actors)."""
+        try:
+            d = self._req(f'{API}/v0/subjects/{subject_id}/characters'
+                          '&limit=30')
+            return d or []
+        except Exception:
+            return []
+
     def episodes(self, subject_id: int) -> Dict[int, str]:
         """{episode number: title}; '' when a subject has ep rows but no
         curated names (grouped_episodes still needs the season span)."""

@@ -111,6 +111,194 @@ class LogView(W.QTextBrowser):
         self.setHtml('<br>'.join(parts))
 
 
+class CastDialog(W.QDialog):
+    """Who's in this show: cast with CN/native names, roles, voice actors,
+    avatars and a link per character.
+
+    Cache-first: opens INSTANTLY from characters.json (the pinned MAL id is
+    the key); the AniList/Bangumi refresh + avatar downloads run on a worker
+    thread and land through a queue the same way the main window drains its
+    log - the dialog never blocks the UI."""
+
+    def __init__(self, service, mal_id, title, parent=None):
+        super().__init__(parent)
+        self._svc, self._mal, self._title = service, mal_id, title
+        self.setWindowTitle(f'Cast · {title}')
+        self.resize(820, 500)
+        self._q: 'queue.Queue' = queue.Queue()
+        self._pix = {}                       # image url -> QPixmap
+        self._rows: List[dict] = []
+        self._anilist_show = None
+        self._closing = False
+
+        lay = W.QHBoxLayout(self)
+        self.lst = W.QListWidget()
+        self.lst.setMinimumWidth(340)
+        self.lst.setAlternatingRowColors(True)
+        lay.addWidget(self.lst)
+        self.pane = W.QTextBrowser()
+        self.pane.setOpenExternalLinks(True)
+        self.pane.setHtml(self._hint())
+        lay.addWidget(self.pane, 1)
+        self.lst.currentRowChanged.connect(self._show_row)
+
+        rec = None
+        if self._svc is not None:
+            try:
+                rec = self._svc.cached(mal_id=mal_id, title=title)
+            except Exception:
+                rec = None
+        if rec:
+            self._fill(rec)                  # instant, from cache
+        else:
+            self.lst.addItem('loading cast…')
+        threading.Thread(target=self._work, daemon=True).start()
+        self._poll = C.QTimer(self)
+        self._poll.setInterval(120)
+        self._poll.timeout.connect(self._drain)
+        self._poll.start()
+
+    @staticmethod
+    def _hint():
+        return ('<b>Cast</b><br><span style="color:#888">pick a character - '
+                'bio, voice actor and a link to their page.<br>'
+                'Chinese titles are boosted with Bangumi (CN voice actors).'
+                '</span>')
+
+    # --- worker (never touches widgets) --------------------------------
+    def _work(self):
+        try:
+            rec = self._svc.fetch(mal_id=self._mal, title=self._title) \
+                if self._svc is not None else None
+        except Exception:
+            rec = None
+        self._q.put(('rec', rec))
+        for r in (rec or {}).get('rows') or []:
+            u = r.get('image')
+            if u and u not in self._pix:
+                data = self._dl(u)
+                if data:
+                    self._q.put(('img', u, data))
+
+    @staticmethod
+    def _dl(url):
+        import urllib.request
+        try:
+            req = urllib.request.Request(
+                url, headers={'User-Agent': 'Mozilla/5.0 tgplay/1.0'})
+            with urllib.request.urlopen(req, timeout=12) as r:
+                return r.read()
+        except Exception:
+            return None
+
+    # --- GUI thread ------------------------------------------------------
+    def _drain(self):
+        if self._closing:
+            return
+        while True:
+            try:
+                msg = self._q.get_nowait()
+            except queue.Empty:
+                return
+            if msg[0] == 'rec':
+                if msg[1]:
+                    self._fill(msg[1])
+                elif self.lst.count() == 1 and \
+                        self.lst.item(0).text() == 'loading cast…':
+                    self.lst.clear()
+                    self.lst.addItem('no cast found on AniList/Bangumi')
+            elif msg[0] == 'img':
+                url, data = msg[1], msg[2]
+                pm = G.QPixmap()
+                if pm.loadFromData(data):
+                    self._pix[url] = pm
+                    self._reicon(url)
+
+    @staticmethod
+    def _mkicon(pm):
+        return G.QIcon(pm.scaled(28, 28, C.Qt.KeepAspectRatio,
+                                 C.Qt.SmoothTransformation))
+
+    def _fill(self, rec):
+        sel = self.lst.currentRow()
+        self._rows = rec.get('rows') or []
+        self._anilist_show = rec.get('anilist_id')
+        self.lst.blockSignals(True)
+        self.lst.clear()
+        for r in self._rows:
+            role = {'main': '★ main', 'supporting': 'supporting'}.get(
+                r.get('role', ''), r.get('role') or '?')
+            label = r['name']
+            if r.get('native'):
+                label += f"  ({r['native']})"
+            line = f"{label}   ·   {role}"
+            if r.get('va'):
+                line += f"   ·   {r['va']}"
+            it = W.QListWidgetItem(line)
+            it.setToolTip(r.get('url') or '')
+            pm = self._pix.get(r.get('image') or '')
+            if pm is not None:
+                it.setIcon(self._mkicon(pm))
+            self.lst.addItem(it)
+        self.lst.blockSignals(False)
+        if not self._rows:
+            self.lst.addItem('no cast found on AniList/Bangumi')
+        if 0 <= sel < len(self._rows):
+            self.lst.setCurrentRow(sel)
+
+    def _reicon(self, url):
+        for i, r in enumerate(self._rows):
+            if r.get('image') == url:
+                it = self.lst.item(i)
+                pm = self._pix.get(url)
+                if it is not None and pm is not None:
+                    it.setIcon(self._mkicon(pm))
+
+    def _show_row(self, row):
+        if not (0 <= row < len(self._rows)):
+            return
+        import html as _h
+        r = self._rows[row]
+        head = '<h3>' + _h.escape(r['name'])
+        if r.get('native'):
+            head += (" <span style='color:#888'>"
+                     + _h.escape(r['native']) + '</span>')
+        head += '</h3>'
+        bits = []
+        if r.get('role'):
+            bits.append('role: <b>' + _h.escape(r['role']) + '</b>')
+        if r.get('fav'):
+            bits.append(f"favourites: {r['fav']}")
+        if r.get('va'):
+            bits.append('voice actor: <b>' + _h.escape(r['va'])
+                        + (' (' + _h.escape(r['va_lang']) + ')'
+                           if r.get('va_lang') else '') + '</b>')
+        parts = [head]
+        if bits:
+            parts.append(' · '.join(bits))
+        if r.get('desc'):
+            parts.append('<p>' + _h.escape(r['desc']) + '</p>')
+        links = []
+        if r.get('url'):
+            links.append('<a href="' + _h.escape(r['url'])
+                         + '">character page ↗</a>')
+        if self._anilist_show:
+            links.append('<a href="https://anilist.co/anime/'
+                         + str(self._anilist_show)
+                         + '/characters">full cast on AniList ↗</a>')
+        if links:
+            parts.append(' &nbsp; &nbsp;'.join(links))
+        self.pane.setHtml('<br>'.join(parts))
+
+    def done(self, r):                          # close: stop polling
+        self._closing = True
+        try:
+            self._poll.stop()
+        except Exception:
+            pass
+        super().done(r)
+
+
 def _app_main() -> 'W.QApplication':
     from .gui_qt import _app as app
     return app()
@@ -425,6 +613,13 @@ class MainWindow(W.QWidget):
         self.head.setFont(hf)
         hrow = W.QHBoxLayout()
         hrow.addWidget(self.head, 1)
+        self.cast_btn = W.QPushButton('👥 Cast')
+        self.cast_btn.setToolTip(
+            'Characters: names (incl. Chinese), roles, voice actors and a '
+            'link per character (AniList + Bangumi). Opens from cache, '
+            'refreshes in the background.')
+        self.cast_btn.setEnabled(False)
+        hrow.addWidget(self.cast_btn)
         self.add_btn = W.QPushButton('＋ Simkl list')
         self.add_btn.setToolTip(
             'Add the current show to your Simkl Watching list '
@@ -530,6 +725,7 @@ class MainWindow(W.QWidget):
         self.b_stop.clicked.connect(self._do_stop)
         self.b_close.clicked.connect(self.close_window)
         self.add_btn.clicked.connect(self.add_current)
+        self.cast_btn.clicked.connect(self._show_cast)
         self.side_btn.clicked.connect(self.load_side)
         self.poll.timeout.connect(self._drain_lib)
 
@@ -609,6 +805,7 @@ class MainWindow(W.QWidget):
         self.state['session'] = s
         self.state['msg'] = ''
         self.head.setText(s.title or 'tgplay')
+        self.cast_btn.setEnabled(True)
         self.link_lbl.setText(
             f'<a href="{s.link}">{s.link}</a>' if s.link else '')
         self.opts_form.load(s)                    # shared options form
@@ -996,6 +1193,28 @@ class MainWindow(W.QWidget):
                     res = None
             self._libq.put(('show-results', e, res))
         threading.Thread(target=work, daemon=True).start()
+
+    def _show_cast(self):
+        """Open the cast dialog for the current show (cache-first, instant).
+
+        The MAL id pinned by the id-first finder keys the character lookup;
+        the dialog opens from characters.json immediately and refreshes +
+        loads avatars on a background worker (never blocks the window)."""
+        s = self.state['session']
+        if s is None:
+            self.state['msg'] = 'load a show first'
+            return
+        try:
+            from .characters import CharactersService
+            from .bangumi import Bangumi
+            svc = CharactersService(self._cfg, self._http, bangumi=Bangumi())
+        except Exception:
+            svc = None
+        mal = getattr(s, 'mal_id', None) or getattr(s.provider, 'mal_id', None)
+        try:
+            CastDialog(svc, mal, s.title, parent=self).exec()
+        except Exception as ex:
+            self.state['msg'] = f'cast: {ex}'
 
     def add_current(self):
         s = self.state['session']

@@ -73,9 +73,11 @@ class Session:
     def __init__(self, src: str, provider, cfg, http, meta, titles, *,
                  groups: List[dict], labels: Dict[int, str],
                  resume: Optional[tuple], opts: dict, mpv: List[str],
-                 audio: bool = False, link: Optional[str] = None):
+                 audio: bool = False, link: Optional[str] = None,
+                 mal_id=None):
         self.src = src
         self.provider = provider
+        self.mal_id = mal_id      # pinned MAL entry (cast + sync key)
         self.cfg = cfg
         self.http = http
         self.meta = meta
@@ -210,6 +212,7 @@ def open_session(src: str, target: str, cfg, http, opts: dict = None,
     meta = Metadata(cfg, http)
     titles = TitleService(meta, cfg)
     src = (src or 'agp').lower()
+    mal = None                                    # pinned MAL entry (per src)
 
     if src == 'axp':
         from .providers.animex import AnimeXProvider
@@ -323,4 +326,4 @@ def open_session(src: str, target: str, cfg, http, opts: dict = None,
 
     return Session(src, prov, cfg, http, meta, titles, groups=groups,
                    labels=labels, resume=_resume(cfg, prov.title), opts=opts,
-                   mpv=mpv, audio=audio, link=link)
+                   mpv=mpv, audio=audio, link=link, mal_id=mal)

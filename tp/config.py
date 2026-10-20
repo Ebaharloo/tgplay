@@ -62,6 +62,10 @@ class Config:
         return self._p('anilist_ids.json')
 
     @property
+    def characters(self):
+        return self._p('characters.json')
+
+    @property
     def tg_session(self):
         # NB: no '.session' suffix - telethon appends it, and would otherwise
         # treat the path as the literal file.
