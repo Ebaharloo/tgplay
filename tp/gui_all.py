@@ -197,22 +197,36 @@ class CastDialog(W.QDialog):
         except Exception:
             rec = None
         self._q.put(('rec', rec))
-        # avatars: cap the downloads (novel casts can be huge; the list is
-        # filterable, and images for non-shown rows aren't worth fetching)
-        for r in ((rec or {}).get('rows') or [])[:80]:
+        # avatars: all rows that HAVE an image (novel wiki rosters can be
+        # 250+ and Fandom only serves them with the wiki Referer set)
+        for r in (rec or {}).get('rows') or []:
+            if self._closing:
+                return
             u = r.get('image')
             if u and u not in self._pix:
-                data = self._dl(u)
+                data = self._dl(u, self._referer_for(r))
                 if data:
                     self._q.put(('img', u, data))
 
     @staticmethod
-    def _dl(url):
+    def _referer_for(row):
+        """Fandom blocks direct image requests (403 'Just a moment...')
+        unless the request carries the wiki's own Referer."""
+        if (row or {}).get('from') == 'wiki' and (row or {}).get('wiki'):
+            return f"https://{row['wiki']}.fandom.com/"
+        return 'https://anilist.co/'
+
+    @staticmethod
+    def _dl(url, referer=None):
         import urllib.request
         try:
-            req = urllib.request.Request(
-                url, headers={'User-Agent': 'Mozilla/5.0 tgplay/1.0'})
-            with urllib.request.urlopen(req, timeout=12) as r:
+            headers = {'User-Agent': ('Mozilla/5.0 (X11; Linux x86_64) '
+                                      'Gecko/20100101 Firefox/130.0'),
+                       'Accept': 'image/avif,image/webp,image/*,*/*;q=0.8'}
+            if referer:
+                headers['Referer'] = referer
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=15) as r:
                 return r.read()
         except Exception:
             return None

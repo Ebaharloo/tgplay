@@ -151,6 +151,10 @@ def test_dialog_headless():
         dlg.lst.count()
     dlg.origin_cb.setCurrentText('All')
     assert dlg.lst.count() == 2, dlg.lst.count()
+    # Fandom images need the wiki Referer (Cloudflare 403s otherwise)
+    assert CastDialog._referer_for(
+        {'from': 'wiki', 'wiki': 'xian-ni'}) == 'https://xian-ni.fandom.com/'
+    assert CastDialog._referer_for({'from': 'anime'}) == 'https://anilist.co/'
     dlg.done(0)
     print('PASS CastDialog renders rows + detail pane + search/source filter')
 

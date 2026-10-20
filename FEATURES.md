@@ -204,7 +204,9 @@ title cache.
 - **Search + filter**: a live search box (name / native / voice actor / bio)
   and a source filter (All / Anime / Manga / Novel / CN / Wiki). Filtering a
   source never hides the anime's **main** cast.
-- **Portraits**: 44 px avatars in the list; the selected character shows a
+- **Portraits**: 44 px avatars in the list for every character that has an
+  image (Fandom images are fetched with the wiki's `Referer` — Fandom blocks
+  hotlinking with a Cloudflare 403 otherwise); the selected character shows a
   **large portrait** next to their details and links.
 - **Cache-first & non-blocking**: opens instantly from `characters.json`
   (30-day TTL); the AniList/Bangumi/wiki refresh and the portrait downloads
