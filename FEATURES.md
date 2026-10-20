@@ -140,6 +140,26 @@ title cache.
 
 ---
 
+## Connection lights (sidebar, top-right)
+
+- Three coloured lights — **● Simkl · ● AnimeGate · ● AniList** — plus ↻:
+  green = connected, amber = optional/off, red = needs action. Tooltip says
+  exactly what's wrong; clicking the light does the fix:
+  - **Simkl**: device/PIN dialog (`SimklConnectDialog`) with the pin link +
+    code, polls in the background and closes itself on approval → lights +
+    calendar refresh immediately.
+  - **AnimeGate**: offers the browser login page (cookies are re-read on
+    the next load, `GateAuth`).
+  - **AniList**: explains that tracking is optional (`tgplay login`).
+- ↻ re-probes every service (`tp/status.py`) and reloads the calendar.
+- **Simkl access tokens auto-refresh on 401** (`SimklAccount._api`), so an
+  expired token no longer empties the calendar silently: it self-heals, and
+  only a dead refresh token turns the light red.
+- The feed/remaining failure paths now log *why* (not connected vs token
+  rejected vs fetch failed) and point at the light.
+
+---
+
 ## Titles / metadata (offline-resilient)
 
 - Titles are **cosmetic and never on the critical path**: read instantly from

@@ -17,6 +17,7 @@ register at https://simkl.com/settings/developer/ and set it with
 import json
 import os
 import time
+import urllib.error
 import urllib.parse
 from typing import Dict, List, Optional
 
@@ -100,20 +101,65 @@ class SimklAccount:
                   'app-version': VER})
         url = f'{API}{path}?{urllib.parse.urlencode(p)}'
         headers = {'User-Agent': f'{APP}/{VER}', 'Accept': 'application/json'}
-        if self.access_token():
-            headers['Authorization'] = 'Bearer ' + self.access_token()
         data = None
         if body is not None:
             data = json.dumps(body).encode()
             headers['Content-Type'] = 'application/json'
-        req = self.http.request(url, method=method, headers=headers, data=data)
-        r = self.http.open(req)
+
+        def send():
+            h = dict(headers)
+            if self.access_token():
+                h['Authorization'] = 'Bearer ' + self.access_token()
+            return self.http.open(
+                self.http.request(url, method=method, headers=h, data=data))
+
+        try:
+            r = send()
+        except urllib.error.HTTPError as ex:
+            # expired access token -> refresh ONCE and retry: this is what
+            # keeps the calendar/remaining working without a manual re-login
+            if ex.code == 401 and self.refresh():
+                r = send()
+            else:
+                raise
         try:
             return json.load(r)
         finally:
             _quiet_close(r)
 
     # --- login (device / PIN) ------------------------------------------
+    def start_device(self) -> Optional[dict]:
+        """Begin the PIN flow for a GUI/worker: url + code to show the user.
+
+        Returns {'url','code','device_code','interval','expires'} or None."""
+        if not self.client_id:
+            return None
+        d = self._form('/oauth2/device',
+                       {'client_id': self.client_id,
+                        'scope': 'media:read media:write'})
+        if d.get('error') or not d.get('device_code'):
+            return None
+        return {'url': d.get('verification_uri_complete')
+                       or 'https://simkl.com/pin',
+                'code': d.get('user_code', ''),
+                'device_code': d['device_code'],
+                'interval': int(d.get('interval') or 5),
+                'expires': int(d.get('expires_in') or 900)}
+
+    def poll_device(self, device_code: str) -> str:
+        """One poll: 'ok' (saved), 'pending', or the error string."""
+        tok = self._form('/oauth2/token', {
+            'grant_type': 'urn:ietf:params:oauth:grant-type:device_code',
+            'client_id': self.client_id, 'device_code': device_code})
+        if tok.get('access_token'):
+            self._save(client_id=self.client_id,
+                       access_token=tok['access_token'],
+                       refresh_token=tok.get('refresh_token'),
+                       scope=tok.get('scope'), at=int(time.time()))
+            return 'ok'
+        err = tok.get('error')
+        return err or 'pending'
+
     def login(self, poll_limit: int = 180) -> Optional[dict]:
         if not self.client_id:
             print('simkl: no client_id configured.')
@@ -126,42 +172,30 @@ class SimklAccount:
                   'tp/simkl_account.py)')
             print('  Users then only run: tgplay simkl login')
             return None
-        d = self._form('/oauth2/device',
-                       {'client_id': self.client_id,
-                        'scope': 'media:read media:write'})
-        if d.get('error') or not d.get('device_code'):
-            print(f"simkl: device auth failed ({d.get('error') or d}). "
-                  'A V1 client_id cannot use this flow - register a V2 app.')
+        dev = self.start_device()
+        if not dev:
+            print('simkl: device auth failed. A V1 client_id cannot use '
+                  'this flow - register a V2 app.')
             return None
-        code = d.get('user_code', '')
-        url = d.get('verification_uri_complete') or 'https://simkl.com/pin'
         print('simkl: open this and approve, then come back here:')
-        print(f'  {url}')
-        print(f'  (code: {code})')
-        interval = int(d.get('interval') or 5)
-        deadline = time.time() + min(poll_limit, int(d.get('expires_in') or 900))
+        print(f"  {dev['url']}")
+        print(f"  (code: {dev['code']})")
+        interval = dev['interval']
+        deadline = time.time() + min(poll_limit, dev['expires'])
         while time.time() < deadline:
             time.sleep(interval)
-            tok = self._form('/oauth2/token', {
-                'grant_type': 'urn:ietf:params:oauth:grant-type:device_code',
-                'client_id': self.client_id, 'device_code': d['device_code']})
-            if tok.get('access_token'):
-                self._save(client_id=self.client_id,
-                           access_token=tok['access_token'],
-                           refresh_token=tok.get('refresh_token'),
-                           scope=tok.get('scope'),
-                           at=int(time.time()))
+            res = self.poll_device(dev['device_code'])
+            if res == 'ok':
                 who = self.user()
                 print(f"simkl: connected{(' as ' + who) if who else ''}")
-                return tok
-            err = tok.get('error')
-            if err == 'authorization_pending':
+                return {'ok': True}
+            if res == 'pending':
                 continue
-            if err == 'slow_down':
+            if res == 'slow_down':
                 interval += 5
                 continue
-            if err in ('expired_token', 'invalid_client'):
-                print(f'simkl: {err} - start again')
+            if res in ('expired_token', 'invalid_client'):
+                print(f'simkl: {res} - start again')
                 return None
         print('simkl: timed out waiting for approval')
         return None

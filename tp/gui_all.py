@@ -299,6 +299,186 @@ class CastDialog(W.QDialog):
         super().done(r)
 
 
+class StatusStrip(W.QWidget):
+    """Connection lights: ● Simkl · ● AnimeGate · ● AniList (+ ↻).
+
+    Green = connected, amber = optional/off, red = needs action. Click a
+    light to do the fix (Simkl PIN sign-in, AnimeGate login page); ↻
+    re-probes every service and reloads the calendar."""
+
+    COLORS = {'ok': '#98c379', 'warn': '#e5c07b', 'bad': '#e06c75'}
+    NAMES = {'simkl': 'Simkl', 'gate': 'AnimeGate', 'anilist': 'AniList'}
+
+    def __init__(self, on_click, on_refresh, parent=None):
+        super().__init__(parent)
+        row = W.QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(2)
+        self._clicked = on_click
+        self._items = {}
+        self._btns = {}
+        for key, name in self.NAMES.items():
+            b = W.QPushButton(f'● {name}')
+            b.setFlat(True)
+            b.setCursor(C.Qt.PointingHandCursor)
+            b.setStyleSheet('border:none; background:transparent; '
+                            'padding:2px 4px;')
+            b.clicked.connect(lambda _c=False, k=key: self._click(k))
+            self._btns[key] = b
+            row.addWidget(b)
+        row.addStretch(1)
+        self.refresh_btn = W.QToolButton()
+        self.refresh_btn.setText('↻')
+        self.refresh_btn.setToolTip('check connections + reload calendar')
+        self.refresh_btn.clicked.connect(lambda: on_refresh())
+        row.addWidget(self.refresh_btn)
+        self.set_items([])
+
+    def set_items(self, items):
+        for key, b in self._btns.items():
+            it = next((x for x in items if x.get('key') == key), None)
+            if it:
+                self._items[key] = it
+                col = self.COLORS.get(it.get('state'), '#abb2bf')
+                b.setText(f"● {it.get('name', self.NAMES[key])}")
+                b.setStyleSheet('border:none; background:transparent; '
+                                f'padding:2px 4px; color:{col};')
+                b.setToolTip(f"{it.get('name', key)}: {it.get('detail', '')}")
+            else:
+                self._items[key] = {'key': key,
+                                    'name': self.NAMES[key],
+                                    'state': 'warn',
+                                    'detail': 'not checked yet'}
+                b.setStyleSheet('border:none; background:transparent; '
+                                'padding:2px 4px; color:#abb2bf;')
+                b.setToolTip(f"{self.NAMES[key]}: not checked yet")
+
+    def _click(self, key):
+        it = self._items.get(key)
+        if it:
+            self._clicked(it)
+
+
+class SimklConnectDialog(W.QDialog):
+    """Sign in to Simkl with the device/PIN flow, without leaving the app.
+
+    Shows the PIN page link + the code, polls Simkl on a worker thread and
+    closes itself the moment you approve - the lights/calendar refresh right
+    after. 'Open page' puts the link in your browser; 'Copy code' helps."""
+
+    def __init__(self, account, parent=None):
+        super().__init__(parent)
+        self.acc = account
+        self._q = queue.Queue()
+        self._closing = False
+        self.setWindowTitle('Connect Simkl')
+        self.setMinimumWidth(460)
+        lay = W.QVBoxLayout(self)
+        self.status = W.QLabel('starting Simkl sign-in…')
+        lay.addWidget(self.status)
+        self.link = W.QLabel('')
+        self.link.setTextInteractionFlags(C.Qt.TextBrowserInteraction)
+        self.link.setOpenExternalLinks(True)
+        lay.addWidget(self.link)
+        self.code_lbl = W.QLabel('')
+        f = self.code_lbl.font()
+        f.setPointSize(f.pointSize() + 6)
+        f.setBold(True)
+        self.code_lbl.setFont(f)
+        lay.addWidget(self.code_lbl)
+        bar = W.QHBoxLayout()
+        self.open_btn = W.QPushButton('🌐 Open pin page')
+        self.copy_btn = W.QPushButton('⧉ Copy code')
+        self.cancel_btn = W.QPushButton('Cancel')
+        for b in (self.open_btn, self.copy_btn):
+            bar.addWidget(b)
+        bar.addStretch(1)
+        bar.addWidget(self.cancel_btn)
+        lay.addLayout(bar)
+        self.open_btn.clicked.connect(self._open)
+        self.copy_btn.clicked.connect(self._copy)
+        self.cancel_btn.clicked.connect(self.reject)
+
+        self._dev = None
+        try:
+            self._dev = account.start_device()
+        except Exception:
+            self._dev = None
+        if not self._dev:
+            self.status.setText('Simkl sign-in unavailable (no client id or '
+                                'device flow refused).')
+            for b in (self.open_btn, self.copy_btn):
+                b.setEnabled(False)
+            return
+        self.link.setText(
+            f'<a href="{self._dev["url"]}">{self._dev["url"]}</a>')
+        self.code_lbl.setText(self._dev['code'] or '')
+        self.status.setText('Approve this code on the Simkl page - the '
+                            'dialog closes itself when done.')
+        threading.Thread(target=self._poll, daemon=True).start()
+        self._timer = C.QTimer(self)
+        self._timer.setInterval(250)
+        self._timer.timeout.connect(self._drain)
+        self._timer.start()
+
+    def _open(self):
+        try:
+            import webbrowser
+            webbrowser.open(self._dev['url'])
+        except Exception:
+            pass
+
+    def _copy(self):
+        try:
+            W.QApplication.clipboard().setText(self._dev['code'] or '')
+            self.status.setText('code copied - now paste it on the Simkl page')
+        except Exception:
+            pass
+
+    def _poll(self):
+        interval = max(2, int(self._dev.get('interval') or 5))
+        deadline = time.time() + int(self._dev.get('expires') or 900)
+        while time.time() < deadline and not self._closing:
+            time.sleep(interval)
+            if self._closing:
+                return
+            res = self.acc.poll_device(self._dev['device_code'])
+            self._q.put(res)
+            if res == 'ok':
+                return
+
+    def _drain(self):
+        if self._closing:
+            return
+        while True:
+            try:
+                res = self._q.get_nowait()
+            except queue.Empty:
+                return
+            if res == 'ok':
+                self._closing = True
+                try:
+                    self._timer.stop()
+                except Exception:
+                    pass
+                self.accept()
+                return
+            if res not in ('pending', 'authorization_pending', 'slow_down'):
+                self.status.setText(f'Simkl said: {res} - start again')
+                try:
+                    self._timer.stop()
+                except Exception:
+                    pass
+
+    def done(self, r):
+        self._closing = True
+        try:
+            self._timer.stop()
+        except Exception:
+            pass
+        super().done(r)
+
+
 def _app_main() -> 'W.QApplication':
     from .gui_qt import _app as app
     return app()
@@ -540,6 +720,9 @@ class MainWindow(W.QWidget):
 
     # --- widget construction -------------------------------------------
     def _build_sidebar(self, side: W.QLayout):
+        self.status_strip = StatusStrip(self._status_clicked,
+                                        self._probe_status)
+        side.addWidget(self.status_strip)
         fbox = W.QGroupBox('Feed · calendar  (click a header to sort)')
         fv = W.QVBoxLayout(fbox)
         frow = W.QHBoxLayout()
@@ -1194,6 +1377,56 @@ class MainWindow(W.QWidget):
             self._libq.put(('show-results', e, res))
         threading.Thread(target=work, daemon=True).start()
 
+    def _probe_status(self):
+        """Check Simkl/AnimeGate/AniList on a worker and light them up."""
+        def work():
+            try:
+                from .status import StatusProbe
+                items = StatusProbe(self._cfg, self._http).check_all()
+            except Exception:
+                items = []
+            self._libq.put(('status', items))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _status_clicked(self, item):
+        """A light was clicked: do the matching fix (or explain it)."""
+        key = item.get('fix') or item.get('key')
+        if key == 'simkl':
+            self._simkl_connect()
+        elif key == 'gate':
+            from .providers.animegate import GateAuth
+            box = W.QMessageBox(self)
+            box.setWindowTitle('AnimeGate')
+            box.setText('AnimeGate session: ' + str(item.get('detail')))
+            box.setInformativeText(
+                'Log in to animegate in your browser (Firefox), then press OK\n'
+                'and click ↻ to refresh. Until then links may be dead.')
+            b = box.addButton('🌐 Open login page', W.QMessageBox.AcceptRole)
+            box.addButton('Close', W.QMessageBox.RejectRole)
+            box.exec()
+            if box.clickedButton() is b:
+                try:
+                    GateAuth().open_login()
+                except Exception as ex:
+                    self.state['msg'] = f'error: {ex}'
+        else:
+            W.QMessageBox.information(
+                self, 'AniList tracking',
+                'AniList progress sync is optional.\n\n'
+                'It is configured with:  tgplay login\n'
+                '(or AGP_ANILIST_TOKEN in the environment).\n\n'
+                'Everything else works without it.')
+
+    def _simkl_connect(self):
+        from .simkl_account import SimklAccount
+        dlg = SimklConnectDialog(SimklAccount(self._cfg, self._http),
+                                 parent=self)
+        if dlg.exec() == W.QDialog.Accepted:
+            self.state['msg'] = 'Simkl connected'
+            _log.cprint('simkl: connected from the window')
+            self._probe_status()
+            self.load_side()
+
     def _show_cast(self):
         """Open the cast dialog for the current show (cache-first, instant).
 
@@ -1251,13 +1484,18 @@ class MainWindow(W.QWidget):
         self.feed.setItem(0, 2, W.QTableWidgetItem('loading…'))
 
         def work():
+            acc = None
             try:
                 from .simkl_account import SimklAccount
-                connected = (SimklAccount(self._cfg).logged_in()
-                             if self._cfg is not None else False)
-            except Exception:
+                acc = (SimklAccount(self._cfg, self._http)
+                       if self._cfg is not None else None)
+                connected = bool(acc and acc.logged_in())
+            except Exception as ex:
                 connected = False
+                _log.cprint(f'feed: Simkl check failed ({ex})')
             if not connected:
+                _log.cprint('feed: Simkl not connected - click the Simkl '
+                            'light (↻ area, above) to sign in')
                 self._libq.put(('feed', None, None))
                 return
             try:
@@ -1267,8 +1505,19 @@ class MainWindow(W.QWidget):
                     cal, rem, rc = ov['cal'], ov['rem'], ov['hist']
                     s.result(f'{len(cal)} upcoming · {len(rem)} to-watch '
                              f'· {len(rc)} watched')
-            except Exception:
+            except Exception as ex:
+                _log.cprint(f'feed: fetch failed ({ex}) - press ↻ to retry')
                 cal, rem, rc = [], [], []
+            if not (cal or rem or rc) and acc is not None:
+                # empty library OR a rejected token look the same from the
+                # API (it swallows errors) - one cheap check tells them apart
+                if acc.user() is None:
+                    _log.cprint('feed: Simkl token rejected/expired - click '
+                                'the Simkl light to sign in again')
+                    self._libq.put(('feed', None, None))
+                    return
+                _log.cprint('feed: Simkl is connected but the library/'
+                            'calendar came back empty')
             self._libq.put(('feed', {'cal': cal, 'rem': rem}, rc))
         threading.Thread(target=work, daemon=True).start()
 
@@ -1280,7 +1529,7 @@ class MainWindow(W.QWidget):
         if cal is None and rem is None:
             self.feed.insertRow(0)
             self.feed.setItem(0, 2, W.QTableWidgetItem(
-                'connect:  tgplay simkl login'))
+                'Simkl not connected — click the ● Simkl light above'))
             self.feed.setSortingEnabled(True)
             return
         mode = self.feed_filter.currentText()
@@ -1333,6 +1582,13 @@ class MainWindow(W.QWidget):
                 return
             if msg[0] == 'feed-refresh':
                 self.load_side()
+            elif msg[0] == 'status':
+                items = msg[1] or []
+                self.status_strip.set_items(items)
+                if items:
+                    _log.cprint('status: ' + ' · '.join(
+                        f"{i.get('name')} {i.get('state')}"
+                        for i in items))
             elif msg[0] == 'loaded':
                 # async completion of load_target (worker -> GUI thread)
                 self._apply_loaded(msg[1], msg[2], msg[3], msg[4])
@@ -1349,7 +1605,7 @@ class MainWindow(W.QWidget):
                 if payload is None:
                     self.hist.insertRow(0)
                     self.hist.setItem(0, 2, W.QTableWidgetItem(
-                        'connect:  tgplay simkl login'))
+                        'Simkl not connected — click the ● Simkl light above'))
                     continue
                 for e in rc:
                     r = self.hist.rowCount()
@@ -1526,6 +1782,7 @@ class MainWindow(W.QWidget):
         self.load_side()
 
         C.QTimer.singleShot(4000, self._gate_health)   # one background check
+        C.QTimer.singleShot(600, self._probe_status)   # lights on startup
         mode = os.environ.get('AGP_GUI_TEST')
         if initial:
             self.load_target(initial[0], initial[1])
