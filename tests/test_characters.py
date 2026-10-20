@@ -14,6 +14,12 @@ sys.path.insert(0, os.path.dirname(HERE))
 from tp import characters as ch   # noqa: E402
 from tp.config import Config      # noqa: E402
 
+
+class NoFandom:
+    """No wiki lookups in unit tests (they'd hit the network)."""
+    def fetch(self, titles):
+        return []
+
 MEDIA = {
     'id': 115844, 'idMal': 41219,
     'title': {'romaji': 'Fanren Xiu Xian Zhuan',
@@ -55,7 +61,7 @@ def _mk_rec():
 
 def test_cache_first():
     cfg = Config(home=tempfile.mkdtemp(prefix='tgplay-cast-')).ensure()
-    svc = ch.CharactersService(cfg, http=None)
+    svc = ch.CharactersService(cfg, http=None, fandom=NoFandom())
 
     def fake_anilist(mal_id, title):
         rec = _mk_rec()
@@ -91,7 +97,7 @@ def test_bangumi_boost():
                      'stat': {'favorites': 10}, 'images': {},
                      'short_desc': 'CN entry.'}]
 
-    svc = ch.CharactersService(cfg, http=None, bangumi=FakeBgm())
+    svc = ch.CharactersService(cfg, http=None, fandom=NoFandom(), bangumi=FakeBgm())
     svc._anilist = lambda mal_id, title: _mk_rec()
     rec = svc.fetch(mal_id=41219)
     names = [r['name'] for r in rec['rows']]
@@ -139,10 +145,10 @@ def test_dialog_headless():
     assert 'Nan Gong' in dlg.lst.item(0).text()
     dlg.search.setText('')
     assert dlg.lst.count() == 2, dlg.lst.count()
-    # source filter: only the anime rows here
+    # source filter: filling a source still keeps the anime's MAIN cast
     dlg.origin_cb.setCurrentText('Novel')
-    assert dlg.lst.count() == 1 and \
-        'no matching' in dlg.lst.item(0).text(), dlg.lst.count()
+    assert dlg.lst.count() == 1 and 'Li Han' in dlg.lst.item(0).text(), \
+        dlg.lst.count()
     dlg.origin_cb.setCurrentText('All')
     assert dlg.lst.count() == 2, dlg.lst.count()
     dlg.done(0)
@@ -153,7 +159,7 @@ def test_pagination_and_source_material():
     """ALL anime pages are fetched, and the manga/novel relation's cast is
     merged in (tagged 'novel'), with duplicates dropped (anime wins)."""
     cfg = Config(home=tempfile.mkdtemp(prefix='tgplay-cast-')).ensure()
-    svc = ch.CharactersService(cfg, http=None)
+    svc = ch.CharactersService(cfg, http=None, fandom=NoFandom())
 
     def row(cid, name, native=''):
         return {'role': 'SUPPORTING', 'voiceActors': [],
@@ -197,11 +203,40 @@ def test_pagination_and_source_material():
     print('PASS paginated anime cast + manga/novel merge + dedupe')
 
 
+def test_wiki_merge():
+    """Fandom wiki rows are merged in (deduped by name), tagged 'wiki'."""
+    cfg = Config(home=tempfile.mkdtemp(prefix='tgplay-cast-')).ensure()
+    svc = ch.CharactersService(cfg, http=None)
+
+    class FakeFandom:
+        def fetch(self, titles):
+            return [
+                {'cid': 'fandom:xian-ni/Wang Lin', 'name': 'Wang Lin',
+                 'native': '', 'role': '', 'image': '', 'fav': 0, 'desc': '',
+                 'url': 'https://xian-ni.fandom.com/wiki/Wang_Lin',
+                 'va': '', 'va_lang': '', 'from': 'wiki', 'wiki': 'xian-ni'},
+                {'cid': 'fandom:xian-ni/Li Han', 'name': 'Li Han',
+                 'native': '', 'role': '', 'image': '', 'fav': 0, 'desc': '',
+                 'url': '', 'va': '', 'va_lang': '', 'from': 'wiki',
+                 'wiki': 'xian-ni'},
+            ]
+
+    svc.fandom = FakeFandom()
+    svc._anilist = lambda mal_id, title: _mk_rec()
+    rec = svc.fetch(mal_id=41219)
+    names = [r['name'] for r in rec['rows']]
+    assert 'Wang Lin' in names and rec.get('has_wiki'), names
+    assert names.count('Li Han') == 1, names     # AniList row wins the dupe
+    assert rec.get('wiki') == 'xian-ni', rec
+    print('PASS Fandom wiki merged (dedupe keeps the AniList row)')
+
+
 def main():
     test_parse()
     test_cache_first()
     test_bangumi_boost()
     test_pagination_and_source_material()
+    test_wiki_merge()
     test_dialog_headless()
     print('CHARACTERS OK')
 

@@ -133,10 +133,11 @@ def _rows_from_bangumi(persons: List[dict]) -> List[dict]:
 class CharactersService:
     """Fetch + cache the full cast of a show (by MAL id or title)."""
 
-    def __init__(self, cfg, http=None, bangumi=None):
+    def __init__(self, cfg, http=None, bangumi=None, fandom=None):
         self.cfg = cfg
         self.http = http
         self.bangumi = bangumi
+        self.fandom = fandom
 
     # --- cache -----------------------------------------------------------
     def _all(self) -> dict:
@@ -165,13 +166,42 @@ class CharactersService:
 
     # --- network (worker thread only!) ------------------------------------
     def fetch(self, mal_id=None, title=None) -> Optional[dict]:
-        """Anime cast (ALL pages) + manga/novel relatives + Bangumi boost."""
+        """Anime cast (ALL pages) + manga/novel relatives + Bangumi + wiki."""
         rec = self._anilist(mal_id, title)
         if rec is None:
             return None
         if self.bangumi is not None:
             rec['rows'] = self._boost(rec)
+        rec['rows'] = self._merge_wiki(rec)
         return rec
+
+    def _merge_wiki(self, rec: dict) -> List[dict]:
+        """Fandom wiki roster: the full cast for novels/donghua whose AniList
+        entry is thin. Enough rows already? Skip the extra requests."""
+        if len(rec['rows']) >= 120:
+            return rec['rows']
+        try:
+            from .fandom import FandomCharacters
+            fandom = self.fandom or FandomCharacters()
+            titles = [rec.get('show') or '']
+            titles += list(rec.get('native_titles') or [])
+            rows = fandom.fetch(titles) or []
+        except Exception:
+            rows = []
+        if not rows:
+            return rec['rows']
+        have = {r['name'].casefold() for r in rec['rows']}
+        added = 0
+        for r in rows:
+            n = (r.get('name') or '').casefold()
+            if n and n not in have:
+                rec['rows'].append(r)
+                have.add(n)
+                added += 1
+        if added:
+            rec['has_wiki'] = True
+            rec['wiki'] = rows[0].get('wiki') or ''
+        return rec['rows']
 
     def _gql(self, query: str, variables: dict) -> Optional[dict]:
         """One GraphQL POST (overridable in tests)."""

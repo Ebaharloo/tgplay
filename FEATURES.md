@@ -194,18 +194,22 @@ title cache.
   character's name + native (CJK) name, role (main/supporting), voice actor,
   favourites, bio, a **large portrait**, and links to the character's page +
   the show's full-cast page.
-- **Deep cast**: the anime's cast is fetched **paginated (all pages)** AND the
-  manga / light-novel / novel entries' casts are merged in (tagged `manga` /
-  `novel`): the anime entry often lists only a handful while the source novel
-  has dozens/hundreds (e.g. Renegade Immortal: 7 anime + 17 source rows).
-  Sources are found via AniList relations first, then by a title search of
-  AniList's manga/novel entries (many donghua never link their novel), with
-  close-title matching and de-duplication (anime row wins).
+- **Deep cast**: the anime's cast is fetched **paginated (all pages)**, the
+  manga / light-novel / novel entries' casts are merged in (relations first,
+  then an AniList manga/novel title search — many donghua never link their
+  novel), and finally the series' **Fandom wiki** (`Category:Characters` via
+  the MediaWiki API) supplies the full novel roster with links and thumbnails
+  (Renegade Immortal: 7 anime + 17 manga + 250 wiki = 274 characters).
+  Sources are de-duplicated (anime row wins, since it has voice actors).
 - **Search + filter**: a live search box (name / native / voice actor / bio)
-  and a source filter (All / Anime / Manga / Novel / CN).
+  and a source filter (All / Anime / Manga / Novel / CN / Wiki). Filtering a
+  source never hides the anime's **main** cast.
+- **Portraits**: 44 px avatars in the list; the selected character shows a
+  **large portrait** next to their details and links.
 - **Cache-first & non-blocking**: opens instantly from `characters.json`
-  (30-day TTL); big portraits + 44px avatars stream in on a worker thread.
-  The pinned MAL id (id-first finder) keys the lookup.
+  (30-day TTL); the AniList/Bangumi/wiki refresh and the portrait downloads
+  run on a worker thread (Fandom's generic "no image" placeholder is
+  filtered). The pinned MAL id keys the lookup.
 
 ---
 

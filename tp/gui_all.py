@@ -145,7 +145,8 @@ class CastDialog(W.QDialog):
         self.search.setClearButtonEnabled(True)
         bar.addWidget(self.search, 1)
         self.origin_cb = W.QComboBox()
-        self.origin_cb.addItems(['All', 'Anime', 'Manga', 'Novel', 'CN'])
+        self.origin_cb.addItems(['All', 'Anime', 'Manga', 'Novel', 'CN',
+                                 'Wiki'])
         bar.addWidget(self.origin_cb)
         left.addLayout(bar)
         self.lst = W.QListWidget()
@@ -262,11 +263,14 @@ class CastDialog(W.QDialog):
         origin = (self.origin_cb.currentText()
                   if hasattr(self, 'origin_cb') else 'All')
         want = {'Anime': 'anime', 'Manga': 'manga', 'Novel': 'novel',
-                'CN': 'bangumi'}.get(origin)
+                'CN': 'bangumi', 'Wiki': 'wiki'}.get(origin)
         rows = []
         for r in self._all_rows:
-            if want and (r.get('from') or 'anime') != want:
-                continue
+            origin_row = r.get('from') or 'anime'
+            if want and origin_row != want:
+                # never lose the anime's MAIN cast when filtering a source
+                if not (origin_row == 'anime' and r.get('role') == 'main'):
+                    continue
             if q:
                 blob = ' '.join(str(r.get(k) or '') for k in
                                 ('name', 'native', 'va', 'desc', 'from'))
@@ -287,7 +291,8 @@ class CastDialog(W.QDialog):
             if r.get('native'):
                 label += f"  ({r['native']})"
             src = {'anime': '', 'manga': ' · manga', 'novel': ' · novel',
-                   'bangumi': ' · CN'}.get(r.get('from') or 'anime', '')
+                   'bangumi': ' · CN', 'wiki': ' · wiki'}.get(
+                       r.get('from') or 'anime', '')
             line = f"{label}   ·   {role}{src}"
             if r.get('va'):
                 line += f"   ·   {r['va']}"
