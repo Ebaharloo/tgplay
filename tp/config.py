@@ -66,6 +66,10 @@ class Config:
         return self._p('characters.json')
 
     @property
+    def posters(self):
+        return self._p('posters.json')
+
+    @property
     def tg_session(self):
         # NB: no '.session' suffix - telethon appends it, and would otherwise
         # treat the path as the literal file.

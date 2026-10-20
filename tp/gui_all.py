@@ -580,6 +580,147 @@ class SimklConnectDialog(W.QDialog):
         super().done(r)
 
 
+class _ShelfCard(W.QFrame):
+    """One poster card in the Continue-watching rail."""
+
+    def __init__(self, item, on_click, on_menu):
+        super().__init__()
+        self.item = item
+        self._click, self._menu = on_click, on_menu
+        self.setFrameShape(W.QFrame.NoFrame)
+        self.setCursor(C.Qt.PointingHandCursor)
+        self.setStyleSheet('QFrame:hover { background:#2a2e32; '
+                           'border-radius:8px; }')
+        lay = W.QVBoxLayout(self)
+        lay.setContentsMargins(6, 6, 6, 6)
+        lay.setSpacing(3)
+        self.poster = W.QLabel()
+        self.poster.setFixedSize(92, 138)
+        self.poster.setStyleSheet('background:#1b1e20; border-radius:6px;')
+        self.poster.setAlignment(C.Qt.AlignCenter)
+        self.poster.setText('…')
+        lay.addWidget(self.poster)
+        title = item.get('title') or ''
+        lbl = W.QLabel(self.fontMetrics().elidedText(
+            title, C.Qt.ElideRight, 118))
+        lbl.setFixedWidth(118)
+        lbl.setToolTip(title)
+        lay.addWidget(lbl)
+        total = item.get('total') or 0
+        sub = (f"ep {item.get('next_ep')}" +
+               (f"/{total}" if total else '') +
+               f" · {float(item.get('pct') or 0):.0f}%")
+        s = W.QLabel(sub)
+        s.setStyleSheet('color:#888;')
+        lay.addWidget(s)
+        bar = W.QProgressBar()
+        bar.setRange(0, 100)
+        bar.setValue(int(item.get('pct') or 0))
+        bar.setTextVisible(False)
+        bar.setFixedHeight(5)
+        bar.setFixedWidth(118)
+        lay.addWidget(bar)
+
+    def mousePressEvent(self, ev):
+        if ev.button() == C.Qt.LeftButton:
+            self._click(self.item)
+        elif ev.button() == C.Qt.RightButton:
+            self._menu(self.item, ev.globalPosition().toPoint())
+        super().mousePressEvent(ev)
+
+
+class ContinueShelf(W.QWidget):
+    """The 'Continue watching' rail: posters + progress, one click resumes.
+
+    Data comes from tp/continuewatch (in-progress Simkl rows + posters).
+    Click = resume via the last link you used for that show (falls back to
+    the source chooser); right-click = choose a source explicitly."""
+
+    def __init__(self, on_click, on_menu, parent=None):
+        super().__init__(parent)
+        self._click, self._menu = on_click, on_menu
+        self._items = []
+        self._cards = {}          # image url -> [cards]
+        self._px = {}             # image url -> QPixmap (avoids re-download)
+        self._collapsed = False
+        outer = W.QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(2)
+        head = W.QHBoxLayout()
+        t = W.QLabel('▶  Continue watching')
+        f = t.font()
+        f.setBold(True)
+        t.setFont(f)
+        head.addWidget(t)
+        self.count = W.QLabel('')
+        self.count.setStyleSheet('color:#888;')
+        head.addWidget(self.count)
+        head.addStretch(1)
+        self.toggle = W.QToolButton()
+        self.toggle.setText('▾')
+        self.toggle.setToolTip('collapse / expand the shelf')
+        self.toggle.clicked.connect(self._toggle)
+        head.addWidget(self.toggle)
+        outer.addLayout(head)
+        self.scroll = W.QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFixedHeight(206)
+        self.scroll.setVerticalScrollBarPolicy(C.Qt.ScrollBarAlwaysOff)
+        self.scroll.setHorizontalScrollBarPolicy(C.Qt.ScrollBarAsNeeded)
+        inner = W.QWidget()
+        self.row = W.QHBoxLayout(inner)
+        self.row.setContentsMargins(0, 0, 0, 0)
+        self.row.setSpacing(6)
+        self.row.addStretch(1)
+        self.scroll.setWidget(inner)
+        outer.addWidget(self.scroll)
+        self.setVisible(False)
+
+    def set_items(self, items):
+        while self.row.count():
+            it = self.row.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.deleteLater()
+        self._items = items or []
+        self._cards = {}
+        for item in self._items:
+            card = _ShelfCard(item, self._click, self._menu)
+            u = item.get('image') or ''
+            if u and u in self._px:
+                card.poster.setPixmap(self._px[u])
+                card.poster.setText('')
+            if u:
+                self._cards.setdefault(u, []).append(card)
+            self.row.addWidget(card)
+        self.row.addStretch(1)
+        self.count.setText(f'{len(self._items)} in progress'
+                           if self._items else '')
+        self.sync()
+
+    def set_poster(self, url, pm):
+        self._px[url] = pm
+        for card in self._cards.get(url, []):
+            card.poster.setPixmap(pm)
+            card.poster.setText('')
+
+    def has_poster(self, url):
+        return url in self._px
+
+    def is_empty(self):
+        return not self._items
+
+    def _toggle(self):
+        self._collapsed = not self._collapsed
+        self.toggle.setText('▸' if self._collapsed else '▾')
+        self.sync()
+
+    def sync(self, results_visible=False):
+        self.scroll.setVisible(not self._collapsed)
+        self.setVisible(bool(self._items) and not self._collapsed
+                        and not results_visible)
+
+
 def _app_main() -> 'W.QApplication':
     from .gui_qt import _app as app
     return app()
@@ -789,6 +930,7 @@ class MainWindow(W.QWidget):
         self._lq: 'queue.Queue' = queue.Queue()      # log lines
         self._rq: 'queue.Queue' = queue.Queue()      # search results
         self._libq: 'queue.Queue' = queue.Queue()    # sidebar payloads
+        self._poster_pending = set()                 # shelf poster downloads
         self._prev_sink = _log.SINK
         _log.SINK = lambda s: self._lq.put(str(s))
 
@@ -808,6 +950,7 @@ class MainWindow(W.QWidget):
         outer.addLayout(side, 0)
 
         self._build_sidebar(side)
+        self._build_shelf(root)
         self._build_search_row(root)
         self._build_header(root)
         self._build_options(root)
@@ -846,6 +989,10 @@ class MainWindow(W.QWidget):
 
         self.side_btn = W.QPushButton('↻  refresh feed & history')
         side.addWidget(self.side_btn)
+
+    def _build_shelf(self, root: W.QLayout):
+        self.shelf = ContinueShelf(self._shelf_click, self._shelf_menu)
+        root.addWidget(self.shelf)
 
     def _build_search_row(self, root: W.QLayout):
         srow = W.QHBoxLayout()
@@ -1277,6 +1424,7 @@ class MainWindow(W.QWidget):
             self.results.addItem(it)
         self.results.setVisible(bool(items))
         self.res_stack.setVisible(bool(items))
+        self.shelf.sync(bool(items))      # results replace the shelf
 
     def _on_text(self):
         from .cli_all import route
@@ -1418,6 +1566,7 @@ class MainWindow(W.QWidget):
             self.hist_tbl.sortItems(sc, so)       # keep the user's sort
         self.res_stack.setCurrentWidget(self.hist_tbl)
         self.res_stack.setVisible(bool(items) or force)
+        self.shelf.sync(False)               # history view: show the shelf
 
     def _hist_del(self, _row, e):
         try:
@@ -1477,6 +1626,64 @@ class MainWindow(W.QWidget):
                     res = None
             self._libq.put(('show-results', e, res))
         threading.Thread(target=work, daemon=True).start()
+
+    # --- continue-watching shelf ---------------------------------------
+    def _load_posters(self, items):
+        """Download shelf posters (Simkl/AniList CDN) on a worker thread."""
+        todo = []
+        for it in items or []:
+            u = it.get('image')
+            if not u or u in self._poster_pending or self.shelf.has_poster(u):
+                continue
+            self._poster_pending.add(u)
+            todo.append(u)
+        if not todo:
+            return
+
+        def work():
+            import urllib.request
+            for u in todo:
+                try:
+                    req = urllib.request.Request(
+                        u, headers={'User-Agent': 'Mozilla/5.0'})
+                    with urllib.request.urlopen(req, timeout=15) as r:
+                        data = r.read()
+                    self._libq.put(('poster', u, data))
+                except Exception:
+                    self._poster_pending.discard(u)
+        threading.Thread(target=work, daemon=True).start()
+
+    def _shelf_click(self, item):
+        """One click resumes: the last link used for that show, else chooser."""
+        from .cli_all import route
+        link = (history.last_link_for(self._cfg, item.get('title'))
+                if self._cfg is not None else None)
+        r = route(link) if link else None
+        if r:
+            _log.cprint(f'continue: resuming “{item["title"]}” '
+                        f'(ep {item.get("next_ep")})')
+            self.load_target(r[0], r[1])
+            return
+        self.load_entry({'title': item.get('title'),
+                         'mal': item.get('mal'), 'simkl': item.get('simkl')})
+
+    def _shelf_menu(self, item, pos):
+        from .cli_all import route
+        menu = W.QMenu(self)
+        link = (history.last_link_for(self._cfg, item.get('title'))
+                if self._cfg is not None else None)
+        r = route(link) if link else None
+        a_resume = menu.addAction('▶  Resume' if r
+                                  else '▶  Resume (no link yet)')
+        a_resume.setEnabled(bool(r))
+        a_pick = menu.addAction('🔎  Choose source…')
+        pick = menu.exec(pos)
+        if pick is a_resume and r:
+            self.load_target(r[0], r[1])
+        elif pick is a_pick:
+            self.load_entry({'title': item.get('title'),
+                             'mal': item.get('mal'),
+                             'simkl': item.get('simkl')})
 
     def _probe_status(self):
         """Check Simkl/AnimeGate/AniList on a worker and light them up."""
@@ -1619,7 +1826,15 @@ class MainWindow(W.QWidget):
                     return
                 _log.cprint('feed: Simkl is connected but the library/'
                             'calendar came back empty')
-            self._libq.put(('feed', {'cal': cal, 'rem': rem}, rc))
+            shelf = []
+            if self._cfg is not None and rem:
+                try:
+                    from .continuewatch import ContinueWatching
+                    shelf = ContinueWatching(self._cfg, self._http).items(rem)
+                except Exception as ex:
+                    _log.cprint(f'feed: continue-watching shelf failed ({ex})')
+            self._libq.put(('feed', {'cal': cal, 'rem': rem,
+                                     'shelf': shelf}, rc))
         threading.Thread(target=work, daemon=True).start()
 
     def _render_feed(self):
@@ -1693,6 +1908,12 @@ class MainWindow(W.QWidget):
             elif msg[0] == 'loaded':
                 # async completion of load_target (worker -> GUI thread)
                 self._apply_loaded(msg[1], msg[2], msg[3], msg[4])
+            elif msg[0] == 'poster':
+                u, data = msg[1], msg[2]
+                self._poster_pending.discard(u)
+                pm = G.QPixmap()
+                if pm.loadFromData(data):
+                    self.shelf.set_poster(u, pm)
             elif msg[0] == 'feed':
                 _, payload, rc = msg
                 if payload is None:
@@ -1700,6 +1921,9 @@ class MainWindow(W.QWidget):
                 else:
                     self.state['cal'] = payload.get('cal')
                     self.state['rem'] = payload.get('rem')
+                shelf = (payload or {}).get('shelf') or []
+                self.shelf.set_items(shelf)
+                self._load_posters(shelf)
                 self._render_feed()
                 self.hist.setSortingEnabled(False)
                 self.hist.setRowCount(0)

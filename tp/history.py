@@ -105,6 +105,17 @@ def name_of(cfg, link) -> Optional[str]:
     return (e or {}).get('name') or None
 
 
+def last_link_for(cfg, title: str) -> Optional[str]:
+    """The newest recorded link for a show name (resume from the shelf)."""
+    t = (title or '').casefold().strip()
+    if not t:
+        return None
+    for e in _load(cfg)['links']:            # newest first
+        if (e.get('name') or '').casefold().strip() == t:
+            return e['link']
+    return None
+
+
 def remove(cfg, *, link: str = None, query: str = None) -> None:
     """Delete one link/query from the history (the ✕ button)."""
     d = _load(cfg)

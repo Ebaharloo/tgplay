@@ -140,6 +140,22 @@ title cache.
 
 ---
 
+## Continue watching (shelf)
+
+- At the top of the main page: a **poster rail of in-progress shows** — newest
+  activity first, up to 10, each with `ep N/total · NN%` and a progress bar.
+  Started-but-unfinished only (finished/never-started are left out), Simkl's
+  split entries de-duplicated.
+- **One click resumes**: it loads the *last link you used for that show*
+  (`history.last_link_for`), so it goes straight to the exact page/season;
+  right-click offers **Choose source…** instead. The `▾` collapses the rail;
+  it hides by itself while search results are open.
+- Posters come from Simkl (`simkl.in/posters/<path>_m.webp`), with AniList
+  covers by MAL id as a fallback (batched + cached in `posters.json`); they
+  stream in as they download.
+
+---
+
 ## Connection lights (sidebar, top-right)
 
 - Three coloured lights — **● Simkl · ● AnimeGate · ● AniList** — plus ↻:
