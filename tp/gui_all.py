@@ -57,7 +57,7 @@ class LogView(W.QTextBrowser):
         super().__init__(parent)
         self.setReadOnly(True)
         self.setOpenExternalLinks(True)
-        self.setMaximumHeight(150)
+        self.setMaximumHeight(112)
         try:
             self.setFont(G.QFontDatabase.systemFont(G.QFontDatabase.FixedFont))
         except Exception:
@@ -696,7 +696,6 @@ class ContinueShelf(W.QWidget):
         self.row.addStretch(1)
         self.scroll.setWidget(inner)
         outer.addWidget(self.scroll)
-        self.setVisible(False)
 
     def set_items(self, items):
         while self.row.count():
@@ -706,6 +705,11 @@ class ContinueShelf(W.QWidget):
                 w.deleteLater()
         self._items = items or []
         self._cards = {}
+        if not self._items:                 # keep the slot, say why it is empty
+            empty = W.QLabel('Nothing in progress yet - play a show and it '
+                             'appears here')
+            empty.setStyleSheet('color:#888; padding:16px;')
+            self.row.addWidget(empty)
         for item in self._items:
             card = _ShelfCard(item, self._click, self._menu)
             u = item.get('image') or ''
@@ -736,9 +740,9 @@ class ContinueShelf(W.QWidget):
         self.sync()
 
     def sync(self, results_visible=False):
+        # only the user's own collapse toggle changes this slot; app state
+        # never hides or grows it (that was the reflow bug)
         self.scroll.setVisible(not self._collapsed)
-        self.setVisible(bool(self._items) and not self._collapsed
-                        and not results_visible)
 
 
 def _app_main() -> 'W.QApplication':
@@ -802,67 +806,84 @@ class SortableTable(W.QTableWidget):
         self.setSelectionMode(W.QAbstractItemView.SingleSelection)
         self.setShowGrid(False)
         self.setAlternatingRowColors(True)
-        self.setMinimumWidth(340)
+        self.setMinimumWidth(250)
         self.horizontalHeader().setSectionResizeMode(
             len(cols) - 1, W.QHeaderView.Stretch)
         self.setSortingEnabled(True)
 
 
 class OptionsForm(W.QWidget):
-    """The Options group, rendered from the ONE shared spec (tp.options).
+    """Union options panel, rendered from the ONE shared spec (tp.options).
 
-    Every option is in the same place in every UI: quality/server, audio,
-    skip, skip-toggle, fullscreen, pre-download next (+ 'start at cut'),
-    Simkl sync, cut seconds and extra mpv flags. The rows/wiring mirror the
-    old hand-built grid exactly; values flow through PlaybackOptions.
+    Every option keeps the same place in every source: quality/server, audio,
+    skip, skip-toggle, fullscreen, pre-download next (+ 'start at cut'), Simkl
+    sync, cut seconds and extra mpv flags. Options the current source cannot
+    use stay visible but disabled, so the panel never changes shape.
     """
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.box = W.QGroupBox('Options')
-        form = W.QGridLayout(self.box)
-        form.setHorizontalSpacing(10)
-        form.setVerticalSpacing(4)
+        self.box = W.QGroupBox('Playback options')
+        form = W.QVBoxLayout(self.box)
+        form.setSpacing(4)
 
-        def combo(items=()):
+        def combo(items=(), width=None):
             cb = W.QComboBox()
             cb.setEditable(False)
             cb.addItems(list(items))
+            if width:
+                cb.setMaximumWidth(width)
             return cb
 
-        self.server_lbl = W.QLabel('Server')
-        self.server = combo()
+        self.server_lbl = W.QLabel('Quality')
+        self.server = combo(width=150)
         self.audio_lbl = W.QLabel('Audio')
-        self.audio_cb = combo(['dub', 'sub', 'auto'])
+        self.audio_cb = combo(['dub', 'sub', 'auto'], width=62)
         self.skip_lbl = W.QLabel('Skip')
-        self.skip = combo(['off', 'all', 'names', 'auto'])
-        self.toggle = W.QCheckBox('toggle key T')
+        self.skip = combo(['off', 'all', 'names', 'auto'], width=80)
+        self.toggle = W.QCheckBox('T toggle')
+        self.toggle.setToolTip('Allow turning skip off in mpv with T')
         self.full = W.QCheckBox('fullscreen')
-        self.nxt = W.QCheckBox('Pre-download next episode')
-        self.nowait = W.QCheckBox('start it at cut point')
-        self.sync_cb = W.QCheckBox('Sync progress to Simkl')
+        self.nxt = W.QCheckBox('next ep')
+        self.nxt.setToolTip('Pre-download the next episode in the background')
+        self.nowait = W.QCheckBox('at cut')
+        self.nowait.setToolTip(
+            'Start that download at (duration - Cut) instead of 60%')
+        self.sync_cb = W.QCheckBox('Simkl sync')
         self.sync_cb.setChecked(True)
         self.sync_cb.setToolTip(
             'Off = never push watch progress to Simkl for this run')
         self.cut = W.QLineEdit()
         self.cut.setFixedWidth(70)
+        self.cut.setPlaceholderText('0')
         self.extra = W.QLineEdit()
+        self.extra.setPlaceholderText('--volume 80')
 
-        form.addWidget(self.server_lbl, 0, 0)
-        form.addWidget(self.server, 0, 1, 1, 3)
-        form.addWidget(self.audio_lbl, 1, 0)
-        form.addWidget(self.audio_cb, 1, 1, 1, 3)
-        form.addWidget(self.skip_lbl, 2, 0)
-        form.addWidget(self.skip, 2, 1)
-        form.addWidget(self.toggle, 2, 2)
-        form.addWidget(self.full, 2, 3)
-        form.addWidget(self.nxt, 3, 0, 1, 2)
-        form.addWidget(self.nowait, 3, 2, 1, 2)
-        form.addWidget(self.sync_cb, 4, 0, 1, 4)
-        form.addWidget(W.QLabel('Cut last N s'), 5, 0)
-        form.addWidget(self.cut, 5, 1)
-        form.addWidget(W.QLabel('Extra mpv flags'), 5, 2)
-        form.addWidget(self.extra, 5, 3)
+        # row 1: per-source choices
+        r1 = W.QHBoxLayout()
+        r1.setSpacing(6)
+        r1.addWidget(self.server_lbl)
+        r1.addWidget(self.server, 1)
+        r1.addWidget(self.audio_lbl)
+        r1.addWidget(self.audio_cb)
+        r1.addWidget(self.skip_lbl)
+        r1.addWidget(self.skip)
+        form.addLayout(r1)
+        # row 2: run-wide flags
+        r2 = W.QHBoxLayout()
+        r2.setSpacing(10)
+        for w in (self.toggle, self.full, self.sync_cb, self.nxt, self.nowait):
+            r2.addWidget(w)
+        r2.addStretch(1)
+        form.addLayout(r2)
+        # row 3: numbers / free text
+        r3 = W.QHBoxLayout()
+        r3.setSpacing(6)
+        r3.addWidget(W.QLabel('Cut last N s'))
+        r3.addWidget(self.cut)
+        r3.addWidget(W.QLabel('Extra mpv flags'))
+        r3.addWidget(self.extra, 1)
+        form.addLayout(r3)
 
         lay = W.QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -889,17 +910,25 @@ class OptionsForm(W.QWidget):
                         if str(po.quality).lower() in l.lower()), 0)
             self.server.setCurrentIndex(idx)
         self.server.blockSignals(False)
+        # union panel: unusable-for-this-source rows stay in place, disabled
+        has_server = bool(labels)
+        self.server_lbl.setText('Server' if (s is not None and s.audio)
+                                else 'Quality')
         for w in (self.server, self.server_lbl):
-            w.setVisible(bool(labels))
-        # audio (AnimeX only)
+            w.setEnabled(has_server)
+        self.server.setToolTip('' if has_server else
+                               'This source offers no quality / server choice.')
+        has_audio = bool(s is not None and s.audio)
         for w in (self.audio_cb, self.audio_lbl):
-            w.setVisible(bool(s is not None and s.audio))
-        if s is not None and s.audio:
+            w.setEnabled(has_audio)
+        if has_audio:
             self.audio_cb.setCurrentText(po.audio_mode)
+        else:
+            self.audio_cb.setToolTip('Only AnimeX offers dub / sub.')
         # skip / toggles / next / cut / extras
         self.skip.setCurrentText(
             s_opts.get('skip') if isinstance(s_opts.get('skip'), str)
-            else ('all' if s_opts.get('skip') else 'off'))
+            else 'all')
         self.toggle.setChecked(bool(s_opts.get('skip_toggle')))
         self.full.setChecked(po.fullscreen)
         self.nxt.setChecked(bool(po.next))
@@ -913,9 +942,9 @@ class OptionsForm(W.QWidget):
     # --- widgets -> legacy (opts, mpv) ---------------------------------
     def to_raw(self, s) -> tuple:
         po = PlaybackOptions(s.opts if s is not None else None)
-        if self.server.isVisible():
+        if self.server.isEnabled() and self.server.count():
             po.quality = self.server.currentText()
-        if self.audio_cb.isVisible():
+        if self.audio_cb.isEnabled():
             po.audio = self.audio_cb.currentText()
         po.set_skip(self.skip.currentText())
         po.set_skip_toggle(self.toggle.isChecked())
@@ -929,7 +958,12 @@ class OptionsForm(W.QWidget):
         po.set_nowait(self.nowait.isChecked())
         po.set_sync(self.sync_cb.isChecked())
         po.set_cut(self.cut.text().strip())
-        po.with_extras(self.extra.text().split(),
+        import shlex
+        try:
+            words = shlex.split(self.extra.text())
+        except ValueError:                       # unbalanced quote: keep raw
+            words = self.extra.text().split()
+        po.with_extras(words,
                        fullscreen=self.full.isChecked())
         return po.to_opts(), po.mpv()
 
@@ -955,7 +989,8 @@ class MainWindow(W.QWidget):
         _log.SINK = lambda s: self._lq.put(str(s))
 
         self.setWindowTitle('tgplay')
-        self.resize(1180, 820)
+        self.setMinimumSize(1220, 940)
+        self.resize(1360, 1000)
         ic = _app_icon()
         if ic is not None:
             self.setWindowIcon(ic)
@@ -970,22 +1005,24 @@ class MainWindow(W.QWidget):
         outer.addLayout(side, 0)
 
         self._build_sidebar(side)
-        self._build_shelf(root)
-        self._build_search_row(root)
-        self._build_header(root)
-        self._build_options(root)
-        self._build_episodes(root, outer)
-        self._build_status(root)
-        self._build_log(root)
-        self._build_buttons(root)
+        # five fixed slots (owner-approved): nothing moves between states
+        self._build_shelf(root)           # 1 posters
+        self._build_search_options(root)  # 2 search | options
+        self._build_lists(root)           # 3 results  \  splitter,
+        self._build_show(root)            # 4 episodes /  drag to resize
+        self._build_bottoms(root)         # 5 action bar
 
         self._timers()
         self._connect()
+        self._tab_chain()
+        C.QTimer.singleShot(0, self.box.setFocus)   # typing works immediately
 
     # --- widget construction -------------------------------------------
     def _build_sidebar(self, side: W.QLayout):
-        self.status_strip = StatusStrip(self._status_clicked,
-                                        self._probe_status)
+        def _refresh_all():
+            self._probe_status()
+            self.load_side()                    # tooltip promises the calendar
+        self.status_strip = StatusStrip(self._status_clicked, _refresh_all)
         side.addWidget(self.status_strip)
         fbox = W.QGroupBox('Feed · calendar  (click a header to sort)')
         fv = W.QVBoxLayout(fbox)
@@ -1014,24 +1051,55 @@ class MainWindow(W.QWidget):
         self.shelf = ContinueShelf(self._shelf_click, self._shelf_menu)
         root.addWidget(self.shelf)
 
-    def _build_search_row(self, root: W.QLayout):
-        srow = W.QHBoxLayout()
+    def _build_search_options(self, root: W.QLayout):
+        """Slot 2: search input + History (left), playback options (right)."""
         self.box = W.QLineEdit()
         self.box.setClearButtonEnabled(True)
-        self.box.setPlaceholderText(
-            'Search animegate + animex…  or paste a link / @channel')
-        srow.addWidget(self.box, 1)
+        self.box.setMinimumHeight(34)
+        self.box.setMinimumWidth(320)
+        self.box.setPlaceholderText('Search or paste link')
+        self.box.setToolTip('Search by name, paste a show link, or type '
+                            '@channel for a Telegram channel  ·  /  focuses')
+        # make the one place you type stand out from the dark panels
+        self.box.setStyleSheet(
+            'QLineEdit { background:#212832; border:1px solid #4a6b8a;'
+            ' border-radius:7px; padding:5px 9px; }'
+            'QLineEdit:focus { border:1px solid #86b0e0; background:#252d38; }')
         self.hist_btn = W.QPushButton('🕘 History')
         self.hist_btn.setToolTip(
             'Your recent links and searches, with their date and source.\n'
             'Click a header (Date/Source/Link) to sort · ✕ removes one entry.')
+        srow = W.QHBoxLayout()
+        srow.setSpacing(6)
+        srow.addWidget(self.box, 1)
         srow.addWidget(self.hist_btn)
-        root.addLayout(srow)
+        self.search_hint = W.QLabel(
+            'type a name, paste a link or @channel · Enter opens the source '
+            'picker for the best match')
+        self.search_hint.setStyleSheet('color:#888;')
+        sbox = W.QVBoxLayout()
+        sbox.setSpacing(4)
+        sbox.addStretch(1)               # centre the field against the options
+        sbox.addLayout(srow)
+        sbox.addWidget(self.search_hint)
+        sbox.addStretch(1)
 
-        # history gets a real table (Date | Source | Link | ✕); the search
-        # list keeps the plain look - a QStackedWidget swaps the two views.
+        self.opts_form = OptionsForm()
+        self.opts_form.setMinimumWidth(452)      # ~1 cm wider than its content
+        band = W.QHBoxLayout()
+        band.setSpacing(10)
+        band.addLayout(sbox, 1)
+        band.addWidget(self.opts_form, 0)
+        root.addLayout(band)
+
+    def _build_lists(self, root: W.QLayout):
+        """Slot 3: search results / recent links - always in the same place."""
+        self.list_head = W.QLabel('Results')
+        hf = self.list_head.font()
+        hf.setBold(True)
+        self.list_head.setFont(hf)
         self.results = W.QListWidget()
-        self.results.setMaximumHeight(170)
+        self.results.setMinimumHeight(150)
 
         self.hist_tbl = W.QTableWidget(0, 4)
         self.hist_tbl.setHorizontalHeaderLabels(['Date', 'Source', 'Link', ''])
@@ -1041,7 +1109,6 @@ class MainWindow(W.QWidget):
         self.hist_tbl.setSelectionMode(W.QAbstractItemView.SingleSelection)
         self.hist_tbl.setShowGrid(False)
         self.hist_tbl.setAlternatingRowColors(True)
-        self.hist_tbl.setMaximumHeight(170)
         hh = self.hist_tbl.horizontalHeader()
         hh.setSectionResizeMode(0, W.QHeaderView.ResizeToContents)
         hh.setSectionResizeMode(1, W.QHeaderView.ResizeToContents)
@@ -1052,41 +1119,49 @@ class MainWindow(W.QWidget):
 
         self.res_stack = W.QStackedWidget()
         self.res_stack.addWidget(self.results)      # page 0: typeahead
-        self.res_stack.addWidget(self.hist_tbl)     # page 1: history picker
-        self.res_stack.setMaximumHeight(170)
-        self.res_stack.setVisible(False)
-        root.addWidget(self.res_stack)
+        self.res_stack.addWidget(self.hist_tbl)     # page 1: recent links
+        self.res_stack.setMinimumHeight(150)
 
-    def _build_header(self, root: W.QLayout):
+        lbox = W.QVBoxLayout()
+        lbox.setSpacing(4)
+        lbox.addWidget(self.list_head)
+        lbox.addWidget(self.res_stack, 1)
+
+        split = W.QSplitter(C.Qt.Vertical)
+        split.setChildrenCollapsible(False)
+        split.setHandleWidth(6)
+        split.setStyleSheet('QSplitter::handle { background:#22262b; }')
+        left = W.QWidget()
+        left.setLayout(lbox)
+        split.addWidget(left)
+        self._split = split
+        root.addWidget(split, 1)
+
+    def _build_show(self, root: W.QLayout):
+        """Slot 4: title + Cast + Simkl list, then the episode table."""
         self.head = W.QLabel('Search or paste a link to start')
         hf = self.head.font()
         hf.setPointSize(hf.pointSize() + 2)
         self.head.setFont(hf)
-        hrow = W.QHBoxLayout()
-        hrow.addWidget(self.head, 1)
         self.cast_btn = W.QPushButton('👥 Cast')
         self.cast_btn.setToolTip(
             'Characters: names (incl. Chinese), roles, voice actors and a '
             'link per character (AniList + Bangumi). Opens from cache, '
             'refreshes in the background.')
         self.cast_btn.setEnabled(False)
-        hrow.addWidget(self.cast_btn)
         self.add_btn = W.QPushButton('＋ Simkl list')
         self.add_btn.setToolTip(
             'Add the current show to your Simkl Watching list '
             '(it then appears in the calendar)')
+        hrow = W.QHBoxLayout()
+        hrow.setSpacing(6)
+        hrow.addWidget(self.head, 1)
+        hrow.addWidget(self.cast_btn)
         hrow.addWidget(self.add_btn)
-        root.addLayout(hrow)
         self.link_lbl = W.QLabel('')
         self.link_lbl.setTextInteractionFlags(C.Qt.TextBrowserInteraction)
         self.link_lbl.setOpenExternalLinks(True)
-        root.addWidget(self.link_lbl)
 
-    def _build_options(self, root: W.QLayout):
-        self.opts_form = OptionsForm()
-        root.addWidget(self.opts_form)
-
-    def _build_episodes(self, root: W.QLayout, outer: W.QLayout):
         self.ebox = W.QGroupBox('Episodes')
         ev = W.QVBoxLayout(self.ebox)
         self.table = W.QTableWidget(0, 2)
@@ -1097,37 +1172,60 @@ class MainWindow(W.QWidget):
         self.table.setSelectionMode(W.QAbstractItemView.ExtendedSelection)
         self.table.setShowGrid(False)
         self.table.setAlternatingRowColors(True)
+        self.table.setMinimumHeight(140)
         hdr = self.table.horizontalHeader()
         hdr.setSectionResizeMode(0, W.QHeaderView.ResizeToContents)
         hdr.setSectionResizeMode(1, W.QHeaderView.Stretch)
         ev.addWidget(self.table)
-        root.addWidget(self.ebox, 1)
 
-    def _build_status(self, root: W.QLayout):
+        sh = W.QVBoxLayout()
+        sh.setSpacing(4)
+        sh.addLayout(hrow)
+        sh.addWidget(self.link_lbl)
+        sh.addWidget(self.ebox, 1)
+        show = W.QWidget()
+        show.setLayout(sh)
+        self._split.addWidget(show)
+        self._split.setStretchFactor(0, 1)
+        self._split.setStretchFactor(1, 1)
+        self._split.setSizes([280, 380])
+
+    def _build_bottoms(self, root: W.QLayout):
+        """Slot 5: the only row at the bottom of the window."""
         self.status = W.QLabel('idle')
-        root.addWidget(self.status)
-
-    def _build_log(self, root: W.QLayout):
-        lbox = W.QGroupBox('Log')
-        lv = W.QVBoxLayout(lbox)
-        self.logbox = LogView()
-        lv.addWidget(self.logbox)
-        if _log.HISTORY:
-            self.logbox.seed(list(_log.HISTORY))
-        root.addWidget(lbox)
-
-    def _build_buttons(self, root: W.QLayout):
         bar = W.QHBoxLayout()
+        bar.setSpacing(6)
         self.b_from = W.QPushButton('▶  Play from here')
         self.b_sel = W.QPushButton('▶  Only selected')
         self.b_all = W.QPushButton('▶  All')
         self.b_stop = W.QPushButton('■  Stop')
         self.b_close = W.QPushButton('Close')
         for b in (self.b_from, self.b_sel, self.b_all, self.b_stop):
+            b.setEnabled(False)                  # enabled by set_session
             bar.addWidget(b)
-        bar.addStretch(1)
+        bar.addWidget(self.status, 1)
         bar.addWidget(self.b_close)
         root.addLayout(bar)
+
+    def _tab_chain(self):
+        """Keyboard order follows the visual flow, not widget creation order."""
+        chain = [self.box, self.hist_btn, self.results, self.hist_tbl,
+                 self.table, self.opts_form.server, self.opts_form.audio_cb,
+                 self.opts_form.skip, self.opts_form.toggle, self.opts_form.full,
+                 self.opts_form.sync_cb, self.opts_form.nxt,
+                 self.opts_form.nowait, self.opts_form.cut, self.opts_form.extra,
+                 self.cast_btn, self.add_btn, self.b_from, self.b_sel,
+                 self.b_all, self.b_stop, self.b_close, self.feed, self.hist,
+                 self.side_btn]
+        for a, b in zip(chain, chain[1:]):
+            W.QWidget.setTabOrder(a, b)
+        for seq in ('/', 'Ctrl+F'):          # jump back to search from anywhere
+            sc = G.QShortcut(G.QKeySequence(seq), self)
+            sc.activated.connect(self._focus_search)
+
+    def _focus_search(self):
+        self.box.setFocus()
+        self.box.selectAll()
 
     def _timers(self):
         # search debouncer + queue poller
@@ -1140,6 +1238,7 @@ class MainWindow(W.QWidget):
         self.side_timer = C.QTimer()
         self.side_timer.setSingleShot(True)
         self.side_timer.setInterval(1500)
+        self.side_timer.timeout.connect(self.load_side)   # was never wired
         self.log_timer = C.QTimer()
         self.log_timer.timeout.connect(self._drain_log)
         self.log_timer.start(250)
@@ -1244,7 +1343,8 @@ class MainWindow(W.QWidget):
                 s.stop()
             except Exception:
                 pass
-        self.state['msg'] = 'stopped'
+        self.state['msg'] = 'stopped' if s else 'nothing playing'
+        self.state['msg_until'] = time.time() + 5
 
     def set_session(self, s):
         old = self.state['session']
@@ -1260,6 +1360,8 @@ class MainWindow(W.QWidget):
         self.link_lbl.setText(
             f'<a href="{s.link}">{s.link}</a>' if s.link else '')
         self.opts_form.load(s)                    # shared options form
+        for b in (self.b_from, self.b_sel, self.b_all, self.b_stop):
+            b.setEnabled(True)
         # episodes
         nums = sorted(s.labels)
         self.table.setRowCount(0)
@@ -1320,19 +1422,16 @@ class MainWindow(W.QWidget):
                     self.results.setCurrentRow(r)
                     break
             self.results.setVisible(True)
-            self.res_stack.setVisible(True)
             self.res_stack.setCurrentWidget(self.results)
+            self.list_head.setText('Results')
             if dead:
                 self._gate_auth_flow(src, target, dead)
             return
         self.set_session(s)
         if self._cfg is not None:
             history.add(self._cfg, link=target, name=s.title)
-        # success: tidy the results area (the session is up in its place)
-        self.box.blockSignals(True)
-        self.box.clear()
-        self.box.blockSignals(False)
-        self._fill_results([])
+        # success: the session is up in its place; the results list and the
+        # typed query stay exactly as they were (nothing empties mid-window)
         self.state['msg'] = ''
 
     # --- auth health (AnimeGate cookie session) -------------------------
@@ -1422,6 +1521,22 @@ class MainWindow(W.QWidget):
     def _fill_results(self, items):
         self.results.clear()
         self.res_stack.setCurrentWidget(self.results)
+        q = self._typed()
+        self.state['msg'] = ''                 # 'searching …' is over
+        self.state['msg_until'] = 0
+        if items:
+            self.list_head.setText(f'Results · {len(items)} for “{q}”')
+        else:
+            empty = W.QListWidgetItem('no matches — edit the text and press '
+                                      'Enter, or paste a link')
+            empty.setFlags(C.Qt.NoItemFlags)     # a message, not a choice
+            self.results.addItem(empty)
+            self.list_head.setText(f'Results · no hits for “{q}”' if q
+                                   else 'Results · nothing yet')
+            if q:
+                self.state['msg'] = (f'no results for “{q}” — try another '
+                                     'spelling, or paste a link')
+                self.state['msg_until'] = time.time() + 8
         for e in items:
             kind = e.get('kind') or 'result'
             title = e.get('title', '')
@@ -1443,8 +1558,7 @@ class MainWindow(W.QWidget):
             it.setData(C.Qt.UserRole + 4, e.get('ids') or {})
             self.results.addItem(it)
         self.results.setVisible(bool(items))
-        self.res_stack.setVisible(bool(items))
-        self.shelf.sync(bool(items))      # results replace the shelf
+        self.shelf.sync()      # the posters slot never moves
 
     def _on_text(self):
         from .cli_all import route
@@ -1533,20 +1647,27 @@ class MainWindow(W.QWidget):
         if r:
             self.load_target(r[0], r[1])
             return
+        has_pick = any(self.results.item(i).flags() & C.Qt.ItemIsEnabled
+                       for i in range(self.results.count()))
+        if not has_pick:                         # nothing to pick: search now
+            if t:
+                self.state['msg'] = f'searching “{t}” …'
+                self.debounce.start()
+            return
         n = self.results.currentRow()
-        if n < 0 and self.results.count():
+        if n < 0:
             n = 0
-        if n >= 0:
-            self._pick_result(self.results.item(n))
+        self._pick_result(self.results.item(n))
 
     # --- local history picker ------------------------------------------
     def _hist_rows(self) -> List[dict]:
         items = history.recent(self._cfg) if self._cfg is not None else []
         filtered, seen = [], set()
-        for e in items:                     # drop duplicate titles (same link
-            if e['title'] in seen:          # can appear once per source)
+        for e in items:                     # dedupe by link, not by title:
+            k = (e.get('title'), e.get('url') or e.get('source'))
+            if k in seen:                   # two sources of one show are real
                 continue
-            seen.add(e['title'])
+            seen.add(k)
             filtered.append(e)
         return filtered
 
@@ -1585,8 +1706,7 @@ class MainWindow(W.QWidget):
         else:
             self.hist_tbl.sortItems(sc, so)       # keep the user's sort
         self.res_stack.setCurrentWidget(self.hist_tbl)
-        self.res_stack.setVisible(bool(items) or force)
-        self.shelf.sync(False)               # history view: show the shelf
+        self.list_head.setText('Recent links & searches')
 
     def _hist_del(self, _row, e):
         try:
@@ -1610,7 +1730,6 @@ class MainWindow(W.QWidget):
             return
         if self._cfg is not None:
             history.add(self._cfg, link=e['url'])    # record NOW
-        self.box.clear()
         self.load_target(str(e.get('source') or 'agp'), str(e['url']))
 
     # --- library / sidebar ----------------------------------------------
@@ -2068,8 +2187,13 @@ class MainWindow(W.QWidget):
             except queue.Empty:
                 break
         if lines:
+            # no log pane any more: keep the lines reachable as a tooltip and
+            # still refresh the feed/history when a sync lands
+            self.status.setToolTip('\n'.join(lines[-8:]))
             for ln in lines:
-                self.logbox.feed(ln)
+                if ln.startswith('skip['):      # visible skip receipt
+                    self.state['msg'] = ln
+                    self.state['msg_until'] = time.time() + 10
             if any(('synced:' in ln) or ('marked ep' in ln) for ln in lines):
                 self.side_timer.start()          # auto-refresh feed/history
 
@@ -2077,10 +2201,17 @@ class MainWindow(W.QWidget):
         if self.state['closing']:
             return
         s = self.state['session']
+        mu = self.state.get('msg_until')
+        if mu and time.time() > mu:
+            self.state['msg'] = ''
+            self.state['msg_until'] = 0
         txt = s.status() if s is not None else ''
         if self.state.get('msg'):
             txt = self.state['msg']
-        self.status.setText(txt or 'idle')
+        txt = txt or 'idle'
+        self.status.setToolTip(txt if len(txt) > 60 else '')
+        self.status.setText(self.status.fontMetrics().elidedText(
+            txt, C.Qt.ElideRight, max(80, self.status.width() - 8)))
 
     # --- closing --------------------------------------------------------
     def close_window(self):
@@ -2095,6 +2226,7 @@ class MainWindow(W.QWidget):
                 pass
         try:
             if self.state['session'] is not None:
+                self.state['session'].stop()        # kill mpv, save progress
                 self.state['session'].close()
         except Exception:
             pass

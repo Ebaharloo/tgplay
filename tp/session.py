@@ -109,10 +109,10 @@ class Session:
         self._player.stop()
         # the Telegram views are already narrowed/planned at build time:
         # re-selecting here would renumber them (see cli_telegram)
+        if self.src == 'axp':                  # audio first: select() keeps it
+            self.provider.set_audio(o.get('audio') or 'dub')
         if self.src not in ('tg', 'tgp'):
             self.provider.select(o.get('f'))
-        if self.src == 'axp':
-            self.provider.set_audio(o.get('audio') or 'dub')
         eps = self.provider.episodes()
         planned = [Episode(k, eps[k]) for k in chosen if k in eps]
         if not planned:
@@ -127,7 +127,8 @@ class Session:
             tracker = None
         playlist = Playlist(self.provider, self._proxy, self._cache,
                             self._player, self.cfg, skip=self._skip,
-                            prefetcher=self._prefetch, tracker=tracker)
+                            prefetcher=self._prefetch, tracker=tracker,
+                            mal_id=self.mal_id)
         start = self.resume[1] if (self.resume and planned[0].num == self.resume[0]) else None
         if start:
             _m, _s = divmod(int(start), 60)
@@ -135,7 +136,10 @@ class Session:
                        f'(mpv --start={int(start)})')
         nf = ('cut' if (o.get('nowait') and o.get('cut')) else o.get('next')) \
             if o.get('next') else False
-        playlist.run(planned, skip_mode=(o.get('skip') or 'all'),
+        sm = o.get('skip')
+        skip_mode = sm if (isinstance(sm, str) and
+                           sm in ('all', 'names', 'auto', 'off')) else 'all'
+        playlist.run(planned, skip_mode=skip_mode,
                      skip_toggle=bool(o.get('skip_toggle')), cut=o.get('cut'),
                      start=start, next_frac=nf, extra=m)
 

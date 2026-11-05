@@ -151,8 +151,8 @@ class CharactersService:
         try:
             all_ = self._all()
             all_[key] = rec
-            os.makedirs(os.path.dirname(self.cfg.characters), exist_ok=True)
-            json.dump(all_, open(self.cfg.characters, 'w'))
+            from .config import save_json
+            save_json(self.cfg.characters, all_)
         except Exception:
             pass
 
@@ -173,6 +173,10 @@ class CharactersService:
         if self.bangumi is not None:
             rec['rows'] = self._boost(rec)
         rec['rows'] = self._merge_wiki(rec)
+        # cache only now: caching in _anilist stored the thin AniList-only cast
+        key = (f"mal:{rec['mal']}" if rec.get('mal')
+               else f'title:{(title or "").casefold()}')
+        self._put(key, rec)
         return rec
 
     def _merge_wiki(self, rec: dict) -> List[dict]:

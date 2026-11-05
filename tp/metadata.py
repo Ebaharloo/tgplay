@@ -41,8 +41,8 @@ def _read(path, default):
 
 
 def _write(path, d):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    json.dump(d, open(path, 'w'))
+    from .config import save_json
+    save_json(path, d)
 
 
 class Metadata:

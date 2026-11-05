@@ -92,11 +92,7 @@ def test_check_all_is_independent():
 
 def test_strip_widget():
     """The lights widget: colours follow the states, clicks carry the item."""
-    try:
-        from PySide6 import QtWidgets  # noqa: F401
-    except Exception:
-        print('SKIP status strip (no PySide6)')
-        return
+    from PySide6 import QtWidgets  # noqa: F401
     os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
     from tp.gui_qt import _app as qt_app
     qt_app()

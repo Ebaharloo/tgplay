@@ -51,7 +51,11 @@ def quality_key(label) -> Optional[str]:
 
 
 def _norm_skip(v):
-    return v if isinstance(v, str) and v in SKIP_MODES and v != 'off' else False
+    # 'off' stays an explicit string (GUI pick) so it is not confused with the
+    # legacy unset False, which still means 'all'
+    if isinstance(v, str):
+        return v if v in SKIP_MODES else False
+    return False
 
 
 def _norm_next(v):
@@ -118,7 +122,7 @@ class PlaybackOptions:
         return s if isinstance(s, str) and s in SKIP_MODES else 'off'
 
     def set_skip(self, mode: str):
-        self._o['skip'] = False if (not mode or mode == 'off') else mode
+        self._o['skip'] = mode if mode in SKIP_MODES else 'off'
 
     @property
     def skip_toggle(self) -> bool:
@@ -373,7 +377,12 @@ def form_result(fields: List[Dict], opts: Dict, mpv: List[str] = None
     if 'sync' in by:
         po.set_sync(bool(by['sync']['val']))
     if 'full' in by or 'extra' in by:
-        po.with_extras((by.get('extra', {}).get('val') or '').split(),
+        import shlex
+        try:
+            words = shlex.split(by.get('extra', {}).get('val') or '')
+        except ValueError:                  # unbalanced quote: keep raw
+            words = (by.get('extra', {}).get('val') or '').split()
+        po.with_extras(words,
                        fullscreen=(bool(by['full']['val']) if 'full' in by
                                    else None))
     return po.to_opts(), po.mpv()

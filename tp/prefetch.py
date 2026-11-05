@@ -35,6 +35,17 @@ class Prefetcher:
     def active(self, name: str) -> bool:
         return not self.stop_event(name).is_set()
 
+    def publish(self, proxy, name: str, path: str) -> int:
+        """Hand a finished download window to the proxy: the next play of this
+        episode then reads bytes from disk instead of the CDN."""
+        try:
+            win = json.load(open(path + '.win'))
+        except Exception:
+            win = {}
+        size, lo = int(win.get('size') or 0), int(win.get('lo') or 0)
+        proxy.set_local(name, path, size, lo=lo, live=True)
+        return lo
+
     def complete(self, name: str) -> bool:
         return self.cache.is_full(name) and os.path.exists(self.cache.path(name))
 

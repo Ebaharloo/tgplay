@@ -31,7 +31,8 @@ def _safe(fn, *a, **k):
 
 class Playlist:
     def __init__(self, provider, proxy, cache, player, config, *,
-                 skip=None, prefetcher=None, tracker=None, interval: float = 3.0):
+                 skip=None, prefetcher=None, tracker=None, interval: float = 3.0,
+                 mal_id=None):
         self.provider = provider
         self.proxy = proxy
         self.cache = cache
@@ -40,6 +41,7 @@ class Playlist:
         self.skip = skip
         self.prefetcher = prefetcher
         self.tracker = tracker
+        self.mal_id = mal_id          # pinned show id: ani-skip needs it
         self.interval = float(os.environ.get('AGP_WATCH_INTERVAL', interval))
 
     # --- progress ----------------------------------------------------------
@@ -55,8 +57,8 @@ class Playlist:
     def _save(self, title: str, ep: int, pos: float):
         d = self._load()
         d[title] = {'ep': ep, 'pos': round(pos)}
-        os.makedirs(os.path.dirname(self.cfg.progress), exist_ok=True)
-        json.dump(d, open(self.cfg.progress, 'w'))
+        from .config import save_json           # atomic: crash-safe resume
+        save_json(self.cfg.progress, d)
 
     # --- helpers -----------------------------------------------------------
     def _name(self, ep: Episode, stream) -> str:
@@ -98,12 +100,17 @@ class Playlist:
                 direct = getattr(stream, 'direct', False)
                 extra_direct: List[str] = []
                 head_warm = False
+                probe_url, probe_hdr = None, None
                 if direct:
                     # HLS/DASH: mpv plays the remote URL itself (no proxy)
                     url = stream.url
                     ref = (getattr(stream, 'headers', {}) or {}).get('Referer')
                     if ref:
                         extra_direct.append(f'--referrer={ref}')
+                    # HLS carries chapters in the manifest, so probe the same
+                    # URL mpv will play (that was the dead-skip bug: direct
+                    # streams were never probed)
+                    probe_url, probe_hdr = stream.url, (stream.headers or {})
                     for _lbl, sub in (getattr(stream, 'subs', []) or []):
                         extra_direct.append(f'--sub-file={sub}')
                 else:
@@ -116,6 +123,8 @@ class Playlist:
                     head_warm = ready.wait(2)
                     url = self.proxy.url(name)
                     t_link = time.monotonic() - t_ep   # incl. head warm-up
+                    if head_warm:
+                        probe_url = url
                 log.cprint(f'load: ep{ep.num} link + head peek in '
                            f'{t_link:.1f}s ({"hls" if direct else "proxy"})')
 
@@ -125,15 +134,15 @@ class Playlist:
                     try:
                         flags, note = self.skip.flags(
                             title=title, ep=ep.num,
-                            url=url if (not direct and head_warm) else None,
+                            url=probe_url, headers=probe_hdr,
                             mode=skip_mode,
                             toggle=skip_toggle, timeout=6,
-                            mal_id=getattr(self.provider, 'mal_id', None))
+                            mal_id=self.mal_id or getattr(
+                                self.provider, 'mal_id', None))
                     except Exception as ex:
                         flags, note = [], f'failed ({ex})'
-                if i == 0:
-                    log.cprint(f'skip[{skip_mode}]: {note} '
-                               f'in {time.monotonic() - t_sk:.1f}s')
+                log.cprint(f'skip[{skip_mode}]: {note} '
+                           f'in {time.monotonic() - t_sk:.1f}s')
 
                 sock = f'/tmp/tgplay-{os.getpid()}-{ep.num}.ipc'
                 fire = None
@@ -147,9 +156,15 @@ class Playlist:
                             st = self.provider.stream(_nxt.num)
                             nm = self._name(_nxt, st)
                             log.cprint(f'next: prefetching ep{_nxt.num}')
-                            threading.Thread(
-                                target=self.prefetcher.prefetch,
-                                args=(nm, st), daemon=True).start()
+                            def _pf(_nm=nm, _st=st):
+                                p = self.prefetcher.prefetch(_nm, _st)
+                                if p and self.proxy is not None:
+                                    lo = self.prefetcher.publish(self.proxy,
+                                                                 _nm, p)
+                                    log.cprint(f'next: ep{_nxt.num} prefetched '
+                                               f'from {lo} ' 'bytes - proxy '
+                                               'will serve it from disk')
+                            threading.Thread(target=_pf, daemon=True).start()
                         except Exception:
                             pass
 
@@ -182,6 +197,11 @@ class Playlist:
                     tag += '  [skip]'
                 log.cprint(f'>> streaming ep{ep.num}: {name}{tag}')
                 rc = self.player.play(cmd)
+                if rc == 1:                       # mpv missing / bad flags
+                    log.cprint('player: mpv could not start (missing binary '
+                               'or bad flags) - stopping here')
+                    watcher.join(timeout=1)
+                    return
                 watcher.join(timeout=12)
                 try:
                     os.remove(sock)
@@ -231,7 +251,7 @@ class Playlist:
                 return
         except Exception:
             return
-        mal = getattr(self.provider, 'mal_id', None)
+        mal = self.mal_id or getattr(self.provider, 'mal_id', None)
         anilist = getattr(self.provider, 'anilist_id', None)
         if not mal and not anilist:
             meta = getattr(self.skip, 'meta', None) if self.skip else None

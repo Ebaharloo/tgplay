@@ -31,14 +31,16 @@ def test_normalization():
                                  ['--volume', '80', '--fullscreen'])
     assert po.skip == 'names' and po.skip_mode == 'names'
     assert options.PlaybackOptions({'skip': 'garbage'}).to_opts()['skip'] is False
-    assert options.PlaybackOptions({'skip': 'off'}).to_opts()['skip'] is False
+    # an explicit 'off' is a real choice now (it used to collapse into False,
+    # the legacy "unset" value that still means 'all' at play time)
+    assert options.PlaybackOptions({'skip': 'off'}).to_opts()['skip'] == 'off'
     assert po.next == 0.45                       # explicit fraction kept
     assert options.PlaybackOptions({'next': True}).to_opts()['next'] == 0.60
     assert options.PlaybackOptions({'next': 'x'}).to_opts()['next'] is False
     assert po.cut == 30 and po.fullscreen is True
     assert po.extras == ['--volume', '80']       # fullscreen separated
     po.set_skip('off'); po.set_fullscreen(False); po.set_cut(None)
-    assert po.skip is False and po.fullscreen is False and po.cut is None
+    assert po.skip == 'off' and po.fullscreen is False and po.cut is None
     po.set_next(False); po.set_next(True)
     assert po.next == options.DEFAULT_NEXT == 0.60
     print('PASS value normalization')

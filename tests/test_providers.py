@@ -198,8 +198,14 @@ def test_two_line_titles():
              'source': 'axp'},
         ]
 
-    got = lib.find_source("A Record of Mortal's\n"
-                          "Journey to Immortality", http=None)
+    import tp.search as search_mod
+    orig = search_mod.search_all
+    search_mod.search_all = fake_search      # was defined and never installed
+    try:
+        got = lib.find_source("A Record of Mortal's\n"
+                              "Journey to Immortality", http=None)
+    finally:
+        search_mod.search_all = orig
     assert got == ('axp', 'axp:a-record-of-mortals-journey-to-immortality-'
                            'psj88'), got
     print('PASS find_source matches a 2-line wrapped title')

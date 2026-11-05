@@ -40,8 +40,8 @@ def save(path, opts: dict, mpv: List[str], key: str = 'agp') -> dict:
         if key not in all_ and ('quality' in all_ or 'skip' in all_):
             all_ = {'agp': all_}            # migrate the legacy flat file
         all_[key] = d
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        json.dump(all_, open(path, 'w'))
+        from .config import save_json
+        save_json(path, all_)
     except Exception:
         pass
     return d

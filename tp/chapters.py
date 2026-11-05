@@ -78,17 +78,23 @@ class SkipResolver:
         op, ed, _os, _es = SkipResolver._decide(chapters, mode)
         return op, ed
 
-    def resolve(self, url: str, mode: str = 'all', timeout=None):
+    def resolve(self, url: str, mode: str = 'all', timeout=None,
+                headers: Optional[dict] = None):
         """(op, ed, op_src, ed_src) from the file's own chapters."""
-        return self._decide(self.probe(url, timeout), mode)
+        return self._decide(self.probe(url, timeout, headers), mode)
 
     # --- ffprobe -----------------------------------------------------------
-    def probe(self, url: str, timeout: Optional[float] = None) -> List[Chapter]:
+    def probe(self, url: str, timeout: Optional[float] = None,
+              headers: Optional[dict] = None) -> List[Chapter]:
+        cmd = [self.ffprobe, '-v', 'quiet', '-print_format', 'json',
+               '-show_chapters']
+        if headers:                     # some CDNs 403 without the Referer
+            cmd += ['-headers', ''.join(f'{k}: {v}\r\n'
+                                        for k, v in headers.items())]
+        cmd.append(url)
         try:
-            r = subprocess.run(
-                [self.ffprobe, '-v', 'quiet', '-print_format', 'json',
-                 '-show_chapters', url],
-                capture_output=True, text=True, timeout=timeout or self.timeout)
+            r = subprocess.run(cmd, capture_output=True, text=True,
+                               timeout=timeout or self.timeout)
             raw = json.loads(r.stdout or '{}').get('chapters', [])
         except Exception:
             return []

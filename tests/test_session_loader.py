@@ -82,11 +82,7 @@ def test_loader_delegates():
 
 
 def test_unified_window():
-    try:
-        from PySide6 import QtWidgets  # noqa: F401
-    except Exception:
-        print('SKIP UnifiedWindow (no PySide6)')
-        return
+    from PySide6 import QtWidgets  # noqa: F401
     from tp import gui_all
 
     class FakeSession:

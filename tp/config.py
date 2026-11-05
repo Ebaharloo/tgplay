@@ -10,6 +10,28 @@ DEFAULT_CACHE_BUDGET = 2 * 1024 * 1024 * 1024   # /tmp is tmpfs (RAM)
 DEFAULT_PROXY_PORT = 8898
 
 
+def save_json(path, data):
+    """Write JSON atomically: a crash mid-write must not eat the old file."""
+    import json
+    import os
+    tmp = f'{path}.tmp'
+    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+    with open(tmp, 'w') as f:
+        json.dump(data, f, indent=1)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+
+
+def load_json(path, default=None):
+    import json
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except Exception:
+        return {} if default is None else default
+
+
 class Config:
     def __init__(self, home=None, cache_dir=None, proxy_port=None,
                  cache_budget=None, tmpdir=None):

@@ -41,11 +41,7 @@ class FakeSession:
 
 
 def test_load_and_play():
-    try:
-        from PySide6 import QtWidgets  # noqa: F401
-    except Exception:
-        print('SKIP gui_all (no PySide6)')
-        return
+    from PySide6 import QtWidgets  # noqa: F401  (app cannot work without it)
     made = {}
 
     def loader(src, target):
@@ -66,11 +62,7 @@ def test_load_and_play():
 
 
 def test_sidebar_click_shows_source_choices():
-    try:
-        from PySide6 import QtWidgets  # noqa: F401
-    except Exception:
-        print('SKIP sidebar picker (no PySide6)')
-        return
+    from PySide6 import QtWidgets  # noqa: F401
     import time
 
     import tp.search as search_mod

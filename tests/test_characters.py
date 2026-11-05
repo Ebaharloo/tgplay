@@ -109,11 +109,7 @@ def test_bangumi_boost():
 def test_dialog_headless():
     """CastDialog is pure widget code: build it with a stub service, deliver
     a rec through the worker queue and check rows + detail pane render."""
-    try:
-        from PySide6 import QtWidgets  # noqa: F401
-    except Exception:
-        print('SKIP cast dialog (no PySide6)')
-        return
+    from PySide6 import QtWidgets  # noqa: F401
     os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
     from tp.gui_qt import _app as qt_app
     qt_app()

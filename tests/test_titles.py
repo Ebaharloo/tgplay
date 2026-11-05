@@ -12,6 +12,13 @@ from tp.metadata import Metadata  # noqa: E402
 from tp.titles import TitleService  # noqa: E402
 
 
+def _offline(m):
+    """These merge tests are about MAL titles: no Bangumi/Simkl lookups."""
+    m.bangumi_titles = lambda *a, **k: {}
+    m.simkl_titles = lambda *a, **k: {}
+    return m
+
+
 def test_labels_instant():
     cfg = Config(home=tempfile.mkdtemp(prefix='tgplay-labels-')).ensure()
     # painting guard: names apply only when the cached list lines up with
@@ -83,7 +90,7 @@ def test_simkl_titles_merged():
 
 def test_metadata_title_merge():
     cfg = Config(home=tempfile.mkdtemp(prefix='tgplay-mtitles-')).ensure()
-    m = Metadata(cfg)
+    m = _offline(Metadata(cfg))
     calls = {'n': 0}
     state = {'list': {1: 'A', 2: 'B'}}
 
@@ -96,12 +103,12 @@ def test_metadata_title_merge():
     assert m._mal_title(999, 1) == 'A' and calls['n'] == 1
     assert m._mal_title(999, 2) == 'B' and calls['n'] == 1   # known: no refetch
     state['list'][3] = 'C'                                   # a new episode aired
-    m2 = Metadata(cfg)                                       # next run
+    m2 = _offline(Metadata(cfg))                             # next run
     m2._mal_titles = fake
     m2._cjk_title = lambda *a: None
     assert m2._mal_title(999, 3) == 'C' and calls['n'] == 2   # synced the new ep
     state['list'][1] = 'CHANGED'                             # source rewritten
-    m3 = Metadata(cfg)
+    m3 = _offline(Metadata(cfg))
     m3._mal_titles = fake
     m3._cjk_title = lambda *a: None
     assert m3._mal_title(999, 4) is None                     # triggers a refresh
@@ -116,13 +123,13 @@ def test_retry_missing_each_run():
     def fake(mal_id):
         return dict(src['list'])
 
-    m = Metadata(cfg)
+    m = _offline(Metadata(cfg))
     m._mal_titles = fake
     m._cjk_title = lambda *a: None
     assert m._mal_title(7, 1) == 'A'
     assert m._mal_title(7, 2) is None          # name not available yet
     src['list'][2] = 'B'                        # appears later (or site is back)
-    m2 = Metadata(cfg)                          # next run
+    m2 = _offline(Metadata(cfg))                # next run
     m2._mal_titles = fake
     m2._cjk_title = lambda *a: None
     assert m2._mal_title(7, 2) == 'B'           # retried and found

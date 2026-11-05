@@ -88,11 +88,15 @@ class SkipService:
 
     def flags(self, *, title: str, ep: int, url: Optional[str] = None,
               mode: str = 'all', toggle: bool = False,
-              timeout: float = 30, mal_id: Optional[int] = None
+              timeout: float = 30, mal_id: Optional[int] = None,
+              headers: Optional[dict] = None
               ) -> Tuple[List[str], str]:
         """(mpv args, note). note names the detector + times applied."""
+        if mode == 'off':
+            return [], 'off'
         if url:
-            op, ed, osrc, esrc = self.chapters.resolve(url, mode, timeout)
+            op, ed, osrc, esrc = self.chapters.resolve(url, mode, timeout,
+                                                       headers)
             f = self.chapters.opts_from(op, ed, toggle)
             if f:
                 return f, _chapter_note(op, ed, osrc, esrc)

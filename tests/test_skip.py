@@ -12,7 +12,7 @@ class FakeResolver:
     def __init__(self, op=None, ed=None, src='named'):
         self._op, self._ed, self._src = op, ed, src
 
-    def resolve(self, url, mode='all', timeout=None):
+    def resolve(self, url, mode='all', timeout=None, headers=None):
         return (self._op, self._ed,
                 self._src if self._op else None,
                 self._src if self._ed else None)

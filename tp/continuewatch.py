@@ -54,7 +54,8 @@ class CoverArt:
             if got:
                 try:
                     os.makedirs(os.path.dirname(self.cfg.posters), exist_ok=True)
-                    json.dump(cache, open(self.cfg.posters, 'w'))
+                    from .config import save_json
+                    save_json(self.cfg.posters, cache)
                 except Exception:
                     pass
         out = {}

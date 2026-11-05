@@ -52,8 +52,8 @@ def _load(cfg) -> dict:
 
 def _save(cfg, d) -> None:
     try:
-        os.makedirs(os.path.dirname(_path(cfg)), exist_ok=True)
-        json.dump(d, open(_path(cfg), 'w'))
+        from .config import save_json
+        save_json(_path(cfg), d)
     except Exception:
         pass
 

@@ -41,6 +41,9 @@ class Fake(AnimeXProvider):
     def _probe(self, url):
         return True   # accept everything in the test
 
+    def _m3u8_quality(self, url):
+        return ''     # no CDN request: the label stays tag-only
+
 
 class FakeNoDub(Fake):
     def _json(self, u):

@@ -64,11 +64,7 @@ def test_last_link_for_resume():
 
 
 def test_shelf_widget():
-    try:
-        from PySide6 import QtWidgets, QtCore, QtGui  # noqa: F401
-    except Exception:
-        print('SKIP shelf widget (no PySide6)')
-        return
+    from PySide6 import QtWidgets, QtCore, QtGui  # noqa: F401
     os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
     from tp.gui_qt import _app as qt_app
     qt_app()
@@ -80,8 +76,11 @@ def test_shelf_widget():
               'pct': 70.0, 'image': 'u1'},
              {'title': 'One Piece', 'next_ep': 518, 'watched': 517,
               'total': 1184, 'pct': 43.7, 'image': 'u2'}]
+    shelf.show()
     shelf.set_items(items)
     assert not shelf.isHidden(), 'populated shelf must be visible'
+    shelf.sync(results_visible=True)
+    assert not shelf.isHidden(), 'app state must never hide the shelf'
     assert '2 in progress' in shelf.count.text()
     card = shelf.row.itemAt(0).widget()
     assert card is not None and card.item['title'] == 'KonoSuba'
@@ -99,10 +98,12 @@ def test_shelf_widget():
     assert (shown.width(), shown.height()) == (
         card.poster.width(), card.poster.height()), shown.size()
     shelf._toggle()                                   # collapse
-    assert shelf.isHidden(), 'collapsed shelf hides'
+    assert not shelf.scroll.isVisible(), 'collapse hides the rail only'
+    assert not shelf.isHidden(), 'collapsed shelf keeps its slot'
     shelf._toggle()
-    shelf.set_items([])                               # empty hides too
-    assert shelf.isHidden()
+    shelf.set_items([])                               # empty keeps the slot
+    assert not shelf.isHidden(), 'empty shelf keeps its slot'
+    assert not shelf.scroll.isHidden(), 'empty shelf shows the rail again'
     print('PASS shelf widget: cards, click, poster, collapse, empty')
 
 
