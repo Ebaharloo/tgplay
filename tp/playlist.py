@@ -32,7 +32,7 @@ def _safe(fn, *a, **k):
 class Playlist:
     def __init__(self, provider, proxy, cache, player, config, *,
                  skip=None, prefetcher=None, tracker=None, interval: float = 3.0,
-                 mal_id=None):
+                 mal_id=None, stop=None):
         self.provider = provider
         self.proxy = proxy
         self.cache = cache
@@ -42,6 +42,7 @@ class Playlist:
         self.prefetcher = prefetcher
         self.tracker = tracker
         self.mal_id = mal_id          # pinned show id: ani-skip needs it
+        self.stop_ev = stop           # set by Session.stop -> end the playlist
         self.interval = float(os.environ.get('AGP_WATCH_INTERVAL', interval))
 
     # --- progress ----------------------------------------------------------
@@ -90,6 +91,8 @@ class Playlist:
             extra: Optional[List[str]] = None):
         title = self.provider.title
         for i, ep in enumerate(episodes):
+            if self.stop_ev is not None and self.stop_ev.is_set():
+                return 'stopped'
             nxt = episodes[i + 1] if i + 1 < len(episodes) else None
             attempt = 0
             while True:
@@ -196,7 +199,14 @@ class Playlist:
                 if flags:
                     tag += '  [skip]'
                 log.cprint(f'>> streaming ep{ep.num}: {name}{tag}')
+                if self.stop_ev is not None and self.stop_ev.is_set():
+                    watcher.join(timeout=1)
+                    return 'stopped'
                 rc = self.player.play(cmd)
+                if self.stop_ev is not None and self.stop_ev.is_set():
+                    # Stop = end the playlist; mpv's exit code is not a retry
+                    log.cprint('stopped: playlist ended by the user')
+                    return 'stopped'
                 if rc == 1:                       # mpv missing / bad flags
                     log.cprint('player: mpv could not start (missing binary '
                                'or bad flags) - stopping here')

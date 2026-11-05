@@ -276,10 +276,12 @@ def win(monkeypatch, tmp_path):
 
 # --- 7. play buttons follow the session ----------------------------------
 def test_claim7_play_buttons_need_a_session(win):
-    btns = (win.b_from, win.b_sel, win.b_all, win.b_stop)
-    assert [b.isEnabled() for b in btns] == [False] * 4
+    # the three play buttons moved into the episode table's context menu;
+    # the bar keeps Stop, which still needs a session
+    assert not win.b_stop.isEnabled()
     win.set_session(FakeSession())
-    assert [b.isEnabled() for b in btns] == [True] * 4
+    assert win.b_stop.isEnabled()
+    assert not hasattr(win, 'b_from')
 
 
 # --- 8. zero hits say so; Enter searches instead of loading row 0 ---------
@@ -350,3 +352,39 @@ def test_claim6_close_stops_the_session_first(win):
     win.set_session(sess)
     win.close_window()
     assert sess.calls == ['stop', 'close'], sess.calls
+
+
+# --- 13. Stop ends the whole playlist, it is not a per-episode pause -----
+def test_claim13_stop_ends_the_playlist():
+    import threading
+
+    from tp import playlist as P
+
+    class Watch:
+        duration, last = 100, 10
+        def __init__(self, *a, **k): pass
+        def start(self): pass
+        def join(self, timeout=None): pass
+    P.PosWatcher = Watch
+
+    class Stream:
+        direct = True; url = 'file:///tmp/x.mkv'; headers = {}; subs = []
+    class Prov:
+        title = 'T'; mal_id = None
+        def stream(self, n): return Stream()
+    plays = []
+    class Player:
+        def command(self, url, **k): return [url]
+        def play(self, cmd):
+            plays.append(cmd)
+            stop.set()                 # user hits Stop while ep 1 plays
+            return 4
+    class Cfg: progress = '/tmp/p.json'
+    class Cache: pass
+
+    stop = threading.Event()
+    pl = P.Playlist(Prov(), None, Cache(), Player(), Cfg(), stop=stop)
+    pl._save = lambda *a, **k: None
+    out = pl.run([P.Episode(i, f'E{i}') for i in (1, 2, 3)])
+    assert out == 'stopped', out
+    assert len(plays) == 1, f'playlist kept going: {len(plays)} episodes'

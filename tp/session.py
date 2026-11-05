@@ -78,6 +78,7 @@ class Session:
         self.src = src
         self.provider = provider
         self.mal_id = mal_id      # pinned MAL entry (cast + sync key)
+        self._stop = threading.Event()   # Stop = stop the WHOLE playlist
         self.cfg = cfg
         self.http = http
         self.meta = meta
@@ -125,10 +126,11 @@ class Session:
                                    sync=(o.get('sync', 'auto') != 'off'))
         except Exception:
             tracker = None
+        self._stop.clear()
         playlist = Playlist(self.provider, self._proxy, self._cache,
                             self._player, self.cfg, skip=self._skip,
                             prefetcher=self._prefetch, tracker=tracker,
-                            mal_id=self.mal_id)
+                            mal_id=self.mal_id, stop=self._stop)
         start = self.resume[1] if (self.resume and planned[0].num == self.resume[0]) else None
         if start:
             _m, _s = divmod(int(start), 60)
@@ -149,6 +151,7 @@ class Session:
         return self
 
     def stop(self):
+        self._stop.set()                 # tells the running playlist to end
         self._player.stop()
 
     def close(self):

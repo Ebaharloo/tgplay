@@ -994,15 +994,28 @@ class MainWindow(W.QWidget):
         ic = _app_icon()
         if ic is not None:
             self.setWindowIcon(ic)
-        outer = W.QHBoxLayout(self)
+        outer = W.QVBoxLayout(self)
         outer.setContentsMargins(12, 10, 12, 10)
-        outer.setSpacing(10)
-        root = W.QVBoxLayout()
+        split = W.QSplitter(C.Qt.Horizontal, self)
+        split.setChildrenCollapsible(False)
+        split.setHandleWidth(6)
+        split.setStyleSheet('QSplitter::handle { background:#22262b; }')
+        left = W.QWidget()
+        root = W.QVBoxLayout(left)
+        root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(8)
-        outer.addLayout(root, 1)
-        side = W.QVBoxLayout()
+        right = W.QWidget()
+        right.setMinimumWidth(240)
+        side = W.QVBoxLayout(right)
+        side.setContentsMargins(0, 0, 0, 0)
         side.setSpacing(8)
-        outer.addLayout(side, 0)
+        split.addWidget(left)
+        split.addWidget(right)
+        split.setStretchFactor(0, 1)
+        split.setStretchFactor(1, 0)
+        split.setSizes([1000, 320])
+        self._split_h = split
+        outer.addWidget(split)
 
         self._build_sidebar(side)
         # five fixed slots (owner-approved): nothing moves between states
@@ -1195,12 +1208,9 @@ class MainWindow(W.QWidget):
         self.status = W.QLabel('idle')
         bar = W.QHBoxLayout()
         bar.setSpacing(6)
-        self.b_from = W.QPushButton('▶  Play from here')
-        self.b_sel = W.QPushButton('▶  Only selected')
-        self.b_all = W.QPushButton('▶  All')
         self.b_stop = W.QPushButton('■  Stop')
         self.b_close = W.QPushButton('Close')
-        for b in (self.b_from, self.b_sel, self.b_all, self.b_stop):
+        for b in (self.b_stop,):
             b.setEnabled(False)                  # enabled by set_session
             bar.addWidget(b)
         bar.addWidget(self.status, 1)
@@ -1214,9 +1224,8 @@ class MainWindow(W.QWidget):
                  self.opts_form.skip, self.opts_form.toggle, self.opts_form.full,
                  self.opts_form.sync_cb, self.opts_form.nxt,
                  self.opts_form.nowait, self.opts_form.cut, self.opts_form.extra,
-                 self.cast_btn, self.add_btn, self.b_from, self.b_sel,
-                 self.b_all, self.b_stop, self.b_close, self.feed, self.hist,
-                 self.side_btn]
+                 self.cast_btn, self.add_btn, self.b_stop, self.b_close,
+                 self.feed, self.hist, self.side_btn]
         for a, b in zip(chain, chain[1:]):
             W.QWidget.setTabOrder(a, b)
         for seq in ('/', 'Ctrl+F'):          # jump back to search from anywhere
@@ -1269,10 +1278,10 @@ class MainWindow(W.QWidget):
             lambda it: self.load_entry(self._row_entry(self.feed, it)))
         self.hist.itemDoubleClicked.connect(
             lambda it: self.load_entry(self._row_entry(self.hist, it)))
-        self.b_from.clicked.connect(self._from_here)
-        self.b_sel.clicked.connect(self._only_sel)
-        self.b_all.clicked.connect(lambda: self._do_play(self._all_nums()))
         self.b_stop.clicked.connect(self._do_stop)
+        self.table.setContextMenuPolicy(C.Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._ep_menu)
+        self.table.itemDoubleClicked.connect(self._ep_play_here)
         self.b_close.clicked.connect(self.close_window)
         self.add_btn.clicked.connect(self.add_current)
         self.cast_btn.clicked.connect(self._show_cast)
@@ -1336,6 +1345,99 @@ class MainWindow(W.QWidget):
         self._do_play(sel if sel else
                       ([f] if f is not None else self._all_nums()))
 
+    # --- episode actions (right-click + double-click) --------------------
+    def _ep_menu(self, pos):
+        """Right-click an episode: play modes, copy links, show pages."""
+        it = self.table.itemAt(pos)
+        r = it.row() if it is not None else self.table.currentRow()
+        if r >= 0:
+            self.table.selectRow(r)
+        sel = self._current_sel()
+        menu = W.QMenu(self.table)
+        a_here = menu.addAction('▶  Play from here to the end')
+        a_sel = menu.addAction(f'▶  Play only selected ({len(sel)})'
+                               if sel else '▶  Play only this episode')
+        a_all = menu.addAction(f'▶  Play all ({self.table.rowCount()})')
+        menu.addSeparator()
+        a_copy = menu.addAction('⧉  Copy episode link')
+        menu.addSeparator()
+        links = menu.addMenu('🌐  Show pages')
+        page_items = self._page_links(self._show_title())
+        acts = {}
+        for label, url in page_items:
+            acts[links.addAction(label)] = url
+        pick = menu.exec(self.table.viewport().mapToGlobal(pos))
+        if pick is None:
+            return
+        if pick is a_here:
+            self._from_here()
+        elif pick is a_sel:
+            self._only_sel()
+        elif pick is a_all:
+            self._do_play(self._all_nums())
+        elif pick is a_copy:
+            self._copy_ep_link(r)
+        elif pick in acts:
+            G.QDesktopServices.openUrl(C.QUrl(acts[pick]))
+
+    def _ep_play_here(self, item):
+        if item is not None:
+            self.table.selectRow(item.row())
+        self._from_here()
+
+    def _copy_ep_link(self, row):
+        s = self.state['session']
+        it = self.table.item(row, 0) if row >= 0 else None
+        num = int(it.data(C.Qt.UserRole)) if it is not None else None
+        if s is None or num is None:
+            return
+
+        def work():
+            try:
+                st = s.provider.stream(num)
+                url = getattr(st, 'url', None) or ''
+                title = s.title
+                self._libq.put(('copied-ep', url, title, num))
+            except Exception as ex:
+                self._libq.put(('copied-ep', '', f'link failed ({ex})', num))
+        self.state['msg'] = f'resolving ep{num} link…'
+        threading.Thread(target=work, daemon=True).start()
+
+    def _show_title(self):
+        s = self.state['session']
+        return (s.title if s is not None else '') or ''
+
+    def _page_links(self, title, ids=None, mal=None):
+        """Simkl / AniList / MAL / Fandom pages for a show (search when the
+        id is not pinned). No network: ids or a search URL."""
+        from urllib.parse import quote
+        ids = dict(ids or {})
+        s = self.state['session']
+        mal = mal or ids.get('mal') or ids.get('malId') or ids.get('mal_id')
+        if not mal and s is not None:
+            mal = getattr(s, 'mal_id', None)
+        al = ids.get('anilist') or ids.get('anilist_id') or ids.get('al')
+        simkl = ids.get('simkl') or ids.get('simkl_id')
+        q = quote(title or '')
+        out = []
+        if simkl:
+            out.append(('Simkl', f'https://simkl.com/anime/{simkl}/'))
+        elif q:
+            out.append(('Simkl search', f'https://simkl.com/search/?q={q}'))
+        if al:
+            out.append(('AniList', f'https://anilist.co/anime/{al}'))
+        elif q:
+            out.append(('AniList search',
+                        f'https://anilist.co/search/anime?search={q}'))
+        if mal:
+            out.append(('MyAnimeList', f'https://myanimelist.net/anime/{mal}'))
+        elif q:
+            out.append(('MyAnimeList search',
+                        f'https://myanimelist.net/anime.php?q={q}'))
+        if q:
+            out.append(('Fandom search', f'https://www.fandom.com/?s={q}'))
+        return out
+
     def _do_stop(self):
         s = self.state['session']
         if s:
@@ -1360,8 +1462,7 @@ class MainWindow(W.QWidget):
         self.link_lbl.setText(
             f'<a href="{s.link}">{s.link}</a>' if s.link else '')
         self.opts_form.load(s)                    # shared options form
-        for b in (self.b_from, self.b_sel, self.b_all, self.b_stop):
-            b.setEnabled(True)
+        self.b_stop.setEnabled(True)
         # episodes
         nums = sorted(s.labels)
         self.table.setRowCount(0)
@@ -1584,6 +1685,12 @@ class MainWindow(W.QWidget):
         menu = W.QMenu(self.results)
         a_copy = menu.addAction('⧉  Copy link')
         a_open = menu.addAction('🔗  Open in browser')
+        menu.addSeparator()
+        links = menu.addMenu('🌐  Show pages')
+        pages = {}
+        for label, u in self._page_links(it.text().split('  ·  ')[0],
+                                         ids=it.data(C.Qt.UserRole + 4)):
+            pages[links.addAction(label)] = u
         pick = menu.exec(self.results.viewport().mapToGlobal(pos))
         if pick is None:
             return
@@ -1593,6 +1700,8 @@ class MainWindow(W.QWidget):
                 self.state['msg'] = f'link copied: {url}'
             elif pick == a_open:
                 G.QDesktopServices.openUrl(C.QUrl(str(url)))
+            elif pick in pages:
+                G.QDesktopServices.openUrl(C.QUrl(pages[pick]))
         except Exception as ex:
             self.state['msg'] = f'error: {ex}'
 
@@ -2033,6 +2142,15 @@ class MainWindow(W.QWidget):
         while True:
             try:
                 msg = self._libq.get_nowait()
+                if isinstance(msg, tuple) and msg and msg[0] == 'copied-ep':
+                    _k, url, title, num = msg
+                    if url:
+                        W.QApplication.clipboard().setText(str(url))
+                        self.state['msg'] = f'ep{num} link copied: {url}'
+                    else:
+                        self.state['msg'] = f'{title}'
+                    self.state['msg_until'] = time.time() + 8
+                    continue
             except queue.Empty:
                 return
             if msg[0] == 'feed-refresh':
