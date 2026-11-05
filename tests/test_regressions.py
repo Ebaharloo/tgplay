@@ -388,3 +388,29 @@ def test_claim13_stop_ends_the_playlist():
     out = pl.run([P.Episode(i, f'E{i}') for i in (1, 2, 3)])
     assert out == 'stopped', out
     assert len(plays) == 1, f'playlist kept going: {len(plays)} episodes'
+
+
+# --- 14. the sidebar width survives a restart ----------------------------
+def test_claim14_sidebar_width_is_remembered(win, tmp_path):
+    import json
+    from tp import gui_all as GA
+    from tp.config import Config
+    from tp.gui_qt import _app as _qapp
+
+    win.show()
+    win._split_h.setSizes([700, 520])
+    win._remember_window_state()
+    saved = json.load(open(Config(home=str(tmp_path)).ui))['window']['split']
+    assert saved[1] > 240, saved                    # not just the minimum
+
+    again = GA.MainWindow(lambda src, target: None, cfg=Config(home=str(tmp_path)))
+    again.show()
+    _qapp().processEvents()
+    try:
+        got = again._split_h.sizes()
+        assert abs(got[1] / sum(got) - saved[1] / sum(saved)) < 0.02, (got, saved)
+    finally:
+        for t in (again.debounce, again.poll, again.log_timer, again.st_timer,
+                  again.side_timer, again._sz_timer):
+            t.stop()
+        again.hide()

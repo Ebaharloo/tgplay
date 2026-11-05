@@ -1028,6 +1028,11 @@ class MainWindow(W.QWidget):
         self._timers()
         self._connect()
         self._tab_chain()
+        # restore after the first layout pass: sizes set before show() get
+        # clamped by the not-yet-allocated splitter
+        C.QTimer.singleShot(0, self._restore_window_state)
+        self._split_h.splitterMoved.connect(
+            lambda *_: self._sz_timer.start())      # debounced save
         C.QTimer.singleShot(0, self.box.setFocus)   # typing works immediately
 
     # --- widget construction -------------------------------------------
@@ -1232,6 +1237,32 @@ class MainWindow(W.QWidget):
             sc = G.QShortcut(G.QKeySequence(seq), self)
             sc.activated.connect(self._focus_search)
 
+    # --- window layout memory -------------------------------------------
+    def _restore_window_state(self):
+        """Left/sidebar widths from the last run (ui.json -> 'window')."""
+        try:
+            from .config import load_json
+            d = load_json(self._cfg.ui) if self._cfg is not None else {}
+            sizes = ((d or {}).get('window') or {}).get('split') or []
+            sizes = [int(x) for x in sizes if int(x) > 0]
+            if len(sizes) == 2:
+                self._split_h.setSizes(sizes)
+        except Exception:
+            pass
+
+    def _remember_window_state(self):
+        if self._cfg is None:
+            return
+        try:
+            from .config import load_json, save_json
+            d = load_json(self._cfg.ui)
+            if not isinstance(d, dict):
+                d = {}
+            d['window'] = {'split': list(self._split_h.sizes())}
+            save_json(self._cfg.ui, d)
+        except Exception:
+            pass
+
     def _focus_search(self):
         self.box.setFocus()
         self.box.selectAll()
@@ -1246,6 +1277,10 @@ class MainWindow(W.QWidget):
         # sidebar refresh shortly after a sync lands (history/feed changed)
         self.side_timer = C.QTimer()
         self.side_timer.setSingleShot(True)
+        self._sz_timer = C.QTimer()
+        self._sz_timer.setSingleShot(True)
+        self._sz_timer.setInterval(600)
+        self._sz_timer.timeout.connect(self._remember_window_state)
         self.side_timer.setInterval(1500)
         self.side_timer.timeout.connect(self.load_side)   # was never wired
         self.log_timer = C.QTimer()
@@ -2336,6 +2371,7 @@ class MainWindow(W.QWidget):
         if self.state['closing']:
             return
         self.state['closing'] = True
+        self._remember_window_state()               # keep the pane widths
         for t in (self.debounce, self.poll, self.log_timer, self.st_timer,
                   self.side_timer):
             try:
