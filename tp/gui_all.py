@@ -580,6 +580,22 @@ class SimklConnectDialog(W.QDialog):
         super().done(r)
 
 
+def _cover_pixmap(pm, w, h, dpr=1.0):
+    """Scale-crop a poster so it FILLS w×h.
+
+    A QLabel draws a larger pixmap at full size, centred, and clips the
+    overflow - which is why posters looked like a zoomed centre crop."""
+    if pm is None or pm.isNull():
+        return pm
+    tw, th = max(1, round(w * dpr)), max(1, round(h * dpr))
+    scaled = pm.scaled(tw, th, C.Qt.KeepAspectRatioByExpanding,
+                       C.Qt.SmoothTransformation)
+    out = scaled.copy(max(0, (scaled.width() - tw) // 2),
+                      max(0, (scaled.height() - th) // 2), tw, th)
+    out.setDevicePixelRatio(dpr)
+    return out
+
+
 class _ShelfCard(W.QFrame):
     """One poster card in the Continue-watching rail."""
 
@@ -620,6 +636,12 @@ class _ShelfCard(W.QFrame):
         bar.setFixedHeight(5)
         bar.setFixedWidth(118)
         lay.addWidget(bar)
+
+    def set_poster(self, pm):
+        self.poster.setPixmap(_cover_pixmap(
+            pm, self.poster.width(), self.poster.height(),
+            self.poster.devicePixelRatioF()))
+        self.poster.setText('')
 
     def mousePressEvent(self, ev):
         if ev.button() == C.Qt.LeftButton:
@@ -688,8 +710,7 @@ class ContinueShelf(W.QWidget):
             card = _ShelfCard(item, self._click, self._menu)
             u = item.get('image') or ''
             if u and u in self._px:
-                card.poster.setPixmap(self._px[u])
-                card.poster.setText('')
+                card.set_poster(self._px[u])
             if u:
                 self._cards.setdefault(u, []).append(card)
             self.row.addWidget(card)
@@ -701,8 +722,7 @@ class ContinueShelf(W.QWidget):
     def set_poster(self, url, pm):
         self._px[url] = pm
         for card in self._cards.get(url, []):
-            card.poster.setPixmap(pm)
-            card.poster.setText('')
+            card.set_poster(pm)
 
     def has_poster(self, url):
         return url in self._px

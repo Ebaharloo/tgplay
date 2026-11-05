@@ -90,10 +90,14 @@ def test_shelf_widget():
         QtCore.Qt.LeftButton, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier)
     card.mousePressEvent(ev)
     assert clicked['item']['title'] == 'KonoSuba', clicked
-    pm = QtGui.QPixmap(8, 8)
+    pm = QtGui.QPixmap(300, 450)
     pm.fill(QtGui.QColor('#123456'))
     shelf.set_poster('u1', pm)
-    assert card.poster.pixmap() is not None
+    shown = card.poster.pixmap()
+    assert shown is not None, 'poster must be set'
+    # scale-CROP to fill the label (QLabel would centre-clip a big pixmap)
+    assert (shown.width(), shown.height()) == (
+        card.poster.width(), card.poster.height()), shown.size()
     shelf._toggle()                                   # collapse
     assert shelf.isHidden(), 'collapsed shelf hides'
     shelf._toggle()
