@@ -39,7 +39,7 @@ def win(monkeypatch, tmp_path):
     monkeypatch.setattr(GA.MainWindow, 'load_side', lambda self: None)
     # relations/episodes are network: the worker path is stubbed in UI tests
     monkeypatch.setattr(GA.MainWindow, '_fetch_extra',
-                        staticmethod(lambda *a, **k: ({}, {})))
+                        staticmethod(lambda *a, **k: ({}, {}, {})))
     monkeypatch.setattr(SimklAccount, 'logged_in', lambda self: True)
     w = GA.MainWindow(lambda src, target: None,
                       cfg=Config(home=str(tmp_path)).ensure())
@@ -152,7 +152,7 @@ def test_14_one_refresh_updates_every_view(win, monkeypatch):
 
     def fake_extra(cfg, http, rows, days):
         got.append(days)
-        return ({}, {})
+        return ({}, {}, {})
     monkeypatch.setattr(win, '_fetch_extra', fake_extra)
     win.shelf.set_mode('recent')
 

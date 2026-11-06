@@ -414,3 +414,24 @@ def test_claim14_sidebar_width_is_remembered(win, tmp_path):
                   again.side_timer, again._sz_timer):
             t.stop()
         again.hide()
+
+
+# --- 15. an airing show has NO last_aired, so the episode list decides -----
+def test_claim15_airing_show_uses_episode_list_not_last_aired():
+    from datetime import date, timedelta
+    from tp.recent import RecentlyAired
+
+    today = date.today()
+    rows = [{'title': 'Renegade Immortal', 'simkl': 42, 'status': 'watching',
+             'watched': 160, 'total': 172, 'next_ep': 161, 'last_watched': '',
+             'air_date': None}]          # exactly what the live API returns
+    # last_aired is None while a show is airing; the episode list has the date
+    detail = {42: {'status': 'airing', 'last_aired': None}}
+    eps = {42: [{'episode': 163, 'aired': True,
+                 'date': (today - timedelta(days=2)).isoformat() + 'T00:00:00Z'}]}
+    items = RecentlyAired(None).items(
+        [dict(r, air_date=(eps[42][0]['date'])) for r in rows],
+        days=14, relations={}, episodes=eps)
+    assert items, 'airing show with a fresh episode must appear'
+    assert items[0]['days_ago'] == 2, items[0]
+    assert items[0]['behind'] == 3, items[0]      # 163 aired, 160 watched

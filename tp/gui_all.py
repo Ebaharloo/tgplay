@@ -623,16 +623,25 @@ class _ShelfCard(W.QFrame):
         lbl.setToolTip(title)
         lay.addWidget(lbl)
         total = item.get('total') or 0
-        sub = (f"ep {item.get('next_ep')}" +
-               (f"/{total}" if total else '') +
-               f" · {float(item.get('pct') or 0):.0f}%")
+        # the card is 118 px wide: only one line fits, so a recent card shows
+        # what a recent card is for (age + how far behind), not a repeat of
+        # the progress bar right under it
         if item.get('days_ago') is not None:
             d = int(item['days_ago'])
-            sub += ' · today' if d <= 0 else f' · {d}d ago'
-        if item.get('behind'):
-            sub += f" · +{int(item['behind'])} new"
-        s = W.QLabel(sub)
+            sub = 'today' if d <= 0 else f'{d}d'
+            if item.get('behind'):
+                sub += f" · +{int(item['behind'])}"
+            elif total:
+                sub += f' · ep {item.get("next_ep")}/{total}'
+        else:
+            sub = (f"ep {item.get('next_ep')}" +
+                   (f"/{total}" if total else '') +
+                   f" · {float(item.get('pct') or 0):.0f}%")
+        s = W.QLabel()
+        s.setFixedWidth(118)
         s.setStyleSheet('color:#888;')
+        s.setToolTip(sub)
+        s.setText(self.fontMetrics().elidedText(sub, C.Qt.ElideRight, 112))
         lay.addWidget(s)
         bar = W.QProgressBar()
         bar.setRange(0, 100)
@@ -2287,35 +2296,56 @@ class MainWindow(W.QWidget):
 
     @staticmethod
     def _fetch_extra(cfg, http, rows, days):
-        """Relations + episode lists for the shows inside the day window.
+        """Detail + episode lists for the shows that can appear on the rail.
 
-        Worker-thread only (one HTTP pair per show, cached in relations.json /
-        episodes.json so later refreshes are free). Hard cap: 20 shows - the
-        rail never asks for more, and the API is not hammered.
+        Library rows carry no air date (verified against the live API), so the
+        show detail's `last_aired` is the real source. Worker thread only,
+        cached (detail 7 days, episodes 1 day). Caps: 60 details, 20 episode
+        lists - a first run costs one call per followed show, later runs free.
         """
         from datetime import date, timedelta
         from .recent import day_of
         from .simkl_extra import SimklExtra
         if cfg is None:
-            return {}, {}
+            return {}, {}, {}
         today = date.today()
         oldest = today - timedelta(days=days)
-        ids, rel, eps = [], {}, {}
+        ids, rel, eps, det = [], {}, {}, {}
+        cands = []
         for r in rows or []:
             sid = r.get('simkl')
-            d = day_of(r.get('air_date'))
-            if not sid or sid in ids or d is None or not (oldest <= d <= today):
+            if not sid:
                 continue
+            started = (int(r.get('watched') or 0) > 0 or r.get('last_watched')
+                       or r.get('status') in ('watching', 'plantowatch')
+                       or day_of(r.get('air_date')) is not None)
+            if not started:
+                continue
+            # shows still being watched first, then most recently watched:
+            # the cap must never be eaten by old completed movies
+            cands.append(((r.get('status') == 'watching',
+                           str(r.get('last_watched') or '')), sid))
+        seen = set()
+        for _score, sid in sorted(cands, key=lambda t: t[0], reverse=True):
+            if sid in seen:
+                continue
+            seen.add(sid)
             ids.append(sid)
-            if len(ids) >= 20:
+            if len(ids) >= 60:
                 break
         if not ids:
-            return rel, eps
+            return rel, eps, det
         extra = SimklExtra(cfg, http)
         for sid in ids:
-            rel[sid] = extra.relations(sid)
-            eps[sid] = extra.episodes(sid)
-        return rel, eps
+            d = extra.detail(sid) or {}
+            det[sid] = d
+            rel[sid] = d.get('relations') or []
+            la = day_of(d.get('last_aired'))
+            airing = d.get('status') == 'airing'
+            if airing or (la and oldest <= la <= today):
+                if len(eps) < 30:
+                    eps[sid] = extra.episodes(sid)  # exact newest aired ep
+        return rel, eps, det
 
     def _refresh_library(self):
         """ONE worker call to library.overview() re-renders everything it
@@ -2377,8 +2407,18 @@ class MainWindow(W.QWidget):
                 sside = rails.get('sidebar') or {}
                 window = max((rails.get('recent') or {}).get('days', 14),
                              sside.get('days', 14))
-                rel, eps = self._fetch_extra(self._cfg, self._http, rows,
-                                             window)
+                rel, eps, det = self._fetch_extra(self._cfg, self._http,
+                                                  rows, window)
+                from .recent import _newest_aired
+                def _air_date(r):
+                    sid = r.get('simkl')
+                    newest = _newest_aired(eps.get(sid) or eps.get(str(sid))
+                                           or [])
+                    if newest:
+                        return newest[0].isoformat()
+                    return ((det.get(sid) or {}).get('last_aired')
+                            or r.get('air_date'))
+                rows = [dict(r, air_date=_air_date(r)) for r in rows]
                 recent = RecentlyAired(self._cfg, self._http).items(
                     rows, days=window, limit=50,
                     known_titles=self._known_titles(rows),
