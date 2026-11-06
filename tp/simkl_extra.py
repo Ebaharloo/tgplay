@@ -1,0 +1,79 @@
+"""tp.simkl_extra - Simkl relations + episode air dates, cached.
+
+Titles are a bad key for "is this a new season": Simkl already knows the
+relation graph. Two calls, both through `SimklAccount._api` (it refreshes the
+token on a 401):
+
+    GET /anime/{simkl_id}?extended=full   -> relations[]  (sequel/prequel/...)
+    GET /anime/episodes/{simkl_id}        -> every episode with its air date
+
+Cached per simkl id: relations 7 days (relations rarely change), episodes
+1 day (new episodes appear weekly). Failures never raise into the GUI: a
+failed fetch returns the stale cache, else [].
+"""
+import json
+import os
+import time
+
+from .config import save_json
+from .simkl_account import SimklAccount
+
+RELATIONS_TTL = 7 * 86400
+EPISODES_TTL = 86400
+
+
+class SimklExtra:
+    def __init__(self, cfg, http=None, acc=None):
+        self.cfg = cfg
+        self.acc = acc or SimklAccount(cfg, http)
+
+    def _cached(self, path, ttl, simkl_id, fetch) -> list:
+        key = str(simkl_id or '')
+        if not key:
+            return []
+        try:
+            d = json.load(open(path))
+            d = d if isinstance(d, dict) else {}
+        except Exception:
+            d = {}
+        rec = d.get(key) or {}
+        try:
+            fresh = time.time() - float(rec.get('fetched') or 0) < ttl
+        except (TypeError, ValueError):
+            fresh = False
+        if fresh and isinstance(rec.get('data'), list):
+            return rec['data']
+        try:
+            data = fetch(simkl_id)
+        except Exception as ex:
+            from . import log
+            log.cprint(f'simkl: {os.path.basename(path)} fetch failed ({ex})')
+            data = None
+        if data is None:                    # stale data beats nothing
+            return rec.get('data') or []
+        d[key] = {'fetched': time.time(), 'data': data}
+        try:
+            os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+            save_json(path, d)
+        except Exception as ex:
+            from . import log
+            log.cprint(f'simkl: {os.path.basename(path)} not saved ({ex})')
+        return data
+
+    def relations(self, simkl_id) -> list:
+        """[{title, year, poster, relation_type, is_direct, ids}] or []."""
+        def fetch(sid):
+            d = self.acc._api(f'/anime/{int(sid)}', {'extended': 'full'})
+            rel = d.get('relations') if isinstance(d, dict) else None
+            return rel if isinstance(rel, list) else []
+        return self._cached(self.cfg.relations, RELATIONS_TTL, simkl_id, fetch)
+
+    def episodes(self, simkl_id) -> list:
+        """[{episode, date, aired, title, runtime}] or []."""
+        def fetch(sid):
+            d = self.acc._api(f'/anime/episodes/{int(sid)}')
+            if isinstance(d, list):
+                return d
+            eps = d.get('episodes') if isinstance(d, dict) else None
+            return eps if isinstance(eps, list) else []
+        return self._cached(self.cfg.episodes, EPISODES_TTL, simkl_id, fetch)

@@ -79,7 +79,8 @@ def overview(cfg, http: Optional[HttpClient] = None, aired_days: int = 7,
     rem.sort(key=lambda e: str(e.get('air_date') or ''), reverse=True)
     hist = [e for e in rows if e.get('last_watched')]
     hist.sort(key=lambda e: str(e['last_watched']), reverse=True)
-    return {'cal': upcoming + aired, 'rem': rem, 'hist': hist[:hist_limit]}
+    return {'cal': upcoming + aired, 'rem': rem, 'hist': hist[:hist_limit],
+            'rows': rows}
 
 
 def _norm_title(t) -> str:

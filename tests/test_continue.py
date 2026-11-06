@@ -81,7 +81,8 @@ def test_shelf_widget():
     assert not shelf.isHidden(), 'populated shelf must be visible'
     shelf.sync(results_visible=True)
     assert not shelf.isHidden(), 'app state must never hide the shelf'
-    assert '2 in progress' in shelf.count.text()
+    assert shelf.count.text() == '2', shelf.count.text()
+    assert 'in progress' in shelf.count.toolTip(), shelf.count.toolTip()
     card = shelf.row.itemAt(0).widget()
     assert card is not None and card.item['title'] == 'KonoSuba'
     ev = QtGui.QMouseEvent(

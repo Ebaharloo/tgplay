@@ -626,6 +626,11 @@ class _ShelfCard(W.QFrame):
         sub = (f"ep {item.get('next_ep')}" +
                (f"/{total}" if total else '') +
                f" · {float(item.get('pct') or 0):.0f}%")
+        if item.get('days_ago') is not None:
+            d = int(item['days_ago'])
+            sub += ' · today' if d <= 0 else f' · {d}d ago'
+        if item.get('behind'):
+            sub += f" · +{int(item['behind'])} new"
         s = W.QLabel(sub)
         s.setStyleSheet('color:#888;')
         lay.addWidget(s)
@@ -652,15 +657,25 @@ class _ShelfCard(W.QFrame):
 
 
 class ContinueShelf(W.QWidget):
-    """The 'Continue watching' rail: posters + progress, one click resumes.
+    """The poster rail: 'Continue watching' | 'Recently aired', one click
+    resumes.
 
-    Data comes from tp/continuewatch (in-progress Simkl rows + posters).
-    Click = resume via the last link you used for that show (falls back to
-    the source chooser); right-click = choose a source explicitly."""
+    One fixed slot, two data lists: the exclusive rail buttons only change
+    WHICH list the window feeds in (set_items draws whatever it is given),
+    so nothing in the layout moves. The gear opens the rail settings.
+    Data comes from tp/continuewatch (in progress) and tp/recent (recently
+    aired). Click = resume via the last link you used for that show (falls
+    back to the source chooser); right-click = choose a source explicitly."""
 
-    def __init__(self, on_click, on_menu, parent=None):
+    MODES = (('continue', '▶  Continue watching', 'in progress'),
+             ('recent', '🆕  Recently aired', 'recently aired'))
+
+    def __init__(self, on_click, on_menu, parent=None, on_mode=None,
+                 on_settings=None):
         super().__init__(parent)
         self._click, self._menu = on_click, on_menu
+        self._on_mode, self._on_settings = on_mode, on_settings
+        self.mode = 'continue'
         self._items = []
         self._cards = {}          # image url -> [cards]
         self._px = {}             # image url -> QPixmap (avoids re-download)
@@ -669,15 +684,30 @@ class ContinueShelf(W.QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(2)
         head = W.QHBoxLayout()
-        t = W.QLabel('▶  Continue watching')
-        f = t.font()
-        f.setBold(True)
-        t.setFont(f)
-        head.addWidget(t)
+        self.rails = {}
+        self._group = W.QButtonGroup(self)
+        self._group.setExclusive(True)
+        for key, label, _unit in self.MODES:
+            b = W.QToolButton()
+            b.setText(label)
+            b.setCheckable(True)
+            b.setAutoRaise(True)
+            b.setToolTip('Posters for ' + label.strip('▶🆕 ').lower())
+            b.clicked.connect(lambda _c=False, k=key: self._pick(k))
+            self._group.addButton(b)
+            self.rails[key] = b
+            head.addWidget(b)
+        self.rails['continue'].setChecked(True)
         self.count = W.QLabel('')
         self.count.setStyleSheet('color:#888;')
+        self.count.setFixedWidth(120)      # mode never shifts the gear/chevron
         head.addWidget(self.count)
         head.addStretch(1)
+        self.gear = W.QToolButton()
+        self.gear.setText('⚙')
+        self.gear.setToolTip('poster rail settings')
+        self.gear.clicked.connect(lambda: self._settings())
+        head.addWidget(self.gear)
         self.toggle = W.QToolButton()
         self.toggle.setText('▾')
         self.toggle.setToolTip('collapse / expand the shelf')
@@ -697,6 +727,26 @@ class ContinueShelf(W.QWidget):
         self.scroll.setWidget(inner)
         outer.addWidget(self.scroll)
 
+    def _unit(self) -> str:
+        return next(u for k, _l, u in self.MODES if k == self.mode)
+
+    def _pick(self, key):
+        if key != self.mode:
+            self.set_mode(key)
+
+    def set_mode(self, key):
+        """Switch rails: the window answers on_mode by feeding that list."""
+        if key not in self.rails:
+            key = 'continue'
+        self.mode = key
+        self.rails[key].setChecked(True)
+        if self._on_mode is not None:
+            self._on_mode(key)
+
+    def _settings(self):
+        if self._on_settings is not None:
+            self._on_settings()
+
     def set_items(self, items):
         while self.row.count():
             it = self.row.takeAt(0)
@@ -706,8 +756,10 @@ class ContinueShelf(W.QWidget):
         self._items = items or []
         self._cards = {}
         if not self._items:                 # keep the slot, say why it is empty
-            empty = W.QLabel('Nothing in progress yet - play a show and it '
-                             'appears here')
+            empty = W.QLabel(
+                'No new episodes in this window - widen the days in the gear '
+                'settings' if self.mode == 'recent' else
+                'Nothing in progress yet - play a show and it appears here')
             empty.setStyleSheet('color:#888; padding:16px;')
             self.row.addWidget(empty)
         for item in self._items:
@@ -719,8 +771,9 @@ class ContinueShelf(W.QWidget):
                 self._cards.setdefault(u, []).append(card)
             self.row.addWidget(card)
         self.row.addStretch(1)
-        self.count.setText(f'{len(self._items)} in progress'
-                           if self._items else '')
+        self.count.setText(f'{len(self._items)}' if self._items else '')
+        self.count.setToolTip(f'{len(self._items)} {self._unit()}'
+                              if self._items else '')
         self.sync()
 
     def set_poster(self, url, pm):
@@ -743,6 +796,104 @@ class ContinueShelf(W.QWidget):
         # only the user's own collapse toggle changes this slot; app state
         # never hides or grows it (that was the reflow bug)
         self.scroll.setVisible(not self._collapsed)
+
+
+class RailsDialog(W.QDialog):
+    """Rail + sidebar settings: three groups, OK saves, Cancel drops all.
+
+    Values are clamped by tp.recent (days in 7/14/30, limit 1..50) before
+    they reach ui.json, so a hand-edited file cannot break the rails.
+    """
+
+    def __init__(self, cfg, parent=None, focus=None, on_save=None):
+        super().__init__(parent)
+        from .recent import DAYS, load_rails
+        self._cfg = cfg
+        self._on_save = on_save
+        self.rails = load_rails(cfg)
+        self.setWindowTitle('Feed & poster settings')
+        lay = W.QVBoxLayout(self)
+
+        def spin(v):
+            s = W.QSpinBox()
+            s.setRange(1, 50)
+            s.setValue(int(v))
+            return s
+
+        def days_cb(v):
+            cb = W.QComboBox()
+            cb.addItems([str(d) for d in DAYS])
+            cb.setCurrentText(str(v))
+            return cb
+
+        cbox = W.QGroupBox('Continue watching')
+        cf = W.QFormLayout(cbox)
+        self.cont_limit = spin(self.rails['continue']['limit'])
+        cf.addRow('Posters (limit)', self.cont_limit)
+
+        rbox = W.QGroupBox('Recently aired')
+        rf = W.QFormLayout(rbox)
+        self.recent_days = days_cb(self.rails['recent']['days'])
+        self.recent_limit = spin(self.rails['recent']['limit'])
+        self.recent_new = W.QCheckBox('include new seasons of watched shows')
+        self.recent_new.setChecked(
+            self.rails['recent']['include_new_seasons'])
+        rf.addRow('Window (days)', self.recent_days)
+        rf.addRow('Posters (limit)', self.recent_limit)
+        rf.addRow('', self.recent_new)
+
+        sbox = W.QGroupBox('Sidebar')
+        sf = W.QFormLayout(sbox)
+        self.side_show = W.QCheckBox('show days since the episode aired')
+        self.side_show.setChecked(self.rails['sidebar']['show_days'])
+        self.side_days = days_cb(self.rails['sidebar']['days'])
+        self.side_new = W.QCheckBox('include new seasons in Recent')
+        self.side_new.setChecked(
+            self.rails['sidebar']['include_new_seasons'])
+        sf.addRow('', self.side_show)
+        sf.addRow('Recent window (days)', self.side_days)
+        sf.addRow('', self.side_new)
+
+        for b in (cbox, rbox, sbox):
+            lay.addWidget(b)
+        bar = W.QHBoxLayout()
+        bar.addStretch(1)
+        self.ok_btn = W.QPushButton('OK')
+        self.cancel_btn = W.QPushButton('Cancel')
+        bar.addWidget(self.ok_btn)
+        bar.addWidget(self.cancel_btn)
+        lay.addLayout(bar)
+        self.ok_btn.clicked.connect(self._ok)
+        self.cancel_btn.clicked.connect(self.reject)
+        if focus == 'sidebar':
+            # a dialog this small needs no scrolling: focus says where you came in
+            self.side_show.setFocus()
+
+    def values(self) -> dict:
+        return {'continue': {'limit': self.cont_limit.value()},
+                'recent': {'days': int(self.recent_days.currentText()),
+                           'include_new_seasons': self.recent_new.isChecked(),
+                           'limit': self.recent_limit.value()},
+                'sidebar': {'show_days': self.side_show.isChecked(),
+                            'include_new_seasons': self.side_new.isChecked(),
+                            'days': int(self.side_days.currentText())}}
+
+    def apply(self):
+        """Save (raises on a write failure) and tell the window to re-render."""
+        from .recent import save_rails
+        self.rails = save_rails(self._cfg, self.values())
+        if self._on_save is not None:
+            self._on_save(self.rails)
+        return self.rails
+
+    def _ok(self):
+        try:
+            self.apply()
+        except Exception as ex:
+            W.QMessageBox.warning(self, 'Settings',
+                                  f'could not save the settings: {ex}')
+            return
+        self.accept()
 
 
 def _app_main() -> 'W.QApplication':
@@ -1025,6 +1176,7 @@ class MainWindow(W.QWidget):
         self._build_show(root)            # 4 episodes /  drag to resize
         self._build_bottoms(root)         # 5 action bar
 
+        self._apply_rails()               # Aired column per ui.json
         self._timers()
         self._connect()
         self._tab_chain()
@@ -1039,7 +1191,7 @@ class MainWindow(W.QWidget):
     def _build_sidebar(self, side: W.QLayout):
         def _refresh_all():
             self._probe_status()
-            self.load_side()                    # tooltip promises the calendar
+            self._refresh_library()             # tooltip promises the calendar
         self.status_strip = StatusStrip(self._status_clicked, _refresh_all)
         side.addWidget(self.status_strip)
         fbox = W.QGroupBox('Feed · calendar  (click a header to sort)')
@@ -1047,11 +1199,20 @@ class MainWindow(W.QWidget):
         frow = W.QHBoxLayout()
         frow.addWidget(W.QLabel('Show'))
         self.feed_filter = W.QComboBox()
-        self.feed_filter.addItems(['Calendar', 'Remaining', 'All'])
+        self.feed_filter.addItems(['Calendar', 'Remaining', 'All', 'Recent'])
         frow.addWidget(self.feed_filter)
         frow.addStretch(1)
+        self.feed_gear = W.QToolButton()
+        self.feed_gear.setText('⚙')
+        self.feed_gear.setToolTip('feed & poster settings')
+        self.feed_gear.clicked.connect(
+            lambda: self._open_rails_dialog(focus='sidebar'))
+        frow.addWidget(self.feed_gear)
         fv.addLayout(frow)
-        self.feed = SortableTable(['Date', 'Ep', 'Title'])
+        self.feed = SortableTable(['Date', 'Ep', 'Title', 'Aired'])
+        hh = self.feed.horizontalHeader()
+        hh.setSectionResizeMode(2, W.QHeaderView.Stretch)
+        hh.setSectionResizeMode(3, W.QHeaderView.ResizeToContents)
         fv.addWidget(self.feed)
         side.addWidget(fbox, 1)
 
@@ -1066,8 +1227,49 @@ class MainWindow(W.QWidget):
         side.addWidget(self.side_btn)
 
     def _build_shelf(self, root: W.QLayout):
-        self.shelf = ContinueShelf(self._shelf_click, self._shelf_menu)
+        self._rails = {'continue': [], 'recent': []}   # one list per rail
+        self.shelf = ContinueShelf(self._shelf_click, self._shelf_menu,
+                                   on_mode=self._rail_mode,
+                                   on_settings=self._open_rails_dialog)
         root.addWidget(self.shelf)
+
+    # --- rail / sidebar settings (ui.json window.rails) -----------------
+    def _rail_mode(self, mode):
+        """A rail button was picked: feed the shelf THAT list only."""
+        items = self._rails.get(mode) or []
+        self.shelf.set_items(items)
+        self._load_posters(items)
+
+    def _recent_items(self, days, limit=None, include_new=True) -> List[dict]:
+        """The Recent list cut to one view's window/flags (rail or sidebar)."""
+        out = []
+        for e in self.state.get('recent') or []:
+            if e.get('days_ago', 10 ** 6) > days:
+                continue
+            started = bool(e.get('watched')) or (
+                e.get('status') in ('watching', 'plantowatch')
+                and (e.get('next_ep') or 0) >= 1)
+            if not include_new and e.get('is_new_season') and not started:
+                continue
+            out.append(e)
+        return out[:limit] if limit else out
+
+    def _apply_rails(self, rails=None):
+        from .recent import load_rails
+        self._settings = rails or load_rails(self._cfg)
+        self.feed.setColumnHidden(
+            3, not self._settings['sidebar']['show_days'])
+
+    def _open_rails_dialog(self, focus=None):
+        if self._cfg is None:
+            self.state['msg'] = 'settings need a config directory'
+            return
+        RailsDialog(self._cfg, self, focus=focus,
+                    on_save=self._on_rails_saved).exec()
+
+    def _on_rails_saved(self, rails):
+        self._apply_rails(rails)
+        self._refresh_library()      # new window/limits reach feed + rails
 
     def _build_search_options(self, root: W.QLayout):
         """Slot 2: search input + History (left), playback options (right)."""
@@ -1258,7 +1460,9 @@ class MainWindow(W.QWidget):
             d = load_json(self._cfg.ui)
             if not isinstance(d, dict):
                 d = {}
-            d['window'] = {'split': list(self._split_h.sizes())}
+            win = d.get('window') if isinstance(d.get('window'), dict) else {}
+            win['split'] = list(self._split_h.sizes())
+            d['window'] = win                # keep rails (and anything older)
             save_json(self._cfg.ui, d)
         except Exception:
             pass
@@ -1282,7 +1486,7 @@ class MainWindow(W.QWidget):
         self._sz_timer.setInterval(600)
         self._sz_timer.timeout.connect(self._remember_window_state)
         self.side_timer.setInterval(1500)
-        self.side_timer.timeout.connect(self.load_side)   # was never wired
+        self.side_timer.timeout.connect(self._refresh_library)
         self.log_timer = C.QTimer()
         self.log_timer.timeout.connect(self._drain_log)
         self.log_timer.start(250)
@@ -1320,7 +1524,7 @@ class MainWindow(W.QWidget):
         self.b_close.clicked.connect(self.close_window)
         self.add_btn.clicked.connect(self.add_current)
         self.cast_btn.clicked.connect(self._show_cast)
-        self.side_btn.clicked.connect(self.load_side)
+        self.side_btn.clicked.connect(self._refresh_library)
         self.poll.timeout.connect(self._drain_lib)
 
     # --- playback -------------------------------------------------------
@@ -1851,6 +2055,8 @@ class MainWindow(W.QWidget):
             self.hist_tbl.sortItems(sc, so)       # keep the user's sort
         self.res_stack.setCurrentWidget(self.hist_tbl)
         self.list_head.setText('Recent links & searches')
+        if force:                       # asked for it: refresh Simkl too
+            self._refresh_library()
 
     def _hist_del(self, _row, e):
         try:
@@ -2066,13 +2272,62 @@ class MainWindow(W.QWidget):
                 self.state['msg'] = f'add failed: {ex}'
         threading.Thread(target=work, daemon=True).start()
 
-    def load_side(self):
+    @staticmethod
+    def _known_titles(rows) -> List[str]:
+        """Titles he actually watched (any season) - 'new season' baseline."""
+        out = []
+        for r in rows or []:
+            try:
+                watched = int(r.get('watched') or 0)
+            except (TypeError, ValueError):
+                watched = 0
+            if r.get('title') and (r.get('last_watched') or watched > 0):
+                out.append(r['title'])
+        return out
+
+    @staticmethod
+    def _fetch_extra(cfg, http, rows, days):
+        """Relations + episode lists for the shows inside the day window.
+
+        Worker-thread only (one HTTP pair per show, cached in relations.json /
+        episodes.json so later refreshes are free). Hard cap: 20 shows - the
+        rail never asks for more, and the API is not hammered.
+        """
+        from datetime import date, timedelta
+        from .recent import day_of
+        from .simkl_extra import SimklExtra
+        if cfg is None:
+            return {}, {}
+        today = date.today()
+        oldest = today - timedelta(days=days)
+        ids, rel, eps = [], {}, {}
+        for r in rows or []:
+            sid = r.get('simkl')
+            d = day_of(r.get('air_date'))
+            if not sid or sid in ids or d is None or not (oldest <= d <= today):
+                continue
+            ids.append(sid)
+            if len(ids) >= 20:
+                break
+        if not ids:
+            return rel, eps
+        extra = SimklExtra(cfg, http)
+        for sid in ids:
+            rel[sid] = extra.relations(sid)
+            eps[sid] = extra.episodes(sid)
+        return rel, eps
+
+    def _refresh_library(self):
+        """ONE worker call to library.overview() re-renders everything it
+        feeds: the shelf (current rail), the feed, the history table and the
+        Recent view - so a Simkl change lands in all of them at once."""
         self.feed.setSortingEnabled(False)
         self.feed.setRowCount(0)
         self.hist.setSortingEnabled(False)
         self.hist.setRowCount(0)
         self.feed.insertRow(0)
         self.feed.setItem(0, 2, W.QTableWidgetItem('loading…'))
+        rails = getattr(self, '_settings', None) or {}
 
         def work():
             acc = None
@@ -2089,11 +2344,13 @@ class MainWindow(W.QWidget):
                             'light (↻ area, above) to sign in')
                 self._libq.put(('feed', None, None))
                 return
+            rows = []
             try:
                 from .library import overview
                 with _log.span('feed') as s:
                     ov = overview(self._cfg, self._http)
                     cal, rem, rc = ov['cal'], ov['rem'], ov['hist']
+                    rows = ov.get('rows') or []
                     s.result(f'{len(cal)} upcoming · {len(rem)} to-watch '
                              f'· {len(rc)} watched')
             except Exception as ex:
@@ -2109,16 +2366,32 @@ class MainWindow(W.QWidget):
                     return
                 _log.cprint('feed: Simkl is connected but the library/'
                             'calendar came back empty')
-            shelf = []
-            if self._cfg is not None and rem:
-                try:
-                    from .continuewatch import ContinueWatching
-                    shelf = ContinueWatching(self._cfg, self._http).items(rem)
-                except Exception as ex:
-                    _log.cprint(f'feed: continue-watching shelf failed ({ex})')
-            self._libq.put(('feed', {'cal': cal, 'rem': rem,
-                                     'shelf': shelf}, rc))
+            shelf, recent = [], []
+            try:
+                from .continuewatch import ContinueWatching
+                from .recent import RecentlyAired
+                shelf = ContinueWatching(self._cfg, self._http).items(
+                    rem, limit=(rails.get('continue') or {}).get('limit', 10))
+                # one list wide enough for BOTH the rail and the sidebar;
+                # each view filters own days/new-season flags on the GUI side
+                sside = rails.get('sidebar') or {}
+                window = max((rails.get('recent') or {}).get('days', 14),
+                             sside.get('days', 14))
+                rel, eps = self._fetch_extra(self._cfg, self._http, rows,
+                                             window)
+                recent = RecentlyAired(self._cfg, self._http).items(
+                    rows, days=window, limit=50,
+                    known_titles=self._known_titles(rows),
+                    relations=rel, episodes=eps)
+            except Exception as ex:
+                _log.cprint(f'feed: poster rails failed ({ex})')
+            self._libq.put(('feed', {'cal': cal, 'rem': rem, 'shelf': shelf,
+                                     'recent': recent}, rc))
         threading.Thread(target=work, daemon=True).start()
+
+    def load_side(self):
+        """Old name for the same single-path refresh (callers kept working)."""
+        self._refresh_library()
 
     def _render_feed(self):
         cal = self.state.get('cal')
@@ -2132,10 +2405,14 @@ class MainWindow(W.QWidget):
             self.feed.setSortingEnabled(True)
             return
         mode = self.feed_filter.currentText()
+        side = (getattr(self, '_settings', None) or {}).get('sidebar') or {}
         if mode == 'Calendar':
             rows = list(cal or [])
         elif mode == 'Remaining':
             rows = list(rem or [])
+        elif mode == 'Recent':
+            rows = self._recent_items(side.get('days', 14), None,
+                                      side.get('include_new_seasons', True))
         else:                                   # All (de-duplicated)
             seen, rows = set(), []
             for e in list(cal or []) + list(rem or []):
@@ -2148,7 +2425,10 @@ class MainWindow(W.QWidget):
             r = self.feed.rowCount()
             self.feed.insertRow(r)
             k = e.get('kind')
-            if k == 'upcoming':
+            if 'days_ago' in e:                  # recently-aired (tp.recent) row
+                ago = e.get('days_ago') or 0
+                when = '🆕  today' if not ago else f'🆕  {ago}d ago'
+            elif k == 'upcoming':
                 when = '📅  ' + _fmt_date(e['air_date'])
             elif k == 'aired':
                 when = '✅  aired ' + str(e['air_date'])[:10]
@@ -2166,7 +2446,15 @@ class MainWindow(W.QWidget):
                 ttl = f"{e['title']} · {e['ep_title']}"
             elif k == 'remaining' and e.get('total'):
                 ttl = f"{e['title']}  ({e.get('watched')}/{e.get('total')})"
+            elif 'days_ago' in e and e.get('is_new_season'):
+                ttl = f"{e['title']}  ·  new season"
             self.feed.setItem(r, 2, W.QTableWidgetItem(ttl))
+            # Aired column: shown only when the sidebar option is on
+            ago = e.get('days_ago')
+            c3 = _SortItem('' if ago is None else
+                           ('today' if not ago else f'{ago}d'))
+            c3.setData(C.Qt.UserRole, int(ago or 0))
+            self.feed.setItem(r, 3, c3)
         if not rows:
             self.feed.insertRow(0)
             self.feed.setItem(0, 2, W.QTableWidgetItem(
@@ -2189,7 +2477,7 @@ class MainWindow(W.QWidget):
             except queue.Empty:
                 return
             if msg[0] == 'feed-refresh':
-                self.load_side()
+                self._refresh_library()
             elif msg[0] == 'status':
                 items = msg[1] or []
                 self.status_strip.set_items(items)
@@ -2213,9 +2501,16 @@ class MainWindow(W.QWidget):
                 else:
                     self.state['cal'] = payload.get('cal')
                     self.state['rem'] = payload.get('rem')
-                shelf = (payload or {}).get('shelf') or []
-                self.shelf.set_items(shelf)
-                self._load_posters(shelf)
+                # one payload feeds both rails: the shelf shows the picked one
+                self.state['recent'] = (payload or {}).get('recent') or []
+                rset = (getattr(self, '_settings', None) or {}).get('recent') or {}
+                self._rails = {
+                    'continue': (payload or {}).get('shelf') or [],
+                    'recent': self._recent_items(rset.get('days', 14),
+                                                 rset.get('limit', 20),
+                                                 rset.get('include_new_seasons',
+                                                          True))}
+                self._rail_mode(self.shelf.mode)
                 self._render_feed()
                 self.hist.setSortingEnabled(False)
                 self.hist.setRowCount(0)
