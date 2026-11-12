@@ -6,7 +6,11 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 
 from tp.app import run             # noqa: E402
-from tp.cli_all import main_all    # noqa: E402
 
 if __name__ == '__main__':
+    if '--web' in sys.argv[1:]:                  # the Astryx window
+        from tp.web.run import main as web_main
+        sys.exit(run(web_main, 'tgplay'))
+
+    from tp.cli_all import main_all
     sys.exit(run(main_all, 'tgplay'))
