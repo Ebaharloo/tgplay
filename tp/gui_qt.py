@@ -35,6 +35,11 @@ def _app():
     ic = _app_icon(G)
     if ic is not None:
         app.setWindowIcon(ic)
+    try:
+        from . import theme
+        theme.apply(app)
+    except Exception:
+        pass                       # a theme failure must never block the GUI
     return app
 
 
