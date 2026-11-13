@@ -125,8 +125,13 @@ class AppState:
                 lights[it.get('key')] = it.get('state') or 'warn'
         except Exception as ex:
             log.cprint(f'web: status probe failed ({ex})')
+        rails = self._load_rails()
+        window = int((rails.get('recent') or {}).get('days') or 14)
         try:
-            ov = self._overview() or {}
+            try:
+                ov = self._overview(aired_days=window) or {}
+            except TypeError:          # stubs without the kwarg
+                ov = self._overview() or {}
         except Exception as ex:
             log.cprint(f'feed: fetch failed ({ex})')
             with self.lock:
@@ -140,8 +145,9 @@ class AppState:
                      'title': c.get('title') or '',
                      'ep_title': c.get('ep_title') or '',
                      'kind': c.get('kind') or 'upcoming'}
-                    for c in ov.get('cal') or [] if c.get('air_date')]
-        rails = self._load_rails()
+                    for c in ov.get('cal') or []
+                    if c.get('air_date')
+                    and str(c.get('air_date'))[:10] >= date.today().isoformat()]
         shelf, recent = [], []
         try:
             from ..continuewatch import ContinueWatching
@@ -180,6 +186,21 @@ class AppState:
                                   'new': bool(det.get(r.get('simkl'), {})
                                               .get('status') == 'airing'
                                               and int(r.get('watched') or 0) == 0)})
+            for c in ov.get('cal') or []:
+                when = str(c.get('air_date') or '')
+                d = day_of(when)
+                if d is None or d > date.today():
+                    continue
+                age = (date.today() - d).days
+                if 0 <= age <= window:
+                    aired.append({'date': when[:10], 'days': age,
+                                  'ep': c.get('next_ep'),
+                                  'title': c.get('title') or '',
+                                  'new': False})
+            uniq = {}
+            for a in aired:                       # calendar + rows overlap
+                uniq.setdefault((a['date'], a['title']), a)
+            aired = list(uniq.values())
             aired.sort(key=lambda x: x['date'], reverse=True)
             recent = RecentlyAired(self.cfg, self.http).items(
                 enriched, days=window, limit=50, known_titles=known,
@@ -233,7 +254,9 @@ class AppState:
             d = ex.detail(sid) or {}
             det[sid] = d
             rel[sid] = d.get('relations') or []
-            if len(eps) < 30 and d.get('status') == 'airing':
+            # every airing show needs its episode list, not the first 30:
+            # the rest had no date and vanished from the 14-day feed
+            if len(eps) < 60 and d.get('status') == 'airing':
                 eps[sid] = ex.episodes(sid)
             if len(seen) >= 60:
                 break

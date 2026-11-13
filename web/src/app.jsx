@@ -263,9 +263,12 @@ function Show({ session, sel, setSel, focus, setFocus, onPlay, say }) {
 }
 
 function Sidebar({ snap, onRefresh }) {
-  const [feedTab, setFeedTab] = useState('aired')
+  const [feedTab, setFeedTab] = useState('all')
   const aired = snap.feed || []
   const soon = snap.upcoming || []
+  // one agenda like the Qt panel: just aired first, then what is coming
+  const agenda = aired.concat(
+    [...soon].sort((a, b) => String(a.date).localeCompare(String(b.date))))
   return (
     <div className="side">
       <div className="row" style={{ alignItems: 'center' }}>
@@ -279,11 +282,21 @@ function Sidebar({ snap, onRefresh }) {
       <Card padding={2} style={{ flex: '1 1 auto', minHeight: 0 }}>
         <div className="row" style={{ alignItems: 'center' }}>
           <TabList value={feedTab} onChange={setFeedTab} size="sm">
+            <Tab value="all" label={`14 days ${agenda.length}`} />
             <Tab value="aired" label={`Aired ${aired.length}`} />
             <Tab value="upcoming" label={`Upcoming ${soon.length}`} />
           </TabList>
         </div>
         <div className="list tbl fade">
+          {feedTab === 'all' && agenda.map((f, i) => (
+            <div className="item" key={`all-${f.title}-${i}`}>
+              <span className="mono">{f.days === undefined
+                ? String(f.date).slice(5) : (f.days === 0 ? 'today' : `${f.days}d`)}</span>
+              <span className="mono">{f.ep}</span>
+              <span className="name" title={f.title}>{f.title}</span>
+              {f.new && <Badge label="new" variant="success" />}
+            </div>
+          ))}
           {feedTab === 'aired' && aired.map((f, i) => (
             <div className="item" key={`${f.title}-${i}`}>
               <span className="mono">{f.days === 0 ? 'today' : `${f.days}d`}</span>
@@ -299,6 +312,10 @@ function Sidebar({ snap, onRefresh }) {
               <span className="name" title={f.title}>{f.title}</span>
             </div>
           ))}
+          {feedTab === 'all' && !agenda.length && (
+            <Text size="sm" tone="secondary">
+              nothing aired and nothing scheduled for your shows in 14 days
+            </Text>)}
           {feedTab === 'aired' && !aired.length && (
             <Text size="sm" tone="secondary">
               nothing aired in the last 14 days — widen the days in ⚙ settings
