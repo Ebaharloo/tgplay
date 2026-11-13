@@ -8,7 +8,11 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from tp.app import run             # noqa: E402
 
 if __name__ == '__main__':
-    if '--web' in sys.argv[1:]:                  # the Astryx window
+    if '--web-app' in sys.argv[1:]:              # Astryx in a real app window
+        from tp.web.app_window import main as app_main
+        sys.exit(run(app_main, 'tgplay'))
+
+    if '--web' in sys.argv[1:]:                  # the Astryx UI in a browser
         from tp.web.run import main as web_main
         sys.exit(run(web_main, 'tgplay'))
 
