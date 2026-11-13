@@ -172,3 +172,46 @@ def test_sse_streams_a_log_line(web):
     assert any(json.loads(chunk[len('data: '):])['line'] == 'web-sse-probe line'
                for chunk in body.split('\n\n')
                if chunk.startswith('data: '))
+
+
+def test_options_fields_exist_without_session(web):
+    """The settings panel must render before a show is picked (was blank)."""
+    client, _cfg = web
+    snap = client.state()
+    assert snap['session'] is None
+    keys = [f['k'] for f in snap['opts']['fields']]
+    assert len(keys) >= 6, keys
+    assert 'skip' in keys and 'extra' in keys
+    assert 'quality' not in keys, 'no groups -> no server picker'
+
+
+def test_feed_is_aired_rows_not_rail_items(web):
+    """Aired rows feed the sidebar even when the rail filters them out."""
+    client, cfg = web
+
+    class OffRail(FakeLibrary):
+        def overview(self, *a, **k):
+            ov = dict(super().overview(*a, **k))
+            rows = []
+            for r in ov.get('rows') or []:
+                r = dict(r, watched=0, status='completed', last_watched='')
+                rows.append(r)
+            ov['rows'] = rows
+            ov['rem'] = []
+            return ov
+
+    state = AppState(cfg=cfg, loader=FakeLoader(),
+                     overview=OffRail().overview, probe=FakeLibrary.lights,
+                     extra=False, finder=lambda q: list(RESULTS))
+    server = serve(0, state)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        c = Client(f'http://127.0.0.1:{server.server_address[1]}')
+        snap = c.wait(lambda s: s if s['feed'] else None)
+        assert snap['rails']['recent'] == [], 'precondition: rail is empty'
+        row = snap['feed'][0]
+        assert set(row) >= {'date', 'days', 'ep', 'title'}
+        assert 'upcoming' in snap
+    finally:
+        server.shutdown()
+        server.server_close()

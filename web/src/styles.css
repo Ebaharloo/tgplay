@@ -75,3 +75,17 @@ body {
 .tbl .item { padding: 3px 0; border-bottom: 0; }
 
 .bottoms { display: flex; align-items: center; gap: 8px; }
+
+/* slots keep their height: content fades, layout never jumps */
+.show-slot { display: flex; flex-direction: column; min-height: 320px; }
+.show-slot > * { flex: 1 1 auto; min-height: 0; }
+.opts-off { opacity: .55; }
+.opts-off::after {
+  content: 'load a show to change these';
+  display: block; font-size: var(--font-size-xs);
+  color: var(--color-text-secondary); padding-top: 2px;
+}
+.fade { animation: fadein .18s ease-out; }
+@keyframes fadein { from { opacity: 0 } to { opacity: 1 } }
+.side .list { min-height: 120px; }
+@media (prefers-reduced-motion: reduce) { .fade { animation: none } }

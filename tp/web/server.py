@@ -16,6 +16,7 @@ tests use, no network - for screenshots and poking at the UI.
 import json
 import os
 import threading
+from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
@@ -63,6 +64,7 @@ class AppState:
         self.rails = self._load_rails()
         self.rails_items = {'continue': [], 'recent': []}
         self.feed = []
+        self.upcoming = []
         self.history = []
         self.lights = {'simkl': 'warn', 'gate': 'warn', 'anilist': 'warn'}
         self.lines = []                      # log ring, streamed by /api/events
@@ -132,6 +134,13 @@ class AppState:
                 self.message = f'library failed: {ex}'
             return
         rem, rows = ov.get('rem') or [], ov.get('rows') or []
+        # library rows for upcoming use air_date/next_ep (not date/episode)
+        upcoming = [{'date': str(c.get('air_date') or '')[:10],
+                     'ep': c.get('next_ep'),
+                     'title': c.get('title') or '',
+                     'ep_title': c.get('ep_title') or '',
+                     'kind': c.get('kind') or 'upcoming'}
+                    for c in ov.get('cal') or [] if c.get('air_date')]
         rails = self._load_rails()
         shelf, recent = [], []
         try:
@@ -141,12 +150,39 @@ class AppState:
                 rem, limit=(rails.get('continue') or {}).get('limit', 10))
             window = max((rails.get('recent') or {}).get('days', 14),
                          (rails.get('sidebar') or {}).get('days', 14))
-            rel, eps = self._extra(rows, window)
+            rel, eps, det = self._extra(rows, window)
             known = [r['title'] for r in rows
                      if r.get('title') and (r.get('last_watched')
                                             or int(r.get('watched') or 0) > 0)]
+            from ..recent import _newest_aired, day_of
+            def _air(r):
+                sid = r.get('simkl')
+                n = _newest_aired(eps.get(sid) or eps.get(str(sid)) or [])
+                if n:
+                    return n[0].isoformat(), n[1]
+                d = (det.get(sid) or {}).get('last_aired')
+                if d:
+                    return d, None
+                return r.get('air_date'), None
+            aired, enriched = [], []
+            for r in rows:
+                when, newest_ep = _air(r)
+                d = day_of(when)
+                if d is None:
+                    enriched.append(dict(r, air_date=when))
+                    continue
+                enriched.append(dict(r, air_date=when))
+                age = (date.today() - d).days
+                if 0 <= age <= window:
+                    aired.append({'date': when[:10], 'days': age,
+                                  'ep': newest_ep or r.get('next_ep'),
+                                  'title': r.get('title') or '',
+                                  'new': bool(det.get(r.get('simkl'), {})
+                                              .get('status') == 'airing'
+                                              and int(r.get('watched') or 0) == 0)})
+            aired.sort(key=lambda x: x['date'], reverse=True)
             recent = RecentlyAired(self.cfg, self.http).items(
-                rows, days=window, limit=50, known_titles=known,
+                enriched, days=window, limit=50, known_titles=known,
                 relations=rel, episodes=eps)
         except Exception as ex:
             log.cprint(f'feed: poster rails failed ({ex})')
@@ -154,12 +190,10 @@ class AppState:
                 self.message = f'rails failed: {ex}'
         with self.lock:
             self.lights = lights
+            self.upcoming = upcoming
             self.rails = rails
             self.rails_items = {'continue': shelf, 'recent': recent}
-            self.feed = [{'date': i.get('air_date') or '',
-                          'ep': i.get('next_ep'), 'title': i.get('title') or '',
-                          'days': i.get('days_ago') or 0,
-                          'new': bool(i.get('is_new_season'))} for i in recent]
+            self.feed = aired[:60]
             self.history = [{'watched': str(h.get('last_watched') or '')[:10],
                              'prog': f"{int(h.get('watched') or 0)}/"
                                      f"{int(h.get('total') or 0)}",
@@ -176,17 +210,34 @@ class AppState:
         starts losing bots to the cap.
         """
         if not self.extra or not rows:
-            return {}, {}
+            return {}, {}, {}
         from ..simkl_extra import SimklExtra
         ex = SimklExtra(self.cfg, self.http)
-        rel, eps = {}, {}
-        want = [r.get('simkl') for r in rows if r.get('simkl')][:60]
-        for sid in want:
+        rel, eps, det = {}, {}, {}
+        cands = []
+        for r in rows or []:
+            sid = r.get('simkl')
+            if not sid:
+                continue
+            started = (int(r.get('watched') or 0) > 0 or r.get('last_watched')
+                       or r.get('status') in ('watching', 'plantowatch'))
+            if not started:
+                continue
+            cands.append(((r.get('status') == 'watching',
+                           str(r.get('last_watched') or '')), sid))
+        seen = set()
+        for _score, sid in sorted(cands, key=lambda t: t[0], reverse=True):
+            if sid in seen:
+                continue
+            seen.add(sid)
             d = ex.detail(sid) or {}
+            det[sid] = d
             rel[sid] = d.get('relations') or []
             if len(eps) < 30 and d.get('status') == 'airing':
                 eps[sid] = ex.episodes(sid)
-        return rel, eps
+            if len(seen) >= 60:
+                break
+        return rel, eps, det
 
     # --- search -----------------------------------------------------------
     def search_for(self, q):
@@ -341,6 +392,7 @@ class AppState:
                 'rails': {'continue': list(self.rails_items['continue']),
                           'recent': list(self.rails_items['recent'])},
                 'feed': list(self.feed),
+                'upcoming': list(self.upcoming),
                 'history': list(self.history),
                 'session': view,
                 'search': dict(self.search),
@@ -353,6 +405,8 @@ class AppState:
             }
 
     def _fields(self, session, opts, mpv):
+        """Always render the panel: with no session the fields are defaults
+        the UI shows disabled, so the slot never appears/disappears."""
         groups = [str(g.get('label')) for g in
                   (getattr(session, 'groups', None) or [])
                   if isinstance(g, dict) and g.get('label')]
@@ -625,7 +679,8 @@ FAKE_RESULTS = [
 
 def main(argv=None) -> int:
     """`python -m tp.web.server` - serve without opening a window."""
-    server = serve()
+    port = int(os.environ.get('TPLAY_WEB_PORT') or PORT)
+    server = serve(port)
     print(f'tgplay web: http://{HOST}:{server.server_address[1]}/')
     try:
         server.serve_forever()

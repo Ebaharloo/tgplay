@@ -111,33 +111,35 @@ function Rail({ snap, onPick }) {
   )
 }
 
-function Options({ fields, setFields }) {
+function Options({ fields, setFields, hasSession }) {
   const set = (k, patch) => setFields(
     fields.map((f) => (f.k === k ? { ...f, ...patch } : f)))
   const choices = fields.filter((f) => f.kind === 'choice')
   const flags = fields.filter((f) => f.kind === 'flag')
   const texts = fields.filter((f) => f.kind === 'text')
   return (
-    <div className="opts">
+    <div className={'opts' + (hasSession ? '' : ' opts-off')}>
       <div className="row">
         {choices.map((f) => (
           <Selector key={f.k} label={SHORT[f.k] || f.k} isLabelHidden
             options={f.choices} value={f.choices[f.i] || f.choices[0]}
             size="sm" width={f.k === 'quality' ? 158 : 96}
+            isDisabled={!hasSession}
             onChange={(v) => set(f.k, { i: Math.max(0, f.choices.indexOf(v)) })} />
         ))}
       </div>
       <div className="checks">
         {flags.map((f) => (
           <CheckboxInput key={f.k} label={SHORT[f.k] || f.k} size="sm"
-            value={!!f.val} onChange={(v) => set(f.k, { val: v })} />
+            value={!!f.val} isDisabled={!hasSession}
+            onChange={(v) => set(f.k, { val: v })} />
         ))}
       </div>
       <div className="row">
         {texts.map((f) => (
           <TextInput key={f.k} label={SHORT[f.k] || f.k} isLabelHidden size="sm"
             width={f.k === 'cut' ? 96 : 240} value={String(f.val ?? '')}
-            placeholder={SHORT[f.k]}
+            placeholder={SHORT[f.k]} isDisabled={!hasSession}
             onChange={(v) => set(f.k, { val: v })} />
         ))}
       </div>
@@ -261,6 +263,9 @@ function Show({ session, sel, setSel, focus, setFocus, onPlay, say }) {
 }
 
 function Sidebar({ snap, onRefresh }) {
+  const [feedTab, setFeedTab] = useState('aired')
+  const aired = snap.feed || []
+  const soon = snap.upcoming || []
   return (
     <div className="side">
       <div className="row" style={{ alignItems: 'center' }}>
@@ -272,9 +277,14 @@ function Sidebar({ snap, onRefresh }) {
         <Button label="↻" variant="ghost" size="sm" onClick={onRefresh} />
       </div>
       <Card padding={2} style={{ flex: '1 1 auto', minHeight: 0 }}>
-        <Heading level={6}>Feed · aired</Heading>
-        <div className="list tbl">
-          {(snap.feed || []).map((f, i) => (
+        <div className="row" style={{ alignItems: 'center' }}>
+          <TabList value={feedTab} onChange={setFeedTab} size="sm">
+            <Tab value="aired" label={`Aired ${aired.length}`} />
+            <Tab value="upcoming" label={`Upcoming ${soon.length}`} />
+          </TabList>
+        </div>
+        <div className="list tbl fade">
+          {feedTab === 'aired' && aired.map((f, i) => (
             <div className="item" key={`${f.title}-${i}`}>
               <span className="mono">{f.days === 0 ? 'today' : `${f.days}d`}</span>
               <span className="mono">{f.ep}</span>
@@ -282,7 +292,21 @@ function Sidebar({ snap, onRefresh }) {
               {f.new && <Badge label="new" variant="success" />}
             </div>
           ))}
-          {!snap.feed?.length && <Text size="sm" tone="secondary">no air dates</Text>}
+          {feedTab === 'upcoming' && soon.map((f, i) => (
+            <div className="item" key={`${f.title}-${i}`}>
+              <span className="mono">{f.date || '—'}</span>
+              <span className="mono">{f.ep}</span>
+              <span className="name" title={f.title}>{f.title}</span>
+            </div>
+          ))}
+          {feedTab === 'aired' && !aired.length && (
+            <Text size="sm" tone="secondary">
+              nothing aired in the last 14 days — widen the days in ⚙ settings
+            </Text>)}
+          {feedTab === 'upcoming' && !soon.length && (
+            <Text size="sm" tone="secondary">
+              no scheduled episodes — refresh the feed ↻
+            </Text>)}
         </div>
       </Card>
       <Card padding={2} style={{ flex: '1 1 auto', minHeight: 0 }}>
@@ -331,6 +355,15 @@ export default function App() {
     setSel([])
     setFocus(session?.resume ?? session?.episodes?.[0]?.num ?? null)
   }, [link])
+
+  // First snapshot arrives after the effect above ran with an empty link, so
+  // the fields stayed [] and the whole options panel rendered blank. Adopt
+  // them once, then never overwrite what the user is editing.
+  useEffect(() => {
+    if (!fields.length && snap?.opts?.fields?.length) {
+      setFields(snap.opts.fields)
+    }
+  }, [snap?.opts?.fields])
 
   useEffect(() => {
     const onKey = (e) => {
@@ -400,18 +433,25 @@ export default function App() {
               </Text>
             </div>
           </div>
-          <Options fields={fields} setFields={setFields} />
+          <Options fields={fields} setFields={setFields}
+            hasSession={!!session} />
         </div>
 
         <Results search={snap?.search || { q: '', results: [], busy: false }}
           onOpen={open} say={say} />
 
-        {session
-          ? <Show session={session} sel={sel} setSel={setSel} focus={focus}
-            setFocus={setFocus} onPlay={play} say={say} />
-          : <Card padding={3}><Text size="sm" tone="secondary">
-            no show loaded — search a title, then click a result
-          </Text></Card>}
+        <div className="show-slot">
+          {session
+            ? <Show session={session} sel={sel} setSel={setSel} focus={focus}
+              setFocus={setFocus} onPlay={play} say={say} />
+            : <Card padding={3} className="fade">
+              <Heading level={5}>No show loaded</Heading>
+              <Text size="sm" tone="secondary">
+                search a title and click a result — the episode list and the
+                controls above stay in place and activate for it
+              </Text>
+            </Card>}
+        </div>
 
         <div className="bottoms">
           <Button label="■ Stop" variant="secondary" size="sm"
