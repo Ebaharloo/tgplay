@@ -13,6 +13,7 @@ failed fetch returns the stale cache, else [].
 """
 import json
 import os
+import threading
 import time
 
 from .config import save_json
@@ -20,6 +21,10 @@ from .simkl_account import SimklAccount
 
 RELATIONS_TTL = 7 * 86400
 EPISODES_TTL = 86400
+
+# one cache file is read-modify-written from several worker threads; without
+# this lock the last writer wins and the other fetches are silently lost
+_FILE_LOCK = threading.Lock()
 
 
 class SimklExtra:
@@ -51,10 +56,15 @@ class SimklExtra:
             data = None
         if data is None:                    # stale data beats nothing
             return rec.get('data')
-        d[key] = {'fetched': time.time(), 'data': data}
         try:
-            os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
-            save_json(path, d)
+            with _FILE_LOCK:                 # merge, do not clobber
+                try:
+                    d = json.load(open(path))
+                    d = d if isinstance(d, dict) else {}
+                except Exception:
+                    d = {}
+                d[key] = {'fetched': time.time(), 'data': data}
+                save_json(path, d)
         except Exception as ex:
             from . import log
             log.cprint(f'simkl: {os.path.basename(path)} not saved ({ex})')

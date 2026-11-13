@@ -11,16 +11,31 @@ DEFAULT_PROXY_PORT = 8898
 
 
 def save_json(path, data):
-    """Write JSON atomically: a crash mid-write must not eat the old file."""
+    """Write JSON atomically: a crash mid-write must not eat the old file.
+
+    The temp file name is unique per writer: worker threads write the same
+    cache (relations.json, episodes.json) concurrently, and a shared `.tmp`
+    name made one rename lose the race with ENOENT.
+    """
     import json
     import os
-    tmp = f'{path}.tmp'
-    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
-    with open(tmp, 'w') as f:
-        json.dump(data, f, indent=1)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
+    import tempfile
+    d = os.path.dirname(path) or '.'
+    os.makedirs(d, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=os.path.basename(path) + '.',
+                               suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'w') as f:
+            json.dump(data, f, indent=1)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def load_json(path, default=None):

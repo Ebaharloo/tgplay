@@ -435,3 +435,26 @@ def test_claim15_airing_show_uses_episode_list_not_last_aired():
     assert items, 'airing show with a fresh episode must appear'
     assert items[0]['days_ago'] == 2, items[0]
     assert items[0]['behind'] == 3, items[0]      # 163 aired, 160 watched
+
+
+# --- 16. concurrent cache writes must not lose each other ----------------
+def test_claim16_concurrent_save_json_never_races(tmp_path):
+    import threading
+    from tp.config import save_json, load_json
+
+    path = str(tmp_path / 'relations.json')
+    errs = []
+
+    def writer(n):
+        try:
+            for i in range(40):
+                save_json(path, {f'k{n}': i})
+        except Exception as ex:                  # the ENOENT rename race
+            errs.append(ex)
+
+    threads = [threading.Thread(target=writer, args=(n,)) for n in range(8)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert not errs, errs
+    got = load_json(path)
+    assert isinstance(got, dict) and got, got
