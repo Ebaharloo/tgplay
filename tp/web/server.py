@@ -140,8 +140,11 @@ class AppState:
         # shortcut: season 1 always, a Session carries no season number
         if kind == 'episode':
             self._simkl_queue.put(ids, 1, info.get('num'), watched)
-        elif kind in ('season', 'season_unwatched'):
-            for n in info.get('nums') or []:
+        elif kind in ('season', 'season_unwatched', 'till_here'):
+            nums = info.get('nums') or []
+            if kind == 'till_here':
+                nums = _watched.upto(info.get('num'), nums)
+            for n in nums:
                 self._simkl_queue.put(ids, 1, n, bool(watched))
         else:
             self._simkl_queue.put(ids, None, None, watched, kind='show')

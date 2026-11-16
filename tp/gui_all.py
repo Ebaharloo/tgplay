@@ -1794,7 +1794,8 @@ class MainWindow(W.QWidget):
         if num is None:
             return
         wkey = self._wkey()
-        forced = {'season': True, 'season_unwatched': False}.get(kind)
+        forced = {'season': True, 'season_unwatched': False,
+                  'till_here': True}.get(kind)
         kind, on = _watched.change(self._wcfg, wkey, kind, num, nums, forced)
         self._paint_watched()
         if self.on_watched_changed is not None:
@@ -1821,9 +1822,12 @@ class MainWindow(W.QWidget):
             return
         if kind == 'episode':
             self._simkl_queue.put(ids, 1, info.get('num'), watched)
-        elif kind in ('season', 'season_unwatched'):
+        elif kind in ('season', 'season_unwatched', 'till_here'):
             # per episode, so a partial list only marks what is on screen
-            for n in info.get('nums') or []:
+            nums = info.get('nums') or []
+            if kind == 'till_here':
+                nums = _watched.upto(info.get('num'), nums)
+            for n in nums:
                 self._simkl_queue.put(ids, 1, n, bool(watched))
         else:
             self._simkl_queue.put(ids, None, None, watched, kind='show')

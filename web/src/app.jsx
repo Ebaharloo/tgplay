@@ -200,6 +200,8 @@ function EpisodeRow({ ep, isSel, isFocus, onSelect, onPlayFrom, say, title, ids,
   const items = [
     { label: on ? '✓ Mark unwatched' : 'Mark watched',
       onClick: () => onMark('episode', ep.num) },
+    { label: 'Mark watched up to here',
+      onClick: () => onMark('till_here', ep.num) },
     { label: 'Mark whole season watched',
       onClick: () => onMark('season', ep.num, true) },
     { label: 'Mark season unwatched',

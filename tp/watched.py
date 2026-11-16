@@ -16,7 +16,7 @@ import time
 
 from .config import load_json, save_json
 
-KINDS = ('episode', 'season', 'season_unwatched', 'series')
+KINDS = ('episode', 'till_here', 'season', 'season_unwatched', 'series')
 
 
 def _path(cfg):
@@ -100,12 +100,20 @@ def set_complete(cfg, key, watched=None):
     return on
 
 
+def upto(num, nums):
+    """Episode numbers up to and including `num`, from the on-screen list."""
+    return [int(n) for n in nums if int(n) <= int(num)]
+
+
 def change(cfg, key, kind, num, nums, watched=None):
     """Apply one menu choice; returns `(kind, watched)` for the hook."""
     if kind == 'episode':
         return kind, set_episode(cfg, key, num, watched)
     if kind == 'series':
         return kind, set_complete(cfg, key, watched)
+    if kind == 'till_here':
+        return kind, set_season(cfg, key, upto(num, nums),
+                                True if watched is None else watched)
     if kind in ('season', 'season_unwatched'):
         return kind, set_season(cfg, key, nums,
                                 kind == 'season' if watched is None
@@ -123,9 +131,11 @@ def rows(st, num, nums):
     num = int(num)
     watched = num in st['eps']
     hit = len(nums & st['eps'])
+    up = set(upto(num, nums))
     return [
         ('episode', 'Mark unwatched' if watched else 'Mark watched',
          watched, True),
+        ('till_here', f'Mark watched up to {num}', False, bool(up - st['eps'])),
         ('season', 'Mark whole season watched', False, hit < len(nums)),
         ('season_unwatched', 'Mark season unwatched', False, hit > 0),
         ('series',

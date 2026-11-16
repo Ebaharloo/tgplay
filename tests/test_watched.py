@@ -63,6 +63,9 @@ def test_change_returns_hook_payload():
         ('season', True)
     assert watched.change(cfg, key, 'season_unwatched', 1, [1, 2], None) == \
         ('season_unwatched', False)
+    assert watched.change(cfg, key, 'till_here', 2, [1, 2, 3], None) == \
+        ('till_here', True)
+    assert watched.state(cfg, key)['eps'] == {1, 2}   # 3 is past the mark
     assert watched.change(cfg, key, 'series', 1, [1, 2], None) == \
         ('series', True)
     try:
@@ -72,7 +75,7 @@ def test_change_returns_hook_payload():
     else:
         raise AssertionError('unknown kind must raise')
     st = watched.state(cfg, key)
-    assert (st['eps'], st['complete']) == (set(), True)
+    assert (st['eps'], st['complete']) == ({1, 2}, True)
 
 
 def test_rows_mapping():
@@ -80,20 +83,23 @@ def test_rows_mapping():
     empty = {'eps': set(), 'complete': False}
     rows = watched.rows(empty, 1, nums)
     assert rows[0] == ('episode', 'Mark watched', False, True), rows[0]
-    assert rows[1] == ('season', 'Mark whole season watched', False, True)
-    assert rows[2][0] == 'season_unwatched' and rows[2][3] is False
-    assert rows[3] == ('series', 'Mark series complete', False, True)
+    assert rows[1] == ('till_here', 'Mark watched up to 1', False, True)
+    assert rows[2] == ('season', 'Mark whole season watched', False, True)
+    assert rows[3][0] == 'season_unwatched' and rows[3][3] is False
+    assert rows[4] == ('series', 'Mark series complete', False, True)
 
     seen = {'eps': {1}, 'complete': True}
     rows = watched.rows(seen, 1, nums)
     assert rows[0][:3] == ('episode', 'Mark unwatched', True), rows[0]
-    assert rows[1][3] is True                      # more to mark watched
-    assert rows[2][3] is True                       # something to unmark
-    assert rows[3][:3] == ('series', 'Unmark complete', True), rows[3]
+    assert rows[1][3] is False                      # 1 is the only ep up to here
+    assert rows[2][3] is True                      # more to mark watched
+    assert rows[3][3] is True                       # something to unmark
+    assert rows[4][:3] == ('series', 'Unmark complete', True), rows[4]
 
     full = {'eps': set(nums), 'complete': False}
     rows = watched.rows(full, 2, nums)
-    assert rows[1][3] is False                      # nothing left to mark
+    assert rows[1][3] is False                      # nothing left up to here
+    assert rows[2][3] is False                      # nothing left to mark
 
 
 def test_unreadable_store_is_empty():

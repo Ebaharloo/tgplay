@@ -233,11 +233,13 @@ def test_watched_endpoint_persists(web):
     assert client.state()['session']['watched']['eps'] == list(range(158, 171))
     client.post('/api/watched', {'kind': 'season', 'watched': False})
     assert client.state()['session']['watched']['eps'] == []
+    client.post('/api/watched', {'kind': 'till_here', 'num': 160})
+    assert client.state()['session']['watched']['eps'] == [158, 159, 160]
 
     client.post('/api/watched', {'kind': 'series'})
     assert client.state()['session']['watched']['complete'] is True
     saved = load_json(cfg.watched)['mal:51289']
-    assert (saved['eps'], saved['complete']) == ([], True)
+    assert (saved['eps'], saved['complete']) == ([158, 159, 160], True)
 
 
 def test_watched_queues_simkl_push(tmp_path):
@@ -252,6 +254,9 @@ def test_watched_queues_simkl_push(tmp_path):
     assert q['mal:51289|s1|e160']['watched'] is True
     state.mark({'kind': 'series'})
     assert load_json(cfg.simkl_queue)['mal:51289|all']['kind'] == 'show'
+    state.mark({'kind': 'till_here', 'num': 160})
+    q = load_json(cfg.simkl_queue)
+    assert 'mal:51289|s1|e160' in q and 'mal:51289|s1|e161' not in q
     # no ids on the store key -> nothing to send
     state.session, n = None, len(load_json(cfg.simkl_queue))
     assert not state._sync_ids('t:sometitle')
