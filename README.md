@@ -61,11 +61,13 @@ python3 tests/test_core.py tests/test_proxy.py tests/test_providers.py \
 
 ## Tests
 
-Stdlib only:
+Every feature has its own model, `tests/test_<feature>.py`. Finalize gate (all tests, non-zero on any failure):
 
 ```
-python3 tests/test_core.py
+make finalize
 ```
+
+One feature model: `env -u PYTHONPATH .venv/bin/python -m pytest tests/test_<feature>.py -q`
 
 ## Reference
 

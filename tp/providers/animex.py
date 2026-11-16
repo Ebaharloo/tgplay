@@ -88,6 +88,7 @@ class AnimeXProvider(Provider):
         self._audio = self.audio
         self._pid: Optional[str] = provider
         self._pref: Optional[str] = provider
+        self._size_pref: Optional[str] = None
         self._chosen = False
         self._resolved = False
         self._loaded = False
@@ -169,23 +170,31 @@ class AnimeXProvider(Provider):
             _quiet_close(r)
 
     # --- catalog --------------------------------------------------------
-    def _m3u8_quality(self, url) -> str:
-        """The HLS rendition size of one server ('1080p', '~3Mbps')."""
+    def _m3u8_qualities(self, url) -> list:
+        """All HLS rendition sizes of one server (e.g. ['1080p','720p','480p'])."""
         try:
             r = self.http.open(self.http.request(url, headers={
                 'Referer': MEDIA_REFERER, 'User-Agent': DEFAULT_UA}))
             body = r.read().decode('utf-8', 'replace')
         except Exception:
-            return ''
+            return []
+        out = []
         for line in body.splitlines():
             if line.startswith('#EXT-X-STREAM-INF'):
                 m = re.search(r'RESOLUTION=(\d+)x(\d+)', line)
                 if m:
-                    return f'{m.group(2)}p'
-                bw = re.search(r'BANDWIDTH=(\d+)', line)
-                if bw:
-                    return f'~{int(bw.group(1)) // 1000000:.0f}Mbps'
-        return ''
+                    q = f'{m.group(2)}p'
+                    if q not in out:
+                        out.append(q)
+                elif not out:
+                    bw = re.search(r'BANDWIDTH=(\d+)', line)
+                    if bw:
+                        out.append(f'~{int(bw.group(1)) // 1000000:.0f}Mbps')
+        return out
+
+    def _m3u8_quality(self, url) -> str:
+        qs = self._m3u8_qualities(url)
+        return qs[0] if qs else ''
 
     def fetch_groups(self) -> List[dict]:
         self._resolve()
@@ -209,8 +218,9 @@ class AnimeXProvider(Provider):
         for pid in order:
             tags = [a for a in ('dub', 'sub') if pid in self._providers[a]]
             label = f"{pid}  ({'+'.join(tags)})"
-            # the video size, the way AGP lists 480P/720P/1080P: probe ONE
-            # episode of that server and read the HLS rendition
+            qualities: List[str] = []
+            # the video size(s), the way AGP lists 480P/720P/1080P: probe ONE
+            # episode of that server and read the HLS rendition(s)
             try:
                 d = self._json(f'{API}/rest/api/sources?id={self.slug}'
                                f'&epNum=1&type={"sub" if pid not in self._providers["dub"] else "dub"}'
@@ -218,12 +228,13 @@ class AnimeXProvider(Provider):
                 url = next((s.get('url') for s in (d.get('sources') or [])
                             if s.get('url')), None)
                 if url:
-                    q = self._m3u8_quality(url)
-                    if q:
-                        label = f"{pid}  ({'+'.join(tags)})  ·  {q}"
+                    qualities = self._m3u8_qualities(url)
+                    if qualities:
+                        label = f"{pid}  ({'+'.join(tags)})  ·  {qualities[0]}"
             except Exception:
                 pass
-            groups.append({'id': pid, 'provider': pid, 'label': label})
+            groups.append({'id': pid, 'provider': pid, 'label': label,
+                           'qualities': qualities})
         self.groups = groups
         return groups
 
@@ -240,6 +251,10 @@ class AnimeXProvider(Provider):
         if not self.groups:
             self.fetch_groups()
         self._pref = self._parse_server(quality)
+        # remember a requested rendition (e.g. "720p") if present
+        m = re.search(r'(\d{3,4}p)', str(quality or ''), re.I)
+        if m:
+            self._size_pref = m.group(1).lower()
         self._resolve_audio()
         if not self._providers.get(self._audio) \
                 and not self._providers.get('dub') \
@@ -346,6 +361,38 @@ class AnimeXProvider(Provider):
         except Exception:
             return False
 
+    def _rendition_url(self, master_url: str, want: str) -> Optional[str]:
+        """Resolve a master m3u8 to the media playlist for the requested size."""
+        want = (want or '').lower()
+        try:
+            r = self.http.open(self.http.request(master_url, headers={
+                'Referer': MEDIA_REFERER, 'User-Agent': DEFAULT_UA}))
+            body = r.read().decode('utf-8', 'replace')
+        except Exception:
+            return None
+        lines = body.splitlines()
+        for i, line in enumerate(lines):
+            if not line.startswith('#EXT-X-STREAM-INF'):
+                continue
+            m = re.search(r'RESOLUTION=(\d+)x(\d+)', line)
+            size = f'{m.group(2)}p' if m else ''
+            name_m = re.search(r'NAME="([^"]+)"', line)
+            name = name_m.group(1).lower() if name_m else ''
+            if want and want not in (size.lower(), name):
+                continue
+            # next non-empty, non-comment line is the media playlist
+            for j in range(i + 1, len(lines)):
+                nxt = lines[j].strip()
+                if nxt and not nxt.startswith('#'):
+                    from urllib.parse import urljoin, urlsplit
+                    resolved = urljoin(master_url, nxt)
+                    # preserve the signed token (it lives in the master URL's query)
+                    if '?' not in resolved and '?' in master_url:
+                        resolved = resolved + '?' + urlsplit(master_url).query
+                    return resolved
+            break
+        return None
+
     def stream(self, num: int) -> DirectSource:
         if not self._loaded:
             self.load()
@@ -365,6 +412,13 @@ class AnimeXProvider(Provider):
             if not url or not self._probe(url):
                 last = RuntimeError(f'{pid}: not serving')
                 continue
+            # honor a chosen rendition size (e.g. "720p") by swapping the
+            # master playlist for that rendition's media playlist
+            if self._size_pref:
+                want = self._size_pref
+                resolved = self._rendition_url(url, want)
+                if resolved:
+                    url = resolved
             subs = []
             if self._audio == 'sub':
                 for tr in (d.get('tracks') or []):
