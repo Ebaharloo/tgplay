@@ -21,6 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 from .. import log
+from .. import watched as _watched
 from ..config import Config
 from ..options import PlaybackOptions, form_fields, form_result
 from ..recent import load_rails, save_rails
@@ -67,6 +68,17 @@ class AppState:
         self.upcoming = []
         self.history = []
         self.lights = {'simkl': 'warn', 'gate': 'warn', 'anilist': 'warn'}
+        # one hook for every watched change: queue to pending_sync.json FIRST,
+        # then a daemon worker pushes it to Simkl (same contract as the Qt UI).
+        # Tests and TPLAY_FAKE pass no http, so they never attach the worker.
+        self.on_watched_changed = None
+        if self.http is not None:
+            from ..simkl_account import SimklAccount
+            from ..simkl_sync import SyncQueue, Syncer
+            self._simkl_queue = SyncQueue(self.cfg.simkl_queue)
+            self._syncer = Syncer(self._simkl_queue,
+                                  acc=SimklAccount(self.cfg, self.http))
+            self.on_watched_changed = self._queue_watched
         self.lines = []                      # log ring, streamed by /api/events
         self._lib_thread = None
         log.SINK = self._sink                # the window's log mirror
@@ -108,6 +120,32 @@ class AppState:
     # --- library ----------------------------------------------------------
     def start(self):
         self.refresh_library()
+        if self.on_watched_changed is not None:
+            self._syncer.start()          # drain anything queued while offline
+
+    def _sync_ids(self, key: str) -> dict:
+        """Queue ids from a store key ('simkl:1', 'mal:2')."""
+        k, _, v = (key or '').partition(':')
+        if k in ('simkl', 'mal') and v.isdigit():
+            return {k: int(v)}
+        with self.lock:
+            mal = getattr(self.session, 'mal_id', None)
+        return {'mal': mal} if mal else {}
+
+    def _queue_watched(self, kind, watched, info):
+        """A local watched change: queue it for Simkl (never touches network)."""
+        ids = self._sync_ids(info.get('key') or '')
+        if not ids:
+            return
+        # shortcut: season 1 always, a Session carries no season number
+        if kind == 'episode':
+            self._simkl_queue.put(ids, 1, info.get('num'), watched)
+        elif kind in ('season', 'season_unwatched'):
+            for n in info.get('nums') or []:
+                self._simkl_queue.put(ids, 1, n, bool(watched))
+        else:
+            self._simkl_queue.put(ids, None, None, watched, kind='show')
+        self._syncer.wake()
 
     def refresh_library(self):
         """Queue one library refresh; repeat calls while it runs are ignored."""
@@ -402,6 +440,29 @@ class AppState:
         self.refresh_library()
         return out
 
+    def mark(self, body) -> dict:
+        """Local watched change from an episode row. No network here: the
+        hook (when the Simkl worker is attached) writes pending_sync.json."""
+        with self.lock:
+            session = self.session
+        if session is None:
+            raise ValueError('no show loaded')
+        ids = {'mal': getattr(session, 'mal_id', None)}
+        key = _watched.key_for(session.title, ids)
+        nums = sorted(getattr(session, 'labels', None) or {})
+        num = body.get('num')
+        kind = body.get('kind') or 'episode'
+        if kind not in _watched.KINDS:
+            raise ValueError(f'unknown watched action {kind!r}')
+        if kind == 'episode' and not str(num).isdigit():
+            raise ValueError('an episode number is required')
+        kind, on = _watched.change(self.cfg, key, kind, num, nums,
+                                   body.get('watched'))
+        if self.on_watched_changed is not None:
+            self.on_watched_changed(kind, on, {'key': key, 'num': num,
+                                               'nums': nums})
+        return {'key': key, 'kind': kind, 'watched': on}
+
     # --- the snapshot -----------------------------------------------------
     def snapshot(self) -> dict:
         with self.lock:
@@ -449,8 +510,17 @@ class AppState:
                 'episodes': [{'num': n, 'name': str(labels.get(n)
                                                     or f'Episode {n}')}
                              for n in sorted(labels)],
+                'watched': self._watched_view(s),
                 'resume': (s.resume[0] if getattr(s, 'resume', None) else None),
                 'playing': self.playing, 'status': status}
+
+    def _watched_view(self, s) -> dict:
+        """Local watched state for the row menu; the store, not Simkl."""
+        key = _watched.key_for(getattr(s, 'title', ''),
+                               {'mal': getattr(s, 'mal_id', None)})
+        st = _watched.state(self.cfg, key)
+        return {'key': key, 'eps': sorted(st['eps']),
+                'complete': st['complete']}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -495,6 +565,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(self.state.options(body))
             elif path == '/api/settings':
                 self.state.settings(body.get('rails'))
+            elif path == '/api/watched':
+                self.state.mark(body)
             else:
                 return self._error(404, f'no endpoint {path}')
             self._json(self.state.snapshot())

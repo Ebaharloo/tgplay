@@ -18,6 +18,8 @@ from PySide6 import QtWidgets as W, QtCore as C, QtGui as G
 
 from . import history
 from . import log as _log
+from . import watched as _watched
+from .config import Config
 from .options import PlaybackOptions
 
 
@@ -942,6 +944,18 @@ def _fmt_date(s) -> str:
 
 
 
+def _fmt_size(b: int) -> str:
+    """Episode file size, human readable ('2.1GB', '740MB'); '—' unknown."""
+    b = int(b or 0)
+    if not b:
+        return '—'
+    for unit, div in (('TB', 1024 ** 4), ('GB', 1024 ** 3), ('MB', 1024 ** 2),
+                      ('KB', 1024)):
+        if b >= div:
+            return f'{b / div:.1f}{unit}'
+    return f'{b}B'
+
+
 class _SortItem(W.QTableWidgetItem):
     """Sorts by the numeric/string key in UserRole, not the shown text."""
 
@@ -997,6 +1011,8 @@ class OptionsForm(W.QWidget):
 
         self.server_lbl = W.QLabel('Quality')
         self.server = combo(width=150)
+        self.size_lbl = W.QLabel('Size')
+        self.size_cb = combo(width=90)
         self.audio_lbl = W.QLabel('Audio')
         self.audio_cb = combo(['dub', 'sub', 'auto'], width=62)
         self.skip_lbl = W.QLabel('Skip')
@@ -1024,6 +1040,8 @@ class OptionsForm(W.QWidget):
         r1.setSpacing(6)
         r1.addWidget(self.server_lbl)
         r1.addWidget(self.server, 1)
+        r1.addWidget(self.size_lbl)
+        r1.addWidget(self.size_cb, 0)
         r1.addWidget(self.audio_lbl)
         r1.addWidget(self.audio_cb)
         r1.addWidget(self.skip_lbl)
@@ -1052,6 +1070,8 @@ class OptionsForm(W.QWidget):
         # first filled (so an --next=45 CLI value survives untouched clicks)
         self._next_was = False
         self._next_orig = None
+        self.server.currentIndexChanged.connect(self._on_source_changed)
+        self.size_cb.currentIndexChanged.connect(self._on_size_changed)
 
     # --- session -> widgets --------------------------------------------
     def load(self, s):
@@ -1062,22 +1082,78 @@ class OptionsForm(W.QWidget):
             else PlaybackOptions.defaults()
         s_opts = s.opts if s is not None else {}
         labels = [str(g['label']) for g in s.groups] if s is not None else []
+        is_axp = bool(s is not None and s.audio)
+        # AnimeX labels look like "nero  (dub+sub)  ·  1080p"; split them so
+        # the user can pick the server and the rendition independently.
+        axp_map = {}  # server -> list of quality strings
+        if is_axp:
+            for g in (s.groups or []):
+                lab = str(g.get('label') if isinstance(g, dict) else g)
+                src = lab.split()[0] if lab.split() else lab
+                quals = []
+                if isinstance(g, dict) and g.get('qualities'):
+                    quals = [str(q) for q in g['qualities'] if q]
+                elif '·' in lab:
+                    q = lab.split('·', 1)[-1].strip()
+                    if q:
+                        quals = [q]
+                axp_map.setdefault(src, [])
+                for q in quals:
+                    if q not in axp_map[src]:
+                        axp_map[src].append(q)
+            sources = list(axp_map)
+        else:
+            sources = labels
         self.server.blockSignals(True)
         self.server.clear()
-        self.server.addItems(labels)
-        if labels and po.quality:
-            idx = next((i for i, l in enumerate(labels)
-                        if str(po.quality).lower() in l.lower()), 0)
+        self.server.addItems(sources)
+        # size dropdown: all distinct renditions across every AnimeX server,
+        # so the user can pick by size instead of by server name.
+        all_quals = []
+        for qs in axp_map.values():
+            for q in qs:
+                if q and q not in all_quals:
+                    all_quals.append(q)
+        self._axp_all_quals = all_quals
+        self.size_cb.blockSignals(True)
+        self.size_cb.clear()
+        self.size_cb.addItems(all_quals or [''])
+        self.size_cb.blockSignals(False)
+        if sources and po.quality:
+            # match either a full label or a bare source name
+            key = str(po.quality).split()[0] if str(po.quality).split() else ''
+            idx = next((i for i, l in enumerate(sources)
+                        if key.lower() in l.lower() or
+                        str(po.quality).lower() in l.lower()), 0)
             self.server.setCurrentIndex(idx)
+            if is_axp:
+                pref_q = None
+                for q in all_quals:
+                    if q.lower() in str(po.quality).lower():
+                        pref_q = q
+                        break
+                if pref_q is None:
+                    qs = axp_map.get(sources[idx], [])
+                    pref_q = qs[0] if qs else None
+                if pref_q is not None:
+                    self.size_cb.setCurrentText(pref_q)
         self.server.blockSignals(False)
+        self._axp_map = axp_map
+        self._axp = is_axp
         # union panel: unusable-for-this-source rows stay in place, disabled
-        has_server = bool(labels)
-        self.server_lbl.setText('Server' if (s is not None and s.audio)
-                                else 'Quality')
+        has_server = bool(sources)
+        self.server_lbl.setText('Source' if is_axp else 'Quality')
         for w in (self.server, self.server_lbl):
             w.setEnabled(has_server)
         self.server.setToolTip('' if has_server else
                                'This source offers no quality / server choice.')
+        # size dropdown: only meaningful for AnimeX
+        has_size = bool(is_axp and sources)
+        self.size_lbl.setText('Size')
+        for w in (self.size_cb, self.size_lbl):
+            w.setEnabled(has_size)
+        if not has_size:
+            self.size_cb.setToolTip('Only AnimeX exposes rendition size.')
         has_audio = bool(s is not None and s.audio)
         for w in (self.audio_cb, self.audio_lbl):
             w.setEnabled(has_audio)
@@ -1099,11 +1175,56 @@ class OptionsForm(W.QWidget):
         self._next_was = bool(po.next)
         self._next_orig = po.next if not isinstance(po.next, bool) else None
 
+    def _on_source_changed(self, idx):
+        if not getattr(self, '_axp', False):
+            return
+        src = self.server.currentText()
+        qs = getattr(self, '_axp_map', {}).get(src, [])
+        if qs:
+            self.size_cb.blockSignals(True)
+            if qs[0] in [self.size_cb.itemText(i)
+                         for i in range(self.size_cb.count())]:
+                self.size_cb.setCurrentText(qs[0])
+            else:
+                self.size_cb.addItem(qs[0])
+                self.size_cb.setCurrentText(qs[0])
+            self.size_cb.blockSignals(False)
+
+    def _on_size_changed(self, idx):
+        if not getattr(self, '_axp', False):
+            return
+        q = self.size_cb.currentText()
+        for src, qs in getattr(self, '_axp_map', {}).items():
+            if q in qs:
+                if src != self.server.currentText():
+                    self.server.blockSignals(True)
+                    self.server.setCurrentText(src)
+                    self.server.blockSignals(False)
+                return
+
+    def _sync_size_for_source(self, source, axp_map=None, preferred=None):
+        axp_map = axp_map if axp_map is not None else getattr(self, '_axp_map', {})
+        quals = axp_map.get(source, [])
+        self.size_cb.blockSignals(True)
+        self.size_cb.clear()
+        self.size_cb.addItems(quals or [''])
+        if preferred:
+            # preferred is a full label or "source quality"
+            for q in quals:
+                if q and q.lower() in str(preferred).lower():
+                    self.size_cb.setCurrentText(q)
+                    break
+        self.size_cb.blockSignals(False)
+
     # --- widgets -> legacy (opts, mpv) ---------------------------------
     def to_raw(self, s) -> tuple:
         po = PlaybackOptions(s.opts if s is not None else None)
         if self.server.isEnabled() and self.server.count():
-            po.quality = self.server.currentText()
+            if getattr(self, '_axp', False):
+                po.quality = (self.server.currentText() + ' ' +
+                              self.size_cb.currentText()).strip()
+            else:
+                po.quality = self.server.currentText()
         if self.audio_cb.isEnabled():
             po.audio = self.audio_cb.currentText()
         po.set_skip(self.skip.currentText())
@@ -1135,6 +1256,9 @@ class MainWindow(W.QWidget):
         super().__init__()
         self._loader = loader
         self._cfg = cfg
+        self._wcfg = cfg if cfg is not None else Config()
+        # one hook for every watched change; Simkl sync attaches here later
+        self.on_watched_changed = None
         self._one_shot = one_shot
         self.state: dict = {'session': None, 'closing': False, 'msg': '',
                             'loading': False, 'playing': False}
@@ -1145,6 +1269,16 @@ class MainWindow(W.QWidget):
         self._rq: 'queue.Queue' = queue.Queue()      # search results
         self._libq: 'queue.Queue' = queue.Queue()    # sidebar payloads
         self._poster_pending = set()                 # shelf poster downloads
+        # one hook for every watched change: queue to pending_sync.json FIRST,
+        # then a daemon worker pushes it to Simkl (offline, restart, 500-safe)
+        from .simkl_account import SimklAccount
+        from .simkl_sync import SyncQueue, Syncer
+        self._simkl_acc = SimklAccount(self._wcfg, self._http)
+        self._simkl_queue = SyncQueue(self._wcfg.simkl_queue)
+        self._syncer = Syncer(
+            self._simkl_queue, acc=self._simkl_acc,
+            on_status=lambda r: self._libq.put(('simkl-sync', r)))
+        self.on_watched_changed = self._queue_watched
         self._prev_sink = _log.SINK
         _log.SINK = lambda s: self._lq.put(str(s))
 
@@ -1393,8 +1527,8 @@ class MainWindow(W.QWidget):
 
         self.ebox = W.QGroupBox('Episodes')
         ev = W.QVBoxLayout(self.ebox)
-        self.table = W.QTableWidget(0, 2)
-        self.table.setHorizontalHeaderLabels(['#', 'Episode name'])
+        self.table = W.QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(['#', 'Episode name', 'Size'])
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(W.QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(W.QAbstractItemView.SelectRows)
@@ -1405,6 +1539,7 @@ class MainWindow(W.QWidget):
         hdr = self.table.horizontalHeader()
         hdr.setSectionResizeMode(0, W.QHeaderView.ResizeToContents)
         hdr.setSectionResizeMode(1, W.QHeaderView.Stretch)
+        hdr.setSectionResizeMode(2, W.QHeaderView.ResizeToContents)
         ev.addWidget(self.table)
 
         sh = W.QVBoxLayout()
@@ -1595,13 +1730,30 @@ class MainWindow(W.QWidget):
 
     # --- episode actions (right-click + double-click) --------------------
     def _ep_menu(self, pos):
-        """Right-click an episode: play modes, copy links, show pages."""
+        """Right-click an episode: watched, play modes, copy links, pages."""
         it = self.table.itemAt(pos)
         r = it.row() if it is not None else self.table.currentRow()
         if r >= 0:
             self.table.selectRow(r)
         sel = self._current_sel()
+        nums = self._all_nums()
+        num = None
+        if r >= 0 and self.table.item(r, 0) is not None:
+            num = int(self.table.item(r, 0).data(C.Qt.UserRole))
         menu = W.QMenu(self.table)
+        wacts = {}
+        if num is not None:
+            wkey = self._wkey()
+            st = _watched.state(self._wcfg, wkey)
+            warm = menu.addMenu('👁  Watched')
+            for kind, label, checked, enabled in _watched.rows(st, num, nums):
+                a = warm.addAction(label)
+                a.setEnabled(enabled)
+                if kind in ('episode', 'series'):
+                    a.setCheckable(True)
+                    a.setChecked(checked)
+                wacts[a] = kind
+            menu.addSeparator()
         a_here = menu.addAction('▶  Play from here to the end')
         a_sel = menu.addAction(f'▶  Play only selected ({len(sel)})'
                                if sel else '▶  Play only this episode')
@@ -1617,7 +1769,9 @@ class MainWindow(W.QWidget):
         pick = menu.exec(self.table.viewport().mapToGlobal(pos))
         if pick is None:
             return
-        if pick is a_here:
+        if pick in wacts:
+            self._mark_watched(wacts[pick], num, nums)
+        elif pick is a_here:
             self._from_here()
         elif pick is a_sel:
             self._only_sel()
@@ -1627,6 +1781,70 @@ class MainWindow(W.QWidget):
             self._copy_ep_link(r)
         elif pick in acts:
             G.QDesktopServices.openUrl(C.QUrl(acts[pick]))
+
+    def _wkey(self) -> str:
+        """Watched-store key of the loaded show: simkl/mal id, else title."""
+        s = self.state['session']
+        if s is None:
+            return ''
+        return _watched.key_for(s.title, {'mal': getattr(s, 'mal_id', None)})
+
+    def _mark_watched(self, kind, num, nums):
+        """Store + repaint + the one hook; Simkl sync subscribes, never the menu."""
+        if num is None:
+            return
+        wkey = self._wkey()
+        forced = {'season': True, 'season_unwatched': False}.get(kind)
+        kind, on = _watched.change(self._wcfg, wkey, kind, num, nums, forced)
+        self._paint_watched()
+        if self.on_watched_changed is not None:
+            self.on_watched_changed(kind, on,
+                                    {'key': wkey, 'num': num,
+                                     'nums': list(nums)})
+
+    # --- Simkl sync (queue first, push on a worker) ----------------------
+    def _sync_ids(self, key: str) -> dict:
+        """Queue/pull ids from a store key ('simkl:1', 'mal:2', 't:title')."""
+        k, _, v = (key or '').partition(':')
+        if k in ('simkl', 'mal') and v.isdigit():
+            return {k: int(v)}
+        s = self.state['session']
+        mal = getattr(s, 'mal_id', None) or getattr(
+            getattr(s, 'provider', None), 'mal_id', None)
+        return {'mal': mal} if mal else {}
+
+    def _queue_watched(self, kind, watched, info):
+        """A local watched change: queue it for Simkl (never touches network)."""
+        ids = self._sync_ids(info.get('key') or '')
+        if not ids:
+            self.state['msg'] = 'watched locally; Simkl needs a Simkl/MAL id'
+            return
+        if kind == 'episode':
+            self._simkl_queue.put(ids, 1, info.get('num'), watched)
+        elif kind in ('season', 'season_unwatched'):
+            # per episode, so a partial list only marks what is on screen
+            for n in info.get('nums') or []:
+                self._simkl_queue.put(ids, 1, n, bool(watched))
+        else:
+            self._simkl_queue.put(ids, None, None, watched, kind='show')
+        self._syncer.wake()
+
+    def _paint_watched(self):
+        """Repaint the rows from the store: watched = tick + dim name."""
+        if self.state['session'] is None:
+            return
+        eps = _watched.state(self._wcfg, self._wkey())['eps']
+        dim = G.QColor('#8b9299')
+        for i in range(self.table.rowCount()):
+            it0 = self.table.item(i, 0)
+            if it0 is None:
+                continue
+            n = int(it0.data(C.Qt.UserRole))
+            on = n in eps
+            it0.setText(f'✓ {n}' if on else str(n))
+            it = self.table.item(i, 1)
+            if it is not None:
+                it.setForeground(G.QBrush(dim) if on else G.QBrush())
 
     def _ep_play_here(self, item):
         if item is not None:
@@ -1722,13 +1940,37 @@ class MainWindow(W.QWidget):
             self.table.setItem(i, 0, it0)
             self.table.setItem(i, 1, W.QTableWidgetItem(
                 s.labels.get(n, f'Episode {n}')))
+            self.table.setItem(i, 2, W.QTableWidgetItem(
+                '—' if s.src == 'axp' else '…'))
         self.ebox.setTitle(f'Episodes ({len(nums)})')
+        self._paint_watched()                     # tick + dim the watched rows
         if nums:
             row = nums.index(s.resume[0]) if (s.resume and
                                               s.resume[0] in s.labels) else 0
             self.table.selectRow(row)
             self.table.setCurrentCell(row, 1)
             self.table.scrollToItem(self.table.item(row, 1))
+        self._probe_sizes(s)
+
+    def _probe_sizes(self, s):
+        """Fill the Size column from the provider (AGP probes its signed
+        CDN links in a background thread; Telegram/TGP know right away;
+        AnimeX is HLS - no size)."""
+        if s is None or s.src == 'axp' or s.src not in ('agp', 'tg', 'tgp'):
+            return
+        nums = sorted(s.labels)
+
+        def work():
+            for n in nums:
+                if self.state.get('closing') or \
+                        self.state['session'] is not s:
+                    return                          # the show changed / closed
+                try:
+                    sz = int(s.provider.size(n) or 0)
+                except Exception:
+                    sz = 0
+                self._libq.put(('size', s, n, sz))
+        threading.Thread(target=work, daemon=True).start()
 
     def load_target(self, src, target):
         if self.state.get('loading'):
@@ -2198,7 +2440,10 @@ class MainWindow(W.QWidget):
         """A light was clicked: do the matching fix (or explain it)."""
         key = item.get('fix') or item.get('key')
         if key == 'simkl':
-            self._simkl_connect()
+            if self._simkl_acc.logged_in():
+                self._simkl_menu()          # connected: pull / disconnect
+            else:
+                self._simkl_connect()
         elif key == 'gate':
             from .providers.animegate import GateAuth
             box = W.QMessageBox(self)
@@ -2230,8 +2475,62 @@ class MainWindow(W.QWidget):
         if dlg.exec() == W.QDialog.Accepted:
             self.state['msg'] = 'Simkl connected'
             _log.cprint('simkl: connected from the window')
+            self._syncer.start()          # drain anything queued while offline
+            threading.Thread(target=self._simkl_pull, daemon=True).start()
             self._probe_status()
             self.load_side()
+
+    def _simkl_pull(self, keys=None):
+        """Pull Simkl watched state into the local store (worker thread).
+
+        Local newer wins: an episode only Simkl knows is added locally; one
+        both know keeps the newer timestamp, and each such conflict is logged.
+        """
+        from .config import load_json
+        from .simkl_sync import reconcile, remote_watched
+        store = load_json(self._wcfg.watched, {}) or {}
+        for key in (keys or [k for k in store if store.get(k)]):
+            ids = self._sync_ids(key)
+            if not ids:
+                continue
+            try:
+                remote = remote_watched(self._simkl_acc, ids)
+            except Exception as ex:
+                _log.cprint(f'simkl: pull failed for {key} ({ex})')
+                return
+            if not remote:
+                continue
+            local = _watched.state(self._wcfg, key)
+            lts = {(1, n): local['at'].get(n, 0.0) for n in local['eps']}
+            merged, conflicts = reconcile(lts, remote)
+            added = 0
+            for _ep, num in merged:
+                if num not in local['eps']:
+                    _watched.set_episode(self._wcfg, key, num, True)
+                    added += 1
+            for c in conflicts:
+                _log.cprint(f"simkl: {key} ep{c['episode'][1]} conflict — "
+                            f"kept {c['kept']} timestamp")
+            if added:
+                _log.cprint(f'simkl: pulled {added} watched ep(s) into {key}')
+                self._libq.put(('watched-repaint',))
+
+    def _simkl_menu(self):
+        """Light clicked while connected: pull on demand, or disconnect."""
+        acc = self._simkl_acc
+        menu = W.QMenu(self)
+        a_pull = menu.addAction('⬇  Pull watched state from Simkl')
+        menu.addSeparator()
+        a_off = menu.addAction('⏏  Disconnect Simkl')
+        pick = menu.exec(G.QCursor.pos())
+        if pick is a_pull:
+            self.state['msg'] = 'pulling watched state from Simkl…'
+            threading.Thread(target=self._simkl_pull, daemon=True).start()
+        elif pick is a_off:
+            self._syncer.stop()
+            acc.logout()
+            self.state['msg'] = 'Simkl disconnected (queued changes kept)'
+            self._probe_status()
 
     def _show_cast(self):
         """Open the cast dialog for the current show (cache-first, instant).
@@ -2525,9 +2824,31 @@ class MainWindow(W.QWidget):
                     _log.cprint('status: ' + ' · '.join(
                         f"{i.get('name')} {i.get('state')}"
                         for i in items))
+            elif msg[0] == 'simkl-sync':
+                r = msg[1] or {}
+                if r.get('failed'):
+                    self.state['msg'] = (
+                        f"simkl: {r['failed']} change(s) failed, "
+                        f"{r.get('pending', 0)} queued (retrying)")
+                    self.state['msg_until'] = time.time() + 10
+                elif r.get('sent'):
+                    self.state['msg'] = f"simkl: {r['sent']} change(s) synced"
+                    self.state['msg_until'] = time.time() + 6
+            elif msg[0] == 'watched-repaint':
+                self._paint_watched()
             elif msg[0] == 'loaded':
                 # async completion of load_target (worker -> GUI thread)
                 self._apply_loaded(msg[1], msg[2], msg[3], msg[4])
+            elif msg[0] == 'size':
+                _, s, n, sz = msg
+                if self.state['session'] is not s:
+                    continue
+                for r in range(self.table.rowCount()):
+                    it = self.table.item(r, 0)
+                    if it and int(it.data(C.Qt.UserRole)) == int(n):
+                        self.table.setItem(r, 2, W.QTableWidgetItem(
+                            _fmt_size(sz)))
+                        break
             elif msg[0] == 'poster':
                 u, data = msg[1], msg[2]
                 self._poster_pending.discard(u)
@@ -2703,6 +3024,11 @@ class MainWindow(W.QWidget):
 
     # --- closing --------------------------------------------------------
     def close_window(self):
+        """Quit: stop the player, the Simkl sync worker and this process."""
+        try:
+            self._syncer.stop()
+        except Exception:
+            pass
         if self.state['closing']:
             return
         self.state['closing'] = True
@@ -2746,6 +3072,8 @@ class MainWindow(W.QWidget):
         except Exception:
             pass
         self.load_side()
+        if self._simkl_acc.logged_in():
+            self._syncer.start()       # retry anything queued in a past run
 
         C.QTimer.singleShot(4000, self._gate_health)   # one background check
         C.QTimer.singleShot(600, self._probe_status)   # lights on startup

@@ -115,6 +115,14 @@ class Config:
         return self._p('episodes.json')
 
     @property
+    def watched(self):
+        return self._p('watched.json')
+
+    @property
+    def simkl_queue(self):
+        return self._p('pending_sync.json')
+
+    @property
     def tg_session(self):
         # NB: no '.session' suffix - telethon appends it, and would otherwise
         # treat the path as the literal file.

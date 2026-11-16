@@ -15,7 +15,7 @@ import pytest
 from tp import log
 from tp.config import Config, load_json
 from tp.options import form_fields, form_result
-from tp.web.server import AppState, FakeLibrary, FakeLoader, serve
+from tp.web.server import AppState, FakeLibrary, FakeLoader, FakeSession, serve
 
 RESULTS = [{'title': 'Renegade Immortal', 'source': 'agp', 'matched': 'id',
             'url': 'https://animegate.ir/anime/xian-ni', 'ids': {'mal': 51289}},
@@ -215,3 +215,45 @@ def test_feed_is_aired_rows_not_rail_items(web):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_watched_endpoint_persists(web):
+    """Episode rows write the local store; no Simkl call in this path."""
+    client, cfg = web
+    assert client.post('/api/watched', {'kind': 'episode', 'num': 1})[0] == 400
+    client.post('/api/open', {'src': 'agp', 'url': 'https://animegate.ir/x'})
+    client.wait(lambda s: s['session'])
+    code, snap = client.post('/api/watched', {'kind': 'episode', 'num': 160})
+    assert code == 200, snap
+    assert snap['session']['watched'] == {'key': 'mal:51289', 'eps': [160],
+                                          'complete': False}
+    assert client.post('/api/watched', {'kind': 'bogus'})[0] == 400
+
+    client.post('/api/watched', {'kind': 'season', 'watched': True})
+    assert client.state()['session']['watched']['eps'] == list(range(158, 171))
+    client.post('/api/watched', {'kind': 'season', 'watched': False})
+    assert client.state()['session']['watched']['eps'] == []
+
+    client.post('/api/watched', {'kind': 'series'})
+    assert client.state()['session']['watched']['complete'] is True
+    saved = load_json(cfg.watched)['mal:51289']
+    assert (saved['eps'], saved['complete']) == ([], True)
+
+
+def test_watched_queues_simkl_push(tmp_path):
+    """With a worker attached the same change lands in pending_sync.json.
+    No serve() here: the syncer thread never runs, so no HTTP."""
+    cfg = Config(home=str(tmp_path)).ensure()
+    state = AppState(cfg=cfg, http=object(), extra=False)
+    state.session = FakeSession()
+    assert state.on_watched_changed is not None
+    state.mark({'kind': 'episode', 'num': 160})
+    q = load_json(cfg.simkl_queue, {})
+    assert q['mal:51289|s1|e160']['watched'] is True
+    state.mark({'kind': 'series'})
+    assert load_json(cfg.simkl_queue)['mal:51289|all']['kind'] == 'show'
+    # no ids on the store key -> nothing to send
+    state.session, n = None, len(load_json(cfg.simkl_queue))
+    assert not state._sync_ids('t:sometitle')
+    assert len(load_json(cfg.simkl_queue)) == n
+

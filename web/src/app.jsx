@@ -194,8 +194,19 @@ function Results({ search, onOpen, say }) {
   )
 }
 
-function EpisodeRow({ ep, isSel, isFocus, onSelect, onPlayFrom, say, title, ids }) {
+function EpisodeRow({ ep, isSel, isFocus, onSelect, onPlayFrom, say, title, ids,
+  watched, onMark }) {
+  const on = watched.eps.includes(ep.num)
   const items = [
+    { label: on ? '✓ Mark unwatched' : 'Mark watched',
+      onClick: () => onMark('episode', ep.num) },
+    { label: 'Mark whole season watched',
+      onClick: () => onMark('season', ep.num, true) },
+    { label: 'Mark season unwatched',
+      onClick: () => onMark('season', ep.num, false) },
+    { label: watched.complete ? '✓ Unmark complete' : 'Mark series complete',
+      onClick: () => onMark('series', ep.num) },
+    { type: 'divider' },
     { label: '▶ Play from here to the end', onClick: () => onPlayFrom(ep.num) },
     { label: '▶ Play only selected', onClick: () => onPlayFrom(ep.num, true) },
     { label: '▶ Play all', onClick: () => onPlayFrom(0) },
@@ -207,9 +218,10 @@ function EpisodeRow({ ep, isSel, isFocus, onSelect, onPlayFrom, say, title, ids 
     },
   ]
   return (
-    <div className={isSel || isFocus ? 'item sel' : 'item'}
+    <div className={(isSel || isFocus ? 'item sel' : 'item')
+      + (on ? ' watched' : '')}
       onContextMenu={(e) => { e.preventDefault(); onSelect(ep.num) }}>
-      <span className="num">{ep.num}</span>
+      <span className="num">{on ? '✓ ' : ''}{ep.num}</span>
       <span className="name" onClick={() => onSelect(ep.num)}
         onDoubleClick={() => onPlayFrom(ep.num)}>{ep.name}</span>
       <DropdownMenu button={{ label: '⋯', variant: 'ghost', size: 'sm' }}
@@ -233,6 +245,12 @@ function Show({ session, sel, setSel, focus, setFocus, onPlay, say }) {
   }
   const fromHere = (num) => (num ? eps.filter((x) => x.num >= num) : eps)
     .map((x) => x.num)
+  const watched = session.watched || { eps: [], complete: false }
+  // No network in the row: the server owns the store, Simkl sync hangs off it.
+  const onMark = async (kind, num, on) => {
+    try { await post('/api/watched', { kind, num, watched: on }) }
+    catch (e) { say(e.message) }
+  }
   return (
     <Card padding={0} style={{ flex: '1 1 auto', minHeight: 0 }}>
       <div className="row" style={{ padding: '10px', alignItems: 'center' }}>
@@ -250,6 +268,7 @@ function Show({ session, sel, setSel, focus, setFocus, onPlay, say }) {
       <div className="list grow" tabIndex={0} onKeyDown={key}>
         {eps.map((ep) => (
           <EpisodeRow key={ep.num} ep={ep} title={session.title} ids={ids}
+            watched={watched} onMark={onMark}
             isSel={sel.includes(ep.num)} isFocus={ep.num === focus}
             say={say}
             onSelect={(num) => { setFocus(num); setSel([num]) }}

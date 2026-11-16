@@ -69,6 +69,8 @@ body {
 .item .num { font-family: var(--font-family-code); font-size: var(--font-size-xs); color: var(--color-text-secondary); min-width: 2.4em; }
 .item .name { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 .item.sel { background: var(--color-background-muted); box-shadow: inset 3px 0 0 var(--color-accent); }
+.item.watched .name { opacity: .55; }
+.item.watched .num { color: var(--color-success, #6cc070); }
 .link { padding: 0 10px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .mono { font-family: var(--font-family-code); font-size: var(--font-size-xs); color: var(--color-text-secondary); white-space: nowrap; }
