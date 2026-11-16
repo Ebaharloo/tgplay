@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""test_simkl_account - Simkl device login, library parsing, progress push."""
+"""test_simkl_account - Simkl device login, library parsing, watched sync.
+
+All HTTP is mocked: no live Simkl calls.
+"""
+import email.message
+import io
 import json
 import os
 import sys
 import tempfile
+import urllib.error
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
@@ -23,18 +29,35 @@ class Resp:
         pass
 
 
+class Err:
+    """A route that answers with an HTTP error instead of JSON."""
+
+    def __init__(self, code, body=None, headers=None):
+        self.code, self.body, self.headers = code, body or {}, headers or {}
+
+
 class FakeHttp:
     def __init__(self, routes):
         self.routes = routes
         self.calls = []
 
     def request(self, url, headers=None, method='GET', data=None):
-        self.calls.append((method, url, data))
-        return {'url': url, 'method': method, 'data': data}
+        self.calls.append((method, url, data, headers or {}))
+        return {'url': url, 'method': method, 'data': data,
+                'headers': headers or {}}
 
     def open(self, req, tries=None, timeout=None):
         for k, v in self.routes.items():
             if k in req['url']:
+                if isinstance(v, list):       # first answer, then the next
+                    v = v.pop(0) if len(v) > 1 else v[0]
+                if isinstance(v, Err):
+                    h = email.message.Message()
+                    for n, x in v.headers.items():
+                        h[n] = x
+                    raise urllib.error.HTTPError(
+                        req['url'], v.code, 'error', h,
+                        io.BytesIO(json.dumps(v.body).encode()))
                 return Resp(json.dumps(v).encode())
         return Resp(b'{}')
 
@@ -119,8 +142,173 @@ def test_find_source():
     print('PASS library find_source')
 
 
+def test_pin_flow_failures():
+    os.environ['AGP_SIMKL_CLIENT_ID'] = 'cid'
+    sleep = simkl_account.time.sleep
+    simkl_account.time.sleep = lambda s: None
+    try:
+        # device endpoint refuses the client
+        http = FakeHttp({'/oauth2/device': Err(401, {'error': 'invalid_client'})})
+        acc = simkl_account.SimklAccount(Cfg(tempfile.mkdtemp()), http)
+        assert acc.start_device() is None
+        assert acc.login() is None
+
+        # user never approves: the poll ends with expired_token
+        http = FakeHttp({
+            '/oauth2/device': {'device_code': 'dc', 'user_code': 'AB-CD',
+                               'verification_uri_complete': 'https://simkl.com/pin',
+                               'interval': 0, 'expires_in': 900},
+            '/oauth2/token': {'error': 'expired_token'}})
+        acc = simkl_account.SimklAccount(Cfg(tempfile.mkdtemp()), http)
+        assert acc.login() is None
+        assert not acc.logged_in()
+    finally:
+        simkl_account.time.sleep = sleep
+        os.environ.pop('AGP_SIMKL_CLIENT_ID', None)
+    print('PASS simkl PIN flow failures')
+
+
+def test_token_refresh():
+    os.environ['AGP_SIMKL_CLIENT_ID'] = 'cid'
+    try:
+        d = tempfile.mkdtemp()
+        acc = simkl_account.SimklAccount(Cfg(d), FakeHttp({}))
+        # 1. expired-at-login: refreshed BEFORE the call, no 401 needed
+        acc._save(access_token='old', refresh_token='rt', expires_at=1)
+        http = FakeHttp({'/oauth2/token': {'access_token': 'fresh',
+                                           'expires_in': 604800},
+                         '/sync/all-items': WATCHING})
+        acc.http = http
+        acc.library()
+        gets = [c for c in http.calls if '/sync/all-items' in c[1]]
+        assert gets[-1][3]['Authorization'] == 'Bearer fresh', gets[-1][3]
+        assert acc._auth()['refresh_token'] == 'rt'      # kept when not rotated
+        assert acc._auth()['expires_at'] > 1_700_000_000
+
+        # 2. server says 401 (token revoked/expired early): refresh once, retry
+        acc2 = simkl_account.SimklAccount(Cfg(tempfile.mkdtemp()), None)
+        acc2._save(access_token='stale', refresh_token='rt2')
+        http2 = FakeHttp({'/sync/all-items': [Err(401, {'error': 'invalid_token'}),
+                                              WATCHING],
+                          '/oauth2/token': {'access_token': 'fresh2'}})
+        acc2.http = http2
+        assert acc2.library()
+        auth = [c[3].get('Authorization') for c in http2.calls
+                if '/sync/all-items' in c[1]]
+        assert auth == ['Bearer stale', 'Bearer fresh2'], auth
+    finally:
+        os.environ.pop('AGP_SIMKL_CLIENT_ID', None)
+    print('PASS simkl token refresh (expiry + 401)')
+
+
+def test_history_payloads():
+    os.environ['AGP_SIMKL_CLIENT_ID'] = 'cid'
+    try:
+        http = FakeHttp({'/sync/history': {'added': {'episodes': 1}}})
+        acc = simkl_account.SimklAccount(Cfg(tempfile.mkdtemp()), http)
+        ids = {'mal': 1, 'simkl': 10}
+        acc.mark_episode_watched(ids, 2, 5)
+        acc.unmark_episode_watched(ids, 2, 5)
+        acc.mark_season_watched(ids, 2)
+        acc.unmark_season_watched(ids, 2)
+        acc.mark_show_complete(ids)
+        acc.unmark_show_complete(ids)
+
+        posts = [c for c in http.calls if c[0] == 'POST']
+        assert len(posts) == 6, posts
+        assert all(c[3]['simkl-api-key'] == 'cid' for c in posts)
+        assert all(c[3]['User-Agent'].startswith('tgplay/') for c in posts)
+        bodies = [json.loads(c[2]) for c in posts]
+
+        ep = bodies[0]['anime'][0]
+        assert ep['ids'] == ids
+        assert ep['seasons'] == [{'number': 2, 'episodes': [{'number': 5}]}]
+        assert '/sync/history?' in posts[0][1]
+        assert '/sync/history/remove?' in posts[1][1]
+        assert posts[0][1].count('/remove') == 0
+
+        season = bodies[2]['anime'][0]['seasons'][0]
+        assert season == {'number': 2}, season
+        assert 'seasons' not in bodies[4]['anime'][0], bodies[4]
+        assert 'seasons' not in bodies[5]['anime'][0]
+        assert [b['anime'][0]['ids'] for b in bodies] == [ids] * 6
+    finally:
+        os.environ.pop('AGP_SIMKL_CLIENT_ID', None)
+    print('PASS simkl mark/unmark payload shapes')
+
+
+def test_get_watched():
+    os.environ['AGP_SIMKL_CLIENT_ID'] = 'cid'
+    try:
+        rows = {'watching': [
+            {'show': {'ids': {'mal': 1, 'simkl': 10}},
+             'status': 'watching', 'watched_episodes_count': 1,
+             'seasons': [{'number': 1, 'episodes': [{'number': 1}]}]},
+            {'show': {'ids': {'mal': 99, 'simkl': 90}},
+             'status': 'watching', 'watched_episodes_count': 0}]}
+        http = FakeHttp({'/sync/all-items/anime': rows})
+        acc = simkl_account.SimklAccount(Cfg(tempfile.mkdtemp()), http)
+        got = acc.get_watched({'mal': 1})
+        assert [r['show']['ids']['simkl'] for r in got] == [10], got
+        assert got[0]['seasons'][0]['episodes'][0]['number'] == 1
+        assert len(acc.get_watched()) == 2
+        assert acc.get_watched([{'simkl': 90}])[0]['show']['ids']['mal'] == 99
+        call = [c for c in http.calls if '/sync/all-items' in c[1]][0]
+        assert 'extended=full' in call[1]
+    finally:
+        os.environ.pop('AGP_SIMKL_CLIENT_ID', None)
+    print('PASS simkl get_watched')
+
+
+def test_429_retry():
+    os.environ['AGP_SIMKL_CLIENT_ID'] = 'cid'
+    sleep = simkl_account.time.sleep
+    simkl_account.time.sleep = lambda s: None
+    try:
+        # per-second 429: retried once, payload preserved
+        http = FakeHttp({'/sync/history': [
+            Err(429, {'error': 'rate_limit'}, {'Retry-After': '45000'}),
+            {'added': {'episodes': 1}}]})
+        acc = simkl_account.SimklAccount(Cfg(tempfile.mkdtemp()), http)
+        d = acc.mark_episode_watched({'mal': 1}, 1, 1)
+        assert d['added']['episodes'] == 1
+        posts = [c for c in http.calls if c[0] == 'POST']
+        assert len(posts) == 2, posts
+        assert posts[0][2] == posts[1][2]          # same body on the retry
+
+        # daily quota: Retry-After past the cap is reported, not slept off
+        http2 = FakeHttp({'/sync/history': Err(
+            429, {'error': 'user_limit_exceeded'}, {'Retry-After': '4000'})})
+        acc2 = simkl_account.SimklAccount(Cfg(tempfile.mkdtemp()), http2)
+        try:
+            acc2.mark_episode_watched({'mal': 1}, 1, 1)
+            raise AssertionError('daily 429 must raise')
+        except simkl_account.SimklError as ex:
+            assert (ex.status, ex.error) == (429, 'user_limit_exceeded'), ex
+        assert len(http2.calls) == 1
+
+        # 5xx is retried with backoff, then reported as a typed error
+        http3 = FakeHttp({'/sync/history': Err(503, {'error': 'internal'})})
+        acc3 = simkl_account.SimklAccount(Cfg(tempfile.mkdtemp()), http3)
+        try:
+            acc3.mark_episode_watched({'mal': 1}, 1, 1)
+            raise AssertionError('503 must raise once retries run out')
+        except simkl_account.SimklError as ex:
+            assert ex.status == 503
+        assert len(http3.calls) == simkl_account.RETRIES + 1
+    finally:
+        simkl_account.time.sleep = sleep
+        os.environ.pop('AGP_SIMKL_CLIENT_ID', None)
+    print('PASS simkl 429 / 5xx retry')
+
+
 def main():
     test_device_login_and_library()
+    test_pin_flow_failures()
+    test_token_refresh()
+    test_history_payloads()
+    test_get_watched()
+    test_429_retry()
     test_find_source()
     print('SIMKL_ACCOUNT OK')
 
