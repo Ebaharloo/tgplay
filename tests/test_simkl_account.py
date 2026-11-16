@@ -302,6 +302,108 @@ def test_429_retry():
     print('PASS simkl 429 / 5xx retry')
 
 
+def test_scrobble_ratings_status():
+    os.environ['AGP_SIMKL_CLIENT_ID'] = 'cid'
+    try:
+        http = FakeHttp({'/scrobble/': {'action': 'scrobble'},
+                         '/sync/ratings': {}, '/sync/add-to-list': {},
+                         '/sync/activities': {'all': '2026-11-17T00:00:00Z',
+                                              'anime': {'all': 'x'}}})
+        acc = simkl_account.SimklAccount(Cfg(tempfile.mkdtemp()), http)
+        acc._save(access_token='at', refresh_token='rt')
+        ids = {'mal': 1, 'simkl': 10}
+        acc.scrobble('start', ids, 3)
+        acc.scrobble('stop', ids, 3, progress=63.456)
+        acc.scrobble('pause', ids, 3, progress=150)
+        posts = [c for c in http.calls if c[0] == 'POST']
+        assert '/scrobble/start?' in posts[0][1]
+        assert '/scrobble/stop?' in posts[1][1]
+        b = [json.loads(c[2]) for c in posts[:3]]
+        assert b[0] == {'progress': 0.0, 'anime': {'ids': ids},
+                        'episode': {'season': 1, 'number': 3}}, b[0]
+        assert (b[1]['progress'], b[2]['progress']) == (63.46, 100.0), b
+        for bad, exc in ((('bogus', ids, 1), ValueError),
+                         (('start', {}, 1), simkl_account.SimklError),
+                         (('start', ids, 1, 1, 'abc'), ValueError)):
+            try:
+                acc.scrobble(*bad)
+                raise AssertionError(f'{bad} must raise')
+            except exc:
+                pass
+
+        assert acc.rate(ids, 8) is True
+        rated = [c for c in http.calls if '/sync/ratings' in c[1]][-1]
+        assert json.loads(rated[2]) == {'anime': [{'ids': ids, 'rating': 8}]}
+        for bad in (0, 11):                 # Simkl would drop it silently
+            try:
+                acc.rate(ids, bad)
+                raise AssertionError('out-of-range rating must raise')
+            except ValueError:
+                pass
+        assert acc.add_to_list(ids, 'dropped') is True
+        try:
+            acc.add_to_list(ids, 'plan')
+            raise AssertionError('unknown list status must raise')
+        except ValueError:
+            pass
+        assert acc.activities()['anime'] == {'all': 'x'}
+
+        # 409 on stop = episode already in history: no error, nothing to log
+        http2 = FakeHttp({'/scrobble/stop': Err(409, {'error': 'conflict'})})
+        acc2 = simkl_account.SimklAccount(Cfg(tempfile.mkdtemp()), http2)
+        acc2._save(access_token='at', refresh_token='rt')
+        assert acc2.scrobble('stop', ids, 3, progress=95) == {
+            'skipped': 'conflict'}
+
+        # 400 RATE_LIMIT = the 20s per-user write lock, not a broken request
+        http3 = FakeHttp({'/scrobble/stop': Err(400, {'error': 'RATE_LIMIT'})})
+        acc3 = simkl_account.SimklAccount(Cfg(tempfile.mkdtemp()), http3)
+        acc3._save(access_token='at', refresh_token='rt')
+        assert acc3.scrobble('stop', ids, 3, progress=5)['skipped'] == \
+            'RATE_LIMIT'
+    finally:
+        os.environ.pop('AGP_SIMKL_CLIENT_ID', None)
+    print('PASS simkl scrobble / ratings / list status / activities')
+
+
+def test_playlist_reports_progress():
+    import time
+    from tp.playlist import Playlist
+    from tp.tracking import MultiTracker
+
+    class Tr:
+        def __init__(self):
+            self.calls = []
+
+        def enabled(self):
+            return True
+
+        def scrobble(self, *a, **k):
+            self.calls.append((a, k))
+            return {'action': 'scrobble'}
+
+    class Show:
+        title = 'Show A'
+        mal_id = 21
+        anilist_id = None
+
+    pl = object.__new__(Playlist)      # no mpv/network: just the hook + worker
+    tr = Tr()
+    pl.tracker = MultiTracker([tr])
+    pl.mal_id = None
+    pl.provider = Show()
+    pl._scrobble('start', 3, 0)
+    pl._scrobble('stop', 3, 42.5)
+    deadline = time.time() + 5
+    while len(tr.calls) < 2 and time.time() < deadline:
+        time.sleep(0.01)
+    assert tr.calls == [
+        (('Show A', 3, 0), {'action': 'start', 'mal': 21, 'anilist': None}),
+        (('Show A', 3, 42.5), {'action': 'stop', 'mal': 21,
+                               'anilist': None})], tr.calls
+    print('PASS playlist scrobble hook (start/stop)')
+
+
 def main():
     test_device_login_and_library()
     test_pin_flow_failures()
@@ -309,6 +411,8 @@ def main():
     test_history_payloads()
     test_get_watched()
     test_429_retry()
+    test_scrobble_ratings_status()
+    test_playlist_reports_progress()
     test_find_source()
     print('SIMKL_ACCOUNT OK')
 

@@ -157,6 +157,31 @@ def test_remote_watched_reads_seasons():
     assert remote_watched(Acc(), {}) == {}
 
 
+def test_pull_gate_skips_an_unchanged_library(tmp_path):
+    from tp.simkl_sync import pull_done, pull_gate
+
+    class Acc:
+        stamp = '2026-11-17T00:00:00Z'
+
+        def activities(self):
+            return {'all': self.stamp, 'anime': {'all': self.stamp}}
+
+    path = str(tmp_path / 'simkl_activities.json')
+    acc = Acc()
+    moved, snap = pull_gate(acc, path)
+    assert moved and snap == acc.stamp          # no snapshot yet: pull
+    pull_done(path, snap)
+    assert pull_gate(acc, path) == (False, snap)   # one call, nothing moved
+    acc.stamp = '2026-11-17T01:00:00Z'
+    assert pull_gate(acc, path) == (True, acc.stamp)
+
+    # an account that reports no stamp must never block a pull
+    blank = type('B', (), {'activities': lambda self: {}})()
+    assert pull_gate(blank, path)[0] is True
+    pull_done(path, '')                 # nothing to remember -> file untouched
+    assert pull_gate(blank, path)[0] is True
+
+
 def test_corrupt_queue_file_does_not_raise(tmp_path):
     p = tmp_path / 'pending_sync.json'
     p.write_text('not json')

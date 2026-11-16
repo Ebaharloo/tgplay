@@ -223,6 +223,22 @@ def remote_watched(acc: SimklAccount, ids: dict) -> Dict[Tuple[int, int], float]
     return out
 
 
+def pull_gate(acc: SimklAccount, path: str) -> Tuple[bool, str]:
+    """(moved, snapshot) from ONE /sync/activities call.
+
+    Simkl bumps the top-level `all` stamp whenever any list changes, so when it
+    equals the saved one a per-show pull cannot find anything new."""
+    cur = str((acc.activities() or {}).get('all') or '')
+    prev = str((load_json(path, {}) or {}).get('all') or '')
+    return not (cur and cur == prev), cur
+
+
+def pull_done(path: str, snapshot: str) -> None:
+    """Remember a completed pull, so the next one can be skipped."""
+    if snapshot:
+        save_json(path, {'all': snapshot})
+
+
 def reconcile(local: Dict[Tuple[int, int], float],
               remote: Dict[Tuple[int, int], float]
               ) -> Tuple[Dict[Tuple[int, int], float], list]:

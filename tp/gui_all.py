@@ -1271,7 +1271,7 @@ class MainWindow(W.QWidget):
         self._poster_pending = set()                 # shelf poster downloads
         # one hook for every watched change: queue to pending_sync.json FIRST,
         # then a daemon worker pushes it to Simkl (offline, restart, 500-safe)
-        from .simkl_account import SimklAccount
+        from .simkl_account import STATUSES, SimklAccount
         from .simkl_sync import SyncQueue, Syncer
         self._simkl_acc = SimklAccount(self._wcfg, self._http)
         self._simkl_queue = SyncQueue(self._wcfg.simkl_queue)
@@ -2491,7 +2491,19 @@ class MainWindow(W.QWidget):
         both know keeps the newer timestamp, and each such conflict is logged.
         """
         from .config import load_json
-        from .simkl_sync import reconcile, remote_watched
+        from .simkl_sync import pull_done, pull_gate, reconcile, remote_watched
+        snap = ''
+        if keys is None:
+            try:
+                moved, snap = pull_gate(self._simkl_acc,
+                                        self._wcfg.simkl_activities)
+            except Exception as ex:
+                moved = True          # cannot tell: pull as before
+                _log.cprint(f'simkl: activities check failed ({ex})')
+            if not moved:
+                _log.cprint('simkl: no list changed since the last pull — '
+                            'skipped')
+                return
         store = load_json(self._wcfg.watched, {}) or {}
         for key in (keys or [k for k in store if store.get(k)]):
             ids = self._sync_ids(key)
@@ -2518,16 +2530,34 @@ class MainWindow(W.QWidget):
             if added:
                 _log.cprint(f'simkl: pulled {added} watched ep(s) into {key}')
                 self._libq.put(('watched-repaint',))
+        pull_done(self._wcfg.simkl_activities, snap)
 
     def _simkl_menu(self):
-        """Light clicked while connected: pull on demand, or disconnect."""
+        """Light clicked while connected: pull, rate/status the loaded show, or
+        disconnect."""
         acc = self._simkl_acc
         menu = W.QMenu(self)
         a_pull = menu.addAction('⬇  Pull watched state from Simkl')
+        ids = self._show_ids()
+        rate, status = {}, {}
+        if ids:
+            sub = menu.addMenu('★  Rate this show')
+            for n in range(1, 11):
+                rate[sub.addAction(f'{n}/10')] = n
+            sub = menu.addMenu('☰  List status')
+            for name in STATUSES:
+                status[sub.addAction(name.replace('plantowatch',
+                                                  'plan to watch'))] = name
         menu.addSeparator()
         a_off = menu.addAction('⏏  Disconnect Simkl')
         pick = menu.exec(G.QCursor.pos())
-        if pick is a_pull:
+        if pick in rate:
+            self._simkl_write(f'rated {rate[pick]}/10', acc.rate, ids,
+                              rate[pick])
+        elif pick in status:
+            self._simkl_write(f'list: {status[pick]}', acc.add_to_list, ids,
+                              status[pick])
+        elif pick is a_pull:
             self.state['msg'] = 'pulling watched state from Simkl…'
             threading.Thread(target=self._simkl_pull, daemon=True).start()
         elif pick is a_off:
@@ -2535,6 +2565,25 @@ class MainWindow(W.QWidget):
             acc.logout()
             self.state['msg'] = 'Simkl disconnected (queued changes kept)'
             self._probe_status()
+
+    def _show_ids(self) -> dict:
+        """Simkl/MAL ids of the loaded show, for one-shot Simkl writes."""
+        try:
+            return self._sync_ids(self._wkey() or '')
+        except Exception:
+            return {}
+
+    def _simkl_write(self, what, fn, *args):
+        """One Simkl write from a menu pick, on a worker thread."""
+        def work():
+            try:
+                ok = bool(fn(*args))
+                msg = f'Simkl: {what}' if ok else f'Simkl: {what} failed'
+            except Exception as ex:
+                msg = f'Simkl: {what} failed ({ex})'
+            _log.cprint(msg)
+            self._libq.put(('simkl-sync', {'msg': msg}))
+        threading.Thread(target=work, daemon=True).start()
 
     def _show_cast(self):
         """Open the cast dialog for the current show (cache-first, instant).
@@ -2838,6 +2887,9 @@ class MainWindow(W.QWidget):
                 elif r.get('sent'):
                     self.state['msg'] = f"simkl: {r['sent']} change(s) synced"
                     self.state['msg_until'] = time.time() + 6
+                elif r.get('msg'):
+                    self.state['msg'] = r['msg']
+                    self.state['msg_until'] = time.time() + 8
             elif msg[0] == 'watched-repaint':
                 self._paint_watched()
             elif msg[0] == 'loaded':

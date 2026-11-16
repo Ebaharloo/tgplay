@@ -332,6 +332,23 @@ class MultiTracker:
         return done
 
 
+    def scrobble(self, title, num, progress, action='start', mal=None,
+                 anilist=None):
+        """Report playback progress; the first tracker that can, does."""
+        from . import log
+        for t in self.trackers:
+            fn = getattr(t, 'scrobble', None)
+            if fn is None:
+                continue
+            try:
+                if t.enabled():
+                    return fn(title, num, progress, action=action, mal=mal,
+                              anilist=anilist)
+            except Exception as ex:
+                log.cprint(f'track: {type(t).__name__} scrobble failed ({ex})')
+        return None
+
+
 def make_tracker(cfg, http=None, sync: bool = True):
     """Build the progress trackers: Simkl (the hub) + AniList. Returns None
     when syncing is turned off."""

@@ -39,6 +39,8 @@ APP = 'tgplay'
 VER = '1.0'
 RETRIES = 3             # extra attempts for 429 / 5xx, on top of the first try
 RATE_WAIT_CAP = 60      # a longer 429 Retry-After is the daily quota: report it
+SCROBBLE = ('start', 'pause', 'stop')
+STATUSES = ('watching', 'plantowatch', 'completed', 'hold', 'dropped')
 
 
 class SimklError(Exception):
@@ -467,6 +469,8 @@ class SimklAccount:
 
     def add_to_list(self, ids: dict, status: str = 'watching') -> bool:
         """Put a title on a Simkl watchlist status (so it shows in the feed)."""
+        if status not in STATUSES:
+            raise ValueError(f'unknown list status {status!r}')
         if not self.logged_in() or not ids:
             return False
         body = {'anime': [{'ids': ids, 'to': status}]}
@@ -475,6 +479,54 @@ class SimklAccount:
             return True
         except Exception:
             return False
+
+    def rate(self, ids: dict, rating) -> bool:
+        """POST /sync/ratings, 1-10. Simkl drops an out-of-range value without
+        saying so, so it is refused here instead."""
+        if not ids:
+            return False
+        n = int(rating)
+        if not 1 <= n <= 10:
+            raise ValueError(f'rating must be 1-10, got {rating!r}')
+        if not self.logged_in():
+            return False
+        self._api('/sync/ratings', method='POST',
+                  body={'anime': [{'ids': dict(ids), 'rating': n}]})
+        return True
+
+    def scrobble(self, action: str, ids: dict, episode, season=1,
+                 progress=0) -> dict:
+        """POST /scrobble/{start|pause|stop}: playback progress, in percent.
+
+        Simkl marks the episode watched itself at >=80% on `stop` and keeps a
+        resumable position below it, so one call covers both cases."""
+        if action not in SCROBBLE:
+            raise ValueError(f'unknown scrobble action {action!r}')
+        if not ids:
+            raise SimklError('simkl: no ids for scrobble call')
+        try:
+            pct = round(min(max(float(progress or 0), 0.0), 100.0), 2)
+        except (TypeError, ValueError):
+            raise ValueError(f'progress must be a number, got {progress!r}')
+        body = {'progress': pct, 'anime': {'ids': dict(ids)},
+                'episode': {'season': int(season), 'number': int(episode)}}
+        try:
+            return self._api(f'/scrobble/{action}', method='POST', body=body)
+        except SimklError as ex:
+            # 409 = that episode is already in history (rewatch, or our own
+            # /sync/history mark a moment earlier). 400 RATE_LIMIT = Simkl's
+            # 20s per-user write lock, i.e. a duplicate fire. Neither is worth
+            # a scary log line; the next stop carries the newer position.
+            if ex.status == 409 or ex.error == 'RATE_LIMIT':
+                return {'skipped': ex.error or 'already watched'}
+            raise
+
+    def activities(self) -> dict:
+        """GET /sync/activities: last-change stamp per list bucket.
+
+        One cheap call answers "did anything move?" before a per-show pull."""
+        d = self._api('/sync/activities')
+        return d if isinstance(d, dict) else {}
 
 
 class SimklTracker:
@@ -512,6 +564,22 @@ class SimklTracker:
             if r > score:
                 best, score = e, r
         return best if score >= 0.55 else None
+
+    def scrobble(self, title, num, progress, action='start', mal=None,
+                 anilist=None):
+        """Report playback progress. Returns Simkl's answer or None."""
+        from . import log
+        ids = {k: v for k, v in (('mal', mal), ('anilist', anilist)) if v}
+        if not ids:
+            e = self._match(title)
+            if not e:
+                return None
+            ids = {k: e[k] for k in ('mal', 'anilist', 'simkl') if e.get(k)}
+        try:
+            return self.acc.scrobble(action, ids, num, progress=progress)
+        except Exception as ex:
+            log.cprint(f'simkl: scrobble {action} failed for "{title}" ({ex})')
+            return None
 
     def mark_watched(self, title, num, ask=False, mal=None, anilist=None):
         from . import log

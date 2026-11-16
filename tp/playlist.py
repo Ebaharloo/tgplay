@@ -190,6 +190,7 @@ class Playlist:
                 elif i == 0:
                     log.cprint(f'start: ep{ep.num} at 0s (no saved position)')
                 watcher.start()
+                self._scrobble('start', ep.num, 0)
                 cmd = self.player.command(
                     url, title=name, extra=(list(extra or []) + extra_direct + flags),
                     start=ep_start, cut=cut, ipc=sock)
@@ -221,6 +222,7 @@ class Playlist:
                 dur = getattr(watcher, 'duration', 0) or 0
                 pos = getattr(watcher, 'last', 0) or 0
                 frac = (pos / dur) if dur else 0.0
+                self._scrobble('stop', ep.num, frac * 100)
                 finished = (rc == 0) or (frac >= WATCHED_FRAC)
 
                 if rc == 4:  # user quit
@@ -252,6 +254,25 @@ class Playlist:
                     self._mark(ep.num)
                 break
         log.cprint('>> done')
+
+    def _scrobble(self, action, num, progress):
+        """Report playback progress (start / stop) from a worker thread: a slow
+        API must never hold up mpv."""
+        tracker = self.tracker
+        fn = getattr(tracker, 'scrobble', None)
+        if fn is None:
+            return
+        try:
+            if not tracker.enabled():
+                return
+        except Exception:
+            return
+        mal = self.mal_id or getattr(self.provider, 'mal_id', None)
+        anilist = getattr(self.provider, 'anilist_id', None)
+        threading.Thread(
+            target=_safe, daemon=True,
+            args=(fn, self.provider.title, num, progress),
+            kwargs={'action': action, 'mal': mal, 'anilist': anilist}).start()
 
     def _mark(self, num):
         if self.tracker is None:

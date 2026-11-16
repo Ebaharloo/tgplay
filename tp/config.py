@@ -123,6 +123,10 @@ class Config:
         return self._p('pending_sync.json')
 
     @property
+    def simkl_activities(self):
+        return self._p('simkl_activities.json')
+
+    @property
     def tg_session(self):
         # NB: no '.session' suffix - telethon appends it, and would otherwise
         # treat the path as the literal file.
