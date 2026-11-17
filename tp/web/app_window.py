@@ -1,20 +1,22 @@
-"""tp.web.app_window - the Astryx UI inside a real desktop window.
+"""tp.web.app_window - the same UI as a native Qt Quick window (no Chromium).
 
-No browser, no address bar: a Qt window (native title bar, taskbar entry, app
-icon) with a QWebEngineView showing the local server. This is the "normal app"
-path - `./tgplay --web-app` or `./tgplay --web` when QtWebEngine is installed.
+`./tgplay --web-app`: the local server from `tp.web.server` runs exactly as for
+`--web`, but the window is Qt Quick (QML) instead of a QWebEngineView embed. The
+QML client renders `/api/state` and posts to the same endpoints, so the Python
+data layer stays the only source of truth.
 
-The heavy Qt imports live inside `main()` so a missing PySide6-Addons only
-affects this entry point, never the plain web/CLI paths.
+`--web` still opens a browser/app-mode window (`tp/web/run.py`) - the QML window
+is the native shell, the web bundle is optional.
 """
 import os
 import sys
 import threading
-import time
 
 from . import server as _srv
 from .server import HOST
 from .. import log
+
+QML = os.path.join(os.path.dirname(__file__), 'qml', 'Main.qml')
 
 
 def _icon(app):
@@ -31,34 +33,10 @@ def _icon(app):
 
 def main(argv=None) -> int:
     try:
-        from PySide6 import QtWidgets as W, QtCore as C
-        from PySide6.QtWebEngineWidgets import QWebEngineView  # noqa: F401
+        from PySide6 import QtCore as C, QtGui as G, QtQml
     except Exception as ex:
-        log.cprint(f'web-app: QtWebEngine missing ({ex}) - '
-                   'run `pip install PySide6-Addons` or use --web')
+        log.cprint(f'web-app: PySide6/QtQuick missing ({ex}) - use --web')
         return 2
-
-    closed = threading.Event()
-
-    def app_main():
-        app = W.QApplication.instance() or W.QApplication(sys.argv[:1])
-        app.setApplicationName('tgplay')
-        _icon(app)
-        win = W.QMainWindow()
-        win.setWindowTitle('tgplay')
-        win.resize(1360, 960)
-        view = QWebEngineView(win)
-        win.setCentralWidget(view)
-        view.setUrl(C.QUrl(url))
-        win.show()
-
-        def done(*_a):
-            closed.set()
-        app.aboutToQuit.connect(done)
-        win.destroyed.connect(done)
-        code = app.exec()
-        closed.set()
-        return code
 
     port = int(os.environ.get('TPLAY_WEB_PORT') or 0)
     server = _srv.serve(port)          # 0 = pick a free port
@@ -68,7 +46,17 @@ def main(argv=None) -> int:
 
     rc = 0
     try:
-        rc = app_main()
+        app = G.QGuiApplication.instance() or G.QGuiApplication(sys.argv[:1])
+        app.setApplicationName('tgplay')
+        _icon(app)
+        engine = QtQml.QQmlApplicationEngine()
+        engine.rootContext().setContextProperty('apiBase', url)
+        engine.load(C.QUrl.fromLocalFile(QML))
+        if not engine.rootObjects():
+            log.cprint(f'web-app: QML failed to load ({QML})')
+            rc = 2
+        else:
+            rc = app.exec()
     except KeyboardInterrupt:
         pass
     finally:
