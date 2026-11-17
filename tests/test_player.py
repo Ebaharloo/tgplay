@@ -15,6 +15,9 @@ def test_command():
     assert cmd[0] == 'mpv' and cmd[-1] == 'http://x/f.mkv'
     assert '--force-media-title=T' in cmd
     assert '--start=90' in cmd and '--end=-30' in cmd
+    # a Simkl resume point arrives as a percent: mpv takes it as-is
+    assert '--start=42%' in p.command('http://x/f.mkv', start='42%')
+    assert '--start=0' in p.command('http://x/f.mkv', start=0)
     assert '--volume' in cmd and '80' in cmd
     assert '--input-ipc-server=/tmp/s.ipc' in cmd
     print('PASS player.command')

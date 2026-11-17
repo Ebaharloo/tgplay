@@ -18,6 +18,8 @@ from .player import PosWatcher
 
 # Mark an episode watched once this fraction played (even if the user quits).
 WATCHED_FRAC = float(os.environ.get('AGP_WATCHED_FRAC', '0.70'))
+# Seconds of playback between /scrobble/pause pushes (Simkl locks writes 20 s).
+PAUSE_EVERY = float(os.environ.get('AGP_PAUSE_EVERY', '60'))
 
 
 def _safe(fn, *a, **k):
@@ -44,6 +46,7 @@ class Playlist:
         self.mal_id = mal_id          # pinned show id: ani-skip needs it
         self.stop_ev = stop           # set by Session.stop -> end the playlist
         self.interval = float(os.environ.get('AGP_WATCH_INTERVAL', interval))
+        self._pause_at = 0.0          # position of the last Simkl pause push
 
     # --- progress ----------------------------------------------------------
     def _load(self):
@@ -178,15 +181,19 @@ class Playlist:
                         fired[0] = True
                         log.cprint(f'mpv: ep{_n} window up in '
                                    f'{time.monotonic() - t_ep:.1f}s')
-                    self._save(title, _n, p)
+                    self._on_pos(title, _n, p, getattr(watcher, 'duration', 0))
 
                 watcher = PosWatcher(
                     sock, self.interval,
                     on_pos=_tick,
                     fire_when=fire, on_fire=on_fire)
+                self._pause_at = 0.0
                 ep_start = start if i == 0 else None
-                if i == 0 and start is not None:
-                    log.cprint(f'start: ep{ep.num} at {int(start)}s')
+                if i == 0 and ep_start is None:
+                    ep_start = self._resume_point(ep.num)
+                if i == 0 and ep_start is not None:
+                    if not isinstance(ep_start, str):
+                        log.cprint(f'start: ep{ep.num} at {int(ep_start)}s')
                 elif i == 0:
                     log.cprint(f'start: ep{ep.num} at 0s (no saved position)')
                 watcher.start()
@@ -194,7 +201,8 @@ class Playlist:
                 cmd = self.player.command(
                     url, title=name, extra=(list(extra or []) + extra_direct + flags),
                     start=ep_start, cut=cut, ipc=sock)
-                tag = (f'  [start {int(ep_start)}s]' if ep_start is not None else '')
+                tag = (f'  [start {ep_start}s]' if isinstance(ep_start, int)
+                       else f'  [start {ep_start}]' if ep_start else '')
                 if cut:
                     tag += f'  [cut {cut}s]'
                 if flags:
@@ -255,9 +263,35 @@ class Playlist:
                 break
         log.cprint('>> done')
 
+    def _on_pos(self, title, num, pos, dur=0.0):
+        """Save locally every tick, and push a Simkl pause every PAUSE_EVERY
+        seconds so the resume point outlives a crash or a second device."""
+        self._save(title, num, pos)
+        if dur and pos - self._pause_at >= PAUSE_EVERY:
+            self._pause_at = pos
+            self._scrobble('pause', num, pos / dur * 100)
+
+    def _resume_point(self, num):
+        """Start position for ep `num` from Simkl (another device) when the
+        local progress file has none: '42%' for mpv, or None."""
+        fn = getattr(self.tracker, 'resume', None)
+        if fn is None:
+            return None
+        mal = self.mal_id or getattr(self.provider, 'mal_id', None)
+        anilist = getattr(self.provider, 'anilist_id', None)
+        try:
+            r = fn(self.provider.title, num, mal=mal, anilist=anilist)
+        except Exception:
+            return None
+        pct = float((r or {}).get('percent') or 0)
+        if not 0 < pct < 95:      # 0 = nothing saved; >=95 = already finished
+            return None
+        log.cprint(f'resume: ep{num} at {pct:.0f}% (Simkl, another device)')
+        return f'{pct:.0f}%'
+
     def _scrobble(self, action, num, progress):
-        """Report playback progress (start / stop) from a worker thread: a slow
-        API must never hold up mpv."""
+        """Report playback progress (start / pause / stop) from a worker
+        thread: a slow API must never hold up mpv."""
         tracker = self.tracker
         fn = getattr(tracker, 'scrobble', None)
         if fn is None:
@@ -297,4 +331,8 @@ class Playlist:
                      num, mal=mal, anilist=anilist):
                 log.cprint(f'track: ep{num} synced in '
                            f'{time.monotonic() - t0:.1f}s')
+            forget = getattr(self.tracker, 'forget', None)
+            if forget is not None:      # local watch outran Simkl's resume point
+                _safe(forget, self.provider.title, num, mal=mal,
+                      anilist=anilist)
         threading.Thread(target=work, daemon=True).start()

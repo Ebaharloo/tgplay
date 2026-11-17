@@ -70,7 +70,9 @@ class Player:
         if title:
             cmd.append('--force-media-title=' + title)
         if start is not None:
-            cmd.append(f'--start={int(start)}')
+            # '42%' = a Simkl resume point; mpv takes a percent natively
+            cmd.append(f'--start={start}' if isinstance(start, str)
+                       else f'--start={int(start)}')
         if cut:
             cmd.append(f'--end=-{int(cut)}')
         if pin_context and not any(f.startswith('--gpu-context') for f in cmd):

@@ -348,6 +348,33 @@ class MultiTracker:
                 log.cprint(f'track: {type(t).__name__} scrobble failed ({ex})')
         return None
 
+    def resume(self, title, num, mal=None, anilist=None):
+        """A resume point any tracker knows for this episode, or None."""
+        for t in self.trackers:
+            fn = getattr(t, 'resume', None)
+            if fn is None:
+                continue
+            try:
+                if t.enabled():
+                    got = fn(title, num, mal=mal, anilist=anilist)
+                    if got:
+                        return got
+            except Exception:
+                pass
+        return None
+
+    def forget(self, title, num, mal=None, anilist=None):
+        """Drop the resume point for an episode finished here, every tracker."""
+        for t in self.trackers:
+            fn = getattr(t, 'forget', None)
+            if fn is None:
+                continue
+            try:
+                if t.enabled():
+                    fn(title, num, mal=mal, anilist=anilist)
+            except Exception:
+                pass
+
 
 def make_tracker(cfg, http=None, sync: bool = True):
     """Build the progress trackers: Simkl (the hub) + AniList. Returns None
