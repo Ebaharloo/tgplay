@@ -66,6 +66,8 @@ class AppState:
         self.rails_items = {'continue': [], 'recent': []}
         self.feed = []
         self.upcoming = []
+        self.today = []
+        self.trending = []
         self.history = []
         self.lights = {'simkl': 'warn', 'gate': 'warn', 'anilist': 'warn'}
         # one hook for every watched change: queue to pending_sync.json FIRST,
@@ -168,6 +170,7 @@ class AppState:
             log.cprint(f'web: status probe failed ({ex})')
         rails = self._load_rails()
         window = int((rails.get('recent') or {}).get('days') or 14)
+        today, trending = self._discover()
         try:
             try:
                 ov = self._overview(aired_days=window) or {}
@@ -253,6 +256,8 @@ class AppState:
         with self.lock:
             self.lights = lights
             self.upcoming = upcoming
+            self.today = today
+            self.trending = trending
             self.rails = rails
             self.rails_items = {'continue': shelf, 'recent': recent}
             self.feed = aired[:60]
@@ -263,6 +268,29 @@ class AppState:
                             for h in ov.get('hist') or []]
             if not (shelf or recent or self.history):
                 self.message = ('library is empty - is Simkl connected?')
+
+    def _discover(self):
+        """Simkl's own schedule + trending rows (CDN JSON, no auth needed).
+
+        Fetched before the library on purpose: a logged-out window still gets
+        a Today/Trending panel, while `upcoming` keeps needing Simkl.
+        """
+        if not self.extra:                # TPLAY_FAKE / stubbed state: no network
+            return [], []
+        from ..simkl_extra import SimklExtra
+        ex = SimklExtra(self.cfg, self.http)
+        return ex.calendar(), ex.trending()
+
+    def discover_random(self) -> dict:
+        """The "surprise me" pick; the UI turns the title into a search."""
+        from ..simkl_extra import SimklExtra
+        try:
+            hit = SimklExtra(self.cfg, self.http).random()
+        except Exception as ex:
+            raise ValueError(f'random pick failed: {ex}')
+        if not hit:
+            raise ValueError('Simkl returned no random anime')
+        return hit
 
     def _extra(self, rows, days):
         """relations + episode lists for the rail (cached by tp.simkl_extra).
@@ -480,6 +508,8 @@ class AppState:
                           'recent': list(self.rails_items['recent'])},
                 'feed': list(self.feed),
                 'upcoming': list(self.upcoming),
+                'today': list(self.today),
+                'trending': list(self.trending),
                 'history': list(self.history),
                 'session': view,
                 'search': dict(self.search),
@@ -570,6 +600,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.state.settings(body.get('rails'))
             elif path == '/api/watched':
                 self.state.mark(body)
+            elif path == '/api/discover/random':
+                return self._json(self.state.discover_random())
             else:
                 return self._error(404, f'no endpoint {path}')
             self._json(self.state.snapshot())

@@ -37,9 +37,11 @@ def win(monkeypatch, tmp_path):
     from tp.simkl_account import SimklAccount
     app = _app()
     monkeypatch.setattr(GA.MainWindow, 'load_side', lambda self: None)
-    # relations/episodes are network: the worker path is stubbed in UI tests
+    # relations/episodes/feeds are network: the worker path is stubbed in UI tests
     monkeypatch.setattr(GA.MainWindow, '_fetch_extra',
                         staticmethod(lambda *a, **k: ({}, {}, {})))
+    monkeypatch.setattr(GA.MainWindow, '_feed_fetch',
+                        staticmethod(lambda *a, **k: ([], [])))
     monkeypatch.setattr(SimklAccount, 'logged_in', lambda self: True)
     w = GA.MainWindow(lambda src, target: None,
                       cfg=Config(home=str(tmp_path)).ensure())

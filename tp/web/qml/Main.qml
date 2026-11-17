@@ -657,7 +657,7 @@ ApplicationWindow {
                         property string tab: 'all'
                         id: feedRow
                         Chip {
-                            label: '14 days ' + win.agenda().length
+                            label: '14d ' + win.agenda().length
                             on: feedRow.tab === 'all'
                             onClicked: feedRow.tab = 'all'
                         }
@@ -672,14 +672,30 @@ ApplicationWindow {
                             onClicked: feedRow.tab = 'upcoming'
                         }
                     }
+                    RowLayout {
+                        spacing: 6
+                        Chip {
+                            label: 'Today ' + (snap && snap.today ? snap.today.length : 0)
+                            on: feedRow.tab === 'today'
+                            onClicked: feedRow.tab = 'today'
+                        }
+                        Chip {
+                            label: 'Trending ' + (snap && snap.trending ? snap.trending.length : 0)
+                            on: feedRow.tab === 'trending'
+                            onClicked: feedRow.tab = 'trending'
+                        }
+                        Item { Layout.fillWidth: true }
+                        Btn {
+                            label: '🎲'
+                            onClicked: win.randomPick()
+                        }
+                    }
                     ListView {
                         id: feedView
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         clip: true
-                        model: feedRow.tab === 'all' ? win.agenda()
-                            : feedRow.tab === 'aired' ? (snap ? snap.feed : [])
-                            : (snap ? snap.upcoming : [])
+                        model: win.feedRows(feedRow.tab)
                         delegate: Item {
                             width: feedView.width
                             height: 24
@@ -718,6 +734,8 @@ ApplicationWindow {
                         visible: feedView.count === 0
                         text: feedRow.tab === 'upcoming'
                             ? 'no scheduled episodes — refresh the feed ↻'
+                            : feedRow.tab === 'today' || feedRow.tab === 'trending'
+                            ? 'no Simkl feed — refresh the feed ↻'
                             : 'nothing aired in the last 14 days — widen the days in ⚙ settings'
                     }
                 }
@@ -759,6 +777,25 @@ ApplicationWindow {
             }
             Btn { label: '↻ refresh feed & history'; onClicked: win.refresh() }
         }
+    }
+
+    // one row list per feed tab (today/trending come from Simkl's CDN feeds)
+    function feedRows(tab) {
+        if (!snap) return []
+        if (tab === 'today') return snap.today || []
+        if (tab === 'trending') return snap.trending || []
+        if (tab === 'aired') return snap.feed || []
+        if (tab === 'upcoming') return snap.upcoming || []
+        return agenda()
+    }
+
+    // Simkl's random anime: the server answers with a searchable title
+    function randomPick() {
+        api('POST', '/api/discover/random', {}, function (e, d) {
+            if (e) return fail(e)
+            q = d.title || ''
+            search()
+        })
     }
 
     // one agenda: just aired first, then what is coming (same order as the web)

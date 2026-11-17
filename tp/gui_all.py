@@ -1342,7 +1342,8 @@ class MainWindow(W.QWidget):
         frow = W.QHBoxLayout()
         frow.addWidget(W.QLabel('Show'))
         self.feed_filter = W.QComboBox()
-        self.feed_filter.addItems(['Calendar', 'Remaining', 'All', 'Recent'])
+        self.feed_filter.addItems(['Calendar', 'Today', 'Trending',
+                                   'Remaining', 'All', 'Recent'])
         frow.addWidget(self.feed_filter)
         frow.addStretch(1)
         self.feed_gear = W.QToolButton()
@@ -2647,6 +2648,13 @@ class MainWindow(W.QWidget):
         return out
 
     @staticmethod
+    def _feed_fetch(cfg, http):
+        """Simkl's CDN schedule + trending rows (no auth, cached an hour)."""
+        from .simkl_extra import SimklExtra
+        ex = SimklExtra(cfg, http)
+        return ex.calendar(), ex.trending()
+
+    @staticmethod
     def _fetch_extra(cfg, http, rows, days):
         """Detail + episode lists for the shows that can appear on the rail.
 
@@ -2738,6 +2746,11 @@ class MainWindow(W.QWidget):
             except Exception as ex:
                 _log.cprint(f'feed: fetch failed ({ex}) - press ↻ to retry')
                 cal, rem, rc = [], [], []
+            sched, trend = [], []
+            try:
+                sched, trend = self._feed_fetch(self._cfg, self._http)
+            except Exception as exc:
+                _log.cprint(f'feed: schedule/discover failed ({exc})')
             if not (cal or rem or rc) and acc is not None:
                 # empty library OR a rejected token look the same from the
                 # API (it swallows errors) - one cheap check tells them apart
@@ -2778,6 +2791,7 @@ class MainWindow(W.QWidget):
             except Exception as ex:
                 _log.cprint(f'feed: poster rails failed ({ex})')
             self._libq.put(('feed', {'cal': cal, 'rem': rem, 'shelf': shelf,
+                                     'today': sched, 'trending': trend,
                                      'recent': recent}, rc))
         threading.Thread(target=work, daemon=True).start()
 
@@ -2800,6 +2814,10 @@ class MainWindow(W.QWidget):
         side = (getattr(self, '_settings', None) or {}).get('sidebar') or {}
         if mode == 'Calendar':
             rows = list(cal or [])
+        elif mode == 'Today':
+            rows = list(self.state.get('today') or [])
+        elif mode == 'Trending':
+            rows = list(self.state.get('trending') or [])
         elif mode == 'Remaining':
             rows = list(rem or [])
         elif mode == 'Recent':
@@ -2820,8 +2838,10 @@ class MainWindow(W.QWidget):
             if 'days_ago' in e:                  # recently-aired (tp.recent) row
                 ago = e.get('days_ago') or 0
                 when = '🆕  today' if not ago else f'🆕  {ago}d ago'
-            elif k == 'upcoming':
+            elif k in ('upcoming', 'today'):
                 when = '📅  ' + _fmt_date(e['air_date'])
+            elif k == 'trending':
+                when = '🔥  trending'
             elif k == 'aired':
                 when = '✅  aired ' + str(e['air_date'])[:10]
             else:                               # remaining
@@ -2918,6 +2938,8 @@ class MainWindow(W.QWidget):
                 else:
                     self.state['cal'] = payload.get('cal')
                     self.state['rem'] = payload.get('rem')
+                self.state['today'] = (payload or {}).get('today') or []
+                self.state['trending'] = (payload or {}).get('trending') or []
                 # one payload feeds both rails: the shelf shows the picked one
                 self.state['recent'] = (payload or {}).get('recent') or []
                 rset = (getattr(self, '_settings', None) or {}).get('recent') or {}
