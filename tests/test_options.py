@@ -175,6 +175,12 @@ def test_start_end_positions():
         .get('start') is None
     assert options.PlaybackOptions({'start': '', 'end': '  '}).end is None
     assert options.PlaybackOptions({'start': 'nope'}).start is None
+    # non-finite / absurd input is not a position, and must not raise
+    for bad in ('inf', '-inf', '1e400', '1:2:3:4', '-30'):
+        assert options.PlaybackOptions({'start': bad}).start is None, bad
+    # Finish-at 0 is a real position, not "blank"
+    cmd = Player().command('u', cut=30, end=0)
+    assert '--end=0' in cmd and '--end=-30' not in cmd, cmd
     # absolute --end replaces the relative cut --end (never both)
     p = Player()
     cmd = p.command('u', start=10, cut=30, end=900)

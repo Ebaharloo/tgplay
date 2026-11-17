@@ -29,6 +29,7 @@ Complete field inventory (== setup.save keys == parse keys == both forms):
 The dict contract stays the legacy shape at every boundary (opts dict +
 mpv list) — this model just wraps/normalizes it in exactly one place.
 """
+import math
 from typing import Dict, List, Optional, Tuple
 
 SKIP_MODES = ['off', 'all', 'names', 'auto']
@@ -86,9 +87,10 @@ def _norm_pos(v) -> Optional[int]:
         return None
     try:
         secs = sum(float(p) * 60 ** i for i, p in enumerate(reversed(parts)))
-    except ValueError:
+    except (ValueError, OverflowError):
         return None
-    return int(secs) if secs >= 0 else None
+    # 'inf' / '1e400' parse to a float but are not a usable position
+    return int(secs) if secs >= 0 and math.isfinite(secs) else None
 
 
 class PlaybackOptions:

@@ -458,3 +458,57 @@ def test_claim16_concurrent_save_json_never_races(tmp_path):
     assert not errs, errs
     got = load_json(path)
     assert isinstance(got, dict) and got, got
+
+
+# --- 13. finish-at: unusable pair is dropped, prefetch trigger uses it -----
+def test_claim17_finish_at_before_start_is_ignored(cfg):
+    """Start at 600 + Finish at 90 would make mpv exit at once: drop the end."""
+    plays = []
+    class Player:
+        def command(self, url, **k):
+            return [url, json.dumps(k, default=str)]
+        def play(self, cmd):
+            plays.append(json.loads(cmd[1]))
+            return 0
+    _run(cfg, FakeProvider(), Player(), start=600, end=90)
+    assert plays, plays
+    assert plays[0]['end'] is None, plays[0]
+    assert plays[0]['start'] == 600, plays[0]
+
+
+def test_claim18_next_ep_trigger_honours_finish_at():
+    """Finish-at shortens the stream, so the 60% trigger must move with it."""
+    pl = Playlist.__new__(Playlist)              # _trigger is pure
+    fire = pl._trigger(None, 0.6, end=600)
+    assert fire(300, 1440) is False, 'fired against the full 1440s duration'
+    assert fire(400, 1440) is True, 'trigger ignored the 600s finish'
+    cutfire = pl._trigger(None, 'cut', end=600)
+    assert cutfire(300, 1440) is False and cutfire(560, 1440) is True
+
+
+# --- 14. Start-at fallback when mpv drops --start -------------------------
+def test_claim19_start_at_seek_fallback():
+    from tp.player import ipc_seek
+    from tp.playlist import _behind
+    assert _behind(3, 180) is True            # opened at the top
+    assert _behind(175, 180) is False         # --start worked
+    assert _behind(0, None) is False          # nothing was asked
+    assert _behind(0, 10) is False            # too small to bother
+    assert ipc_seek('/tmp/no-such-mpv.sock', 180) is False   # no mpv: no raise
+
+
+def test_claim20_options_panel_has_samples_and_help():
+    from tp.gui_all import OptionsForm
+    from PySide6 import QtWidgets
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    f = OptionsForm()
+    flags = [fl for _l, fl in f.SAMPLES]
+    assert any('--volume' in x for x in flags), flags
+    assert f.extra.text() == ''
+    f._add_flag('--volume 80')
+    f._add_flag('--volume 80')               # twice is a no-op
+    assert f.extra.text() == '--volume 80', f.extra.text()
+    f._add_flag('--no-border')
+    assert f.extra.text() == '--volume 80 --no-border', f.extra.text()
+    assert f.samples.menu() and len(f.samples.menu().actions()) == len(flags)
+    assert f.help_btn.width() > 0 and f.start_at.placeholderText()

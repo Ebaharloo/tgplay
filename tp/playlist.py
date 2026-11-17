@@ -14,7 +14,7 @@ from typing import List, Optional
 
 from . import log
 from .episodes import Episode
-from .player import PosWatcher
+from .player import PosWatcher, ipc_seek
 
 # Mark an episode watched once this fraction played (even if the user quits).
 WATCHED_FRAC = float(os.environ.get('AGP_WATCHED_FRAC', '0.70'))
@@ -29,6 +29,13 @@ def _safe(fn, *a, **k):
     except Exception as ex:
         log.cprint(f'track: sync failed ({ex})')
         return False
+
+
+def _behind(pos, start) -> bool:
+    """True when mpv opened at the top although a Start-at was requested.
+    mpv silently drops --start on some streams; the watcher seeks instead."""
+    return (isinstance(start, int) and start > 15
+            and isinstance(pos, (int, float)) and pos < start - 15)
 
 
 class Playlist:
@@ -77,12 +84,18 @@ class Playlist:
             dn = None
         return dn or f'{self.provider.title} - ({ep.num}).mkv'
 
-    def _trigger(self, cut, frac):
+    def _trigger(self, cut, frac, end=None):
+        # the stream stops at `end` when set, so the trigger must measure
+        # against that shorter length or it never fires
+        def stop(d):
+            return min(d, end) if (end and d) else d
+
         if frac == 'cut':
             def fire(p, d):
-                return bool(d) and p >= d - 60
+                return bool(d) and p >= (stop(d) or d) - 60
         else:
             def fire(p, d):
+                d = stop(d)
                 eff = (d - cut) if (isinstance(cut, int) and d) else d
                 return bool(eff) and p / eff > frac
         return fire
@@ -151,11 +164,12 @@ class Playlist:
                            f'in {time.monotonic() - t_sk:.1f}s')
 
                 sock = f'/tmp/tgplay-{os.getpid()}-{ep.num}.ipc'
+                ep_end = end if i == 0 else None      # ep 1 only, like start
                 fire = None
                 on_fire = None
                 if next_frac and nxt is not None and self.prefetcher is not None \
                         and not direct:
-                    fire = self._trigger(cut, next_frac)
+                    fire = self._trigger(cut, next_frac, ep_end)
 
                     def on_fire(_nxt=nxt):
                         try:
@@ -175,12 +189,19 @@ class Playlist:
                             pass
 
                 fired = [False]
+                seeked = [False]
 
                 def _tick(p, _n=ep.num):
                     if not fired[0]:
                         fired[0] = True
                         log.cprint(f'mpv: ep{_n} window up in '
                                    f'{time.monotonic() - t_ep:.1f}s')
+                    if not seeked[0]:
+                        seeked[0] = True
+                        s0 = ep_start if isinstance(ep_start, int) else None
+                        if s0 and _behind(p, s0) and ipc_seek(sock, s0):
+                            log.cprint(f'start: mpv opened at {int(p)}s, '
+                                       f'seeked ep{_n} to {s0}s')
                     self._on_pos(title, _n, p, getattr(watcher, 'duration', 0))
 
                 watcher = PosWatcher(
@@ -196,7 +217,12 @@ class Playlist:
                         log.cprint(f'start: ep{ep.num} at {int(ep_start)}s')
                 elif i == 0:
                     log.cprint(f'start: ep{ep.num} at 0s (no saved position)')
-                ep_end = end if i == 0 else None      # ep 1 only, like start
+                if ep_end is not None and isinstance(ep_start, int) \
+                        and ep_end <= ep_start:
+                    # mpv would open and exit at once; play normally instead
+                    log.cprint(f'end: ignored, {int(ep_end)}s is not after '
+                               f'start {int(ep_start)}s')
+                    ep_end = None
                 if ep_end is not None:
                     log.cprint(f'end: ep{ep.num} at {int(ep_end)}s')
                 watcher.start()
@@ -206,7 +232,7 @@ class Playlist:
                     start=ep_start, cut=cut, end=ep_end, ipc=sock)
                 tag = (f'  [start {ep_start}s]' if isinstance(ep_start, int)
                        else f'  [start {ep_start}]' if ep_start else '')
-                if ep_end:
+                if ep_end is not None:
                     tag += f'  [end {ep_end}s]'
                 elif cut:
                     tag += f'  [cut {cut}s]'

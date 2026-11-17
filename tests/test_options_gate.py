@@ -107,9 +107,6 @@ def test_norm_pos_forms_and_blanks():
         assert v is None or v >= 0, (bad, v)
 
 
-@pytest.mark.xfail(reason='tp/options.py:87 int(inf) raises OverflowError - '
-                          'typing "inf" in the Start at box crashes the form',
-                   raises=OverflowError, strict=False)
 def test_norm_pos_infinity_does_not_raise():
     assert _norm_pos('inf') is None
     assert _norm_pos('1e400') is None

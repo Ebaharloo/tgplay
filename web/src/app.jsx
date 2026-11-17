@@ -12,6 +12,7 @@ const SHORT = {
   quality: 'Quality', audio: 'Audio', skip: 'Skip', toggle: 'T toggle',
   next: 'next ep', nowait: 'at cut', sync: 'Simkl sync', full: 'fullscreen',
   cut: 'Cut last N s', extra: 'Extra mpv flags',
+  start: 'Start at', end: 'Finish at',
 }
 
 // The window shares one snapshot: poll it, and let SSE push log lines.
@@ -138,7 +139,8 @@ function Options({ fields, setFields, hasSession }) {
       <div className="row">
         {texts.map((f) => (
           <TextInput key={f.k} label={SHORT[f.k] || f.k} isLabelHidden size="sm"
-            width={f.k === 'cut' ? 96 : 240} value={String(f.val ?? '')}
+            width={f.k === 'cut' ? 96 : f.k === 'extra' ? 240 : 110}
+            value={String(f.val ?? '')}
             placeholder={SHORT[f.k]} isDisabled={!hasSession}
             onChange={(v) => set(f.k, { val: v })} />
         ))}

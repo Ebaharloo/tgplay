@@ -76,7 +76,7 @@ class Player:
                        else f'--start={int(start)}')
         # an explicit --end in the extra flags wins over cut/end
         if not any(x.startswith('--end') for x in extra):
-            if end:
+            if end is not None:
                 cmd.append(f'--end={int(end)}')     # absolute: supersedes cut
             elif cut:
                 cmd.append(f'--end=-{int(cut)}')
@@ -109,6 +109,21 @@ class Player:
                 p.terminate()
             except Exception:
                 pass
+
+
+def ipc_seek(sock_path: str, secs: float):
+    """Tell mpv to jump to `secs`. Covers streams where --start is dropped:
+    a seek after load succeeds where the load-time seek failed."""
+    try:
+        c = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        c.settimeout(3)
+        c.connect(sock_path)
+        c.send(json.dumps({'command': ['seek', float(secs), 'absolute']})
+               .encode() + b'\n')
+        c.close()
+        return True
+    except Exception:
+        return False
 
 
 class PosWatcher(threading.Thread):

@@ -20,7 +20,7 @@ from . import history
 from . import log as _log
 from . import watched as _watched
 from .config import Config
-from .options import PlaybackOptions
+from .options import PlaybackOptions, form_fields
 
 
 class LogView(W.QTextBrowser):
@@ -1012,15 +1012,23 @@ class OptionsForm(W.QWidget):
 
         self.server_lbl = W.QLabel('Quality')
         self.server = combo(width=150)
+        self.server.setToolTip('Server / rendition for this source (axp: '
+                               'nero or yuki, agp: quality)')
         self.size_lbl = W.QLabel('Size')
         self.size_cb = combo(width=90)
+        self.size_cb.setToolTip('Video size; follows the chosen quality')
         self.audio_lbl = W.QLabel('Audio')
         self.audio_cb = combo(['dub', 'sub', 'auto'], width=62)
+        self.audio_cb.setToolTip('Audio track to ask the source for')
         self.skip_lbl = W.QLabel('Skip')
         self.skip = combo(['off', 'all', 'names', 'auto'], width=80)
+        self.skip.setToolTip('off = never skip · all = chapters and ani-skip\n'
+                             'names = only named intro/outro chapters\n'
+                             'auto = only when the file carries the answer')
         self.toggle = W.QCheckBox('T toggle')
         self.toggle.setToolTip('Allow turning skip off in mpv with T')
         self.full = W.QCheckBox('fullscreen')
+        self.full.setToolTip('Start mpv fullscreen (same as --fullscreen)')
         self.nxt = W.QCheckBox('next ep')
         self.nxt.setToolTip('Pre-download the next episode in the background')
         self.nowait = W.QCheckBox('at cut')
@@ -1033,18 +1041,33 @@ class OptionsForm(W.QWidget):
         self.cut = W.QLineEdit()
         self.cut.setFixedWidth(70)
         self.cut.setPlaceholderText('0')
+        self.cut.setToolTip('Stop every episode this many seconds before its '
+                            'end. 0 or blank = play to the end.\n'
+                            'Episode 1 uses Finish at instead when that is set.')
         self.start_at = W.QLineEdit()
-        self.start_at.setFixedWidth(70)
-        self.start_at.setPlaceholderText('mm:ss')
+        self.start_at.setFixedWidth(96)
+        self.start_at.setPlaceholderText('sec or mm:ss')
         self.start_at.setToolTip('Begin the first episode here instead of the '
-                                 'saved resume point (mm:ss or seconds)')
+                                 'saved resume point.\n'
+                                 'Seconds (180) or clock (3:00, 1:02:03). '
+                                 'Blank = resume / normal.')
         self.finish_at = W.QLineEdit()
-        self.finish_at.setFixedWidth(70)
-        self.finish_at.setPlaceholderText('seconds')
+        self.finish_at.setFixedWidth(96)
+        self.finish_at.setPlaceholderText('sec or mm:ss')
         self.finish_at.setToolTip('Stop the first episode at this absolute '
-                                  'position (mm:ss or seconds)')
+                                  'position.\n'
+                                  'Seconds (600) or clock (10:00). '
+                                  'Overrides Cut for episode 1. Blank = off.')
         self.extra = W.QLineEdit()
         self.extra.setPlaceholderText('--volume 80')
+        self.extra.setToolTip('Anything else mpv accepts, space separated')
+        self.samples = W.QPushButton('samples')
+        self.samples.setToolTip('Insert a ready-made extra mpv flag')
+        self._samples_menu()
+        self.help_btn = W.QPushButton('?')
+        self.help_btn.setFixedWidth(26)
+        self.help_btn.setToolTip('What every option does')
+        self.help_btn.clicked.connect(self._show_help)
 
         # row 1: per-source choices
         r1 = W.QHBoxLayout()
@@ -1081,6 +1104,8 @@ class OptionsForm(W.QWidget):
         r4.setSpacing(6)
         r4.addWidget(W.QLabel('Extra mpv flags'))
         r4.addWidget(self.extra, 1)
+        r4.addWidget(self.samples)
+        r4.addWidget(self.help_btn)
         form.addLayout(r4)
 
         self.box.setMinimumWidth(560)     # room for every row: no clipping
@@ -1094,6 +1119,37 @@ class OptionsForm(W.QWidget):
         self._next_orig = None
         self.server.currentIndexChanged.connect(self._on_source_changed)
         self.size_cb.currentIndexChanged.connect(self._on_size_changed)
+
+    # --- samples / help ---------------------------------------------------
+    SAMPLES = [
+        ('Volume 80', '--volume 80'),
+        ('Play at 1.25x', '--speed 1.25'),
+        ('A/V delay 0.3 s', '--audio-delay=0.3'),
+        ('Bigger subtitles', '--sub-font-size=48 --sub-border-size=3'),
+        ('No window border', '--no-border'),
+        ('Start muted', '--mute=yes'),
+        ('More cache (300MB)', '--cache=yes --demuxer-max-bytes=300MiB'),
+        ('Hardware decode', '--hwdec=auto-safe'),
+        ('Loop this file', '--loop-file=inf'),
+    ]
+
+    def _samples_menu(self):
+        menu = W.QMenu(self)
+        for label, flags in self.SAMPLES:
+            menu.addAction(label, lambda f=flags: self._add_flag(f))
+        self.samples.setMenu(menu)
+
+    def _add_flag(self, flags: str):
+        now = self.extra.text().strip()
+        if flags in now:
+            return                      # already there: clicking twice is safe
+        self.extra.setText(f'{now} {flags}'.strip())
+
+    def _show_help(self):
+        rows = [f"{f['label'].replace('  ', ' ')}:\n    {f.get('help', '')}"
+                for f in form_fields() if f.get('help')]
+        W.QMessageBox.information(self, 'Playback options — what each does',
+                                  '\n\n'.join(rows))
 
     # --- session -> widgets --------------------------------------------
     def load(self, s):
