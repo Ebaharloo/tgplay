@@ -51,6 +51,8 @@ class FakeHttp:
             if k in req['url']:
                 if isinstance(v, list):       # first answer, then the next
                     v = v.pop(0) if len(v) > 1 else v[0]
+                if isinstance(v, Resp):
+                    return v
                 if isinstance(v, Err):
                     h = email.message.Message()
                     for n, x in v.headers.items():
@@ -73,6 +75,10 @@ class Cfg:
     @property
     def progress(self):
         return os.path.join(self._d, 'progress.json')
+
+    @property
+    def simkl_library(self):
+        return os.path.join(self._d, 'simkl_library.json')
 
 
 WATCHING = {'watching': [
@@ -461,6 +467,95 @@ def test_stats_uses_account_id():
     print('PASS stats resolves the account id once')
 
 
+def test_playback_resume_clear():
+    os.environ['AGP_SIMKL_CLIENT_ID'] = 'cid'
+    d = tempfile.mkdtemp()
+    rows = [{'id': 900, 'progress': 42.2, 'paused_at': '2026-11-16T22:13:00Z',
+             'type': 'episode',
+             'episode': {'season': 1, 'number': 5, 'title': 'Five'},
+             'show': {'title': 'Show A', 'ids': {'mal': 1, 'simkl': 10}}},
+            {'id': 901, 'progress': 75.0, 'type': 'episode',
+             'episode': {'season': 1, 'number': 2},
+             'show': {'title': 'Other', 'ids': {'mal': 2, 'simkl': 20}}}]
+    http = FakeHttp({'/sync/playback/episodes': [rows],
+                     '/sync/playback/900': Resp(b'')})    # 204: no body
+    acc = simkl_account.SimklAccount(Cfg(d), http)
+    acc._save(access_token='at', refresh_token='rt')
+    try:
+        assert acc.playback({'mal': 1}) == [
+            {'id': 900, 'simkl': 10, 'mal': 1, 'anilist': None,
+             'title': 'Show A', 'season': 1, 'episode': 5, 'progress': 42.2,
+             'paused_at': '2026-11-16T22:13:00Z'}]
+        assert len(acc.playback()) == 2                  # no filter: every show
+        assert acc.playback([{'simkl': 20}])[0]['episode'] == 2
+
+        assert acc.clear_playback(900) is True           # 204, empty body
+        dele = [c for c in http.calls if c[0] == 'DELETE']
+        assert '/sync/playback/900?' in dele[-1][1], dele
+
+        gone = simkl_account.SimklAccount(
+            Cfg(tempfile.mkdtemp()),
+            FakeHttp({'/sync/playback/900': Err(404, {'error': 'empty'})}))
+        gone._save(access_token='at')
+        assert gone.clear_playback(900) is True          # already gone
+    finally:
+        os.environ.pop('AGP_SIMKL_CLIENT_ID', None)
+
+    # tracker: the resume point of the playing episode, then forget it
+    t = simkl_account.SimklTracker(Cfg(d))
+    cleared = []
+    t.acc.playback = lambda show_ids=None: [
+        {'id': 900, 'simkl': 10, 'mal': 1, 'anilist': None, 'title': 'Show A',
+         'season': 1, 'episode': 5, 'progress': 42.2, 'paused_at': ''}]
+    t.acc.clear_playback = lambda i: cleared.append(i) or True
+    assert t.resume('Show A', 5, mal=1) == {'percent': 42.2, 'id': 900}
+    assert t.resume('Show A', 6, mal=1) is None
+    assert t.forget('Show A', 5, mal=1) is True
+    assert cleared == [900]
+    assert t.resume('Show A', 5, mal=1) is None      # dropped from the cache
+    assert t.forget('Show A', 5, mal=1) is False
+    print('PASS simkl playback list / delete / resume / forget')
+
+
+def test_playlist_pause_and_resume():
+    from tp.playlist import Playlist
+
+    class Show:
+        title = 'Show A'
+        mal_id = 21
+        anilist_id = None
+
+    class Tr:
+        def enabled(self):
+            return True
+
+        def resume(self, title, num, mal=None, anilist=None):
+            return {'percent': 42.2, 'id': 900} if num == 5 else None
+
+    pl = object.__new__(Playlist)
+    pl.provider = Show()
+    pl.mal_id = None
+    pl.tracker = Tr()
+    pl._pause_at = 0.0
+    saved, pushed = [], []
+    pl._save = lambda t, n, p: saved.append((n, p))
+    pl._scrobble = lambda a, n, p: pushed.append((a, n, round(p, 1)))
+    pl._on_pos('Show A', 5, 30, 1400)      # under the 60 s gap: local only
+    assert pushed == [] and saved == [(5, 30)]
+    pl._on_pos('Show A', 5, 65, 1400)      # 4.6 % of the episode -> pause push
+    assert pushed == [('pause', 5, 4.6)], pushed
+    pl._on_pos('Show A', 5, 70, 1400)
+    assert len(pushed) == 1                # same 60 s window: no second call
+    pl._on_pos('Show A', 5, 70, 0)         # duration unknown: never push
+    assert len(pushed) == 1
+
+    assert pl._resume_point(5) == '42%'
+    assert pl._resume_point(6) is None
+    pl.tracker = None                      # sync off: no Simkl call, no crash
+    assert pl._resume_point(5) is None
+    print('PASS playlist pause-save + Simkl resume start')
+
+
 def main():
     test_device_login_and_library()
     test_pin_flow_failures()
@@ -470,6 +565,8 @@ def main():
     test_429_retry()
     test_scrobble_ratings_status()
     test_playlist_reports_progress()
+    test_playback_resume_clear()
+    test_playlist_pause_and_resume()
     test_logout_revokes_then_deletes()
     test_stats_uses_account_id()
     test_find_source()

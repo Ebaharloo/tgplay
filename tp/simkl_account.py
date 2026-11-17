@@ -139,6 +139,20 @@ def _expires_at(tok: dict) -> Optional[int]:
         return None
 
 
+def _row_key(r: dict) -> str:
+    """Cache key for one /sync/all-items row, best id first."""
+    show = r.get('show') or r
+    ids = show.get('ids') or {}
+    return str(ids.get('simkl') or ids.get('mal') or show.get('title') or '')
+
+
+def _merge(old: List[dict], new: List[dict]) -> List[dict]:
+    """A date_from delta laid over the cached rows."""
+    out = {_row_key(r): r for r in old}
+    out.update({_row_key(r): r for r in new})
+    return list(out.values())
+
+
 class SimklAccount:
     def __init__(self, cfg, http: Optional[HttpClient] = None):
         self.cfg = cfg
@@ -244,6 +258,8 @@ class SimklAccount:
                     status=ex.code, error=err, payload=payload) from ex
         try:
             return json.load(r)
+        except ValueError:
+            return {}      # 204: DELETE /sync/playback/{id} sends no body
         finally:
             _quiet_close(r)
 
@@ -385,17 +401,14 @@ class SimklAccount:
         return self._api(f'/users/{int(user_id)}/stats')
 
     def _items(self, type_: str = 'anime', status: Optional[str] = None,
-               extra: Dict[str, str] = None) -> List[dict]:
+               extra: Optional[Dict[str, str]] = None) -> List[dict]:
+        """One /sync/all-items call, flattened. Raises `SimklError`."""
         path = f'/sync/all-items/{type_}'
         if status:
             path += f'/{status}'
         params = {'next_watch_info': 'yes', 'language': 'en'}
         params.update(extra or {})
-        try:
-            d = self._api(path, params)
-        except Exception:
-            return []
-        return _rows(d)
+        return _rows(self._api(path, params))
 
     @staticmethod
     def _norm(it: dict) -> dict:
@@ -422,11 +435,42 @@ class SimklAccount:
         }
 
     def library(self, statuses=('watching', 'plantowatch')) -> List[dict]:
-        """The anime library in **one** request, optionally filtered by status."""
+        """The anime library: one full pull, then only the delta.
+
+        Simkl's two-phase rule (apps that poll the full library get their
+        client_id suspended): `/sync/activities` is the gate, `date_from` is
+        the saved `all` stamp, so a poll with nothing new costs one tiny call.
+        A failed delta keeps the cached rows AND their stamp, so the same
+        delta is fetched again next time instead of being lost.
+
+        shortcut: a delta never reports a removal from a list, so a title
+        dropped elsewhere stays in the cache until simkl_library.json is
+        deleted; add an ids_only diff if that ever matters.
+        """
+        path = self.cfg.simkl_library
+        cache = _read(path, {})
+        cache = cache if isinstance(cache, dict) else {}
+        old = cache.get('rows') or []
         try:
-            rows = self._items('anime')
+            stamp = str((self.activities() or {}).get('all') or '')
         except Exception:
-            rows = []
+            stamp = ''
+        rows = old
+        save = False
+        if not (old and stamp and stamp == cache.get('all')):
+            since = cache.get('all') if (old and cache.get('all')) else None
+            try:
+                got = self._items('anime', extra={'date_from': since}
+                                  if since else None)
+            except Exception:
+                got = None            # keep cache + stamp: retry this delta
+            if got is not None:
+                rows, save = (_merge(old, got) if since else got), True
+        if save:
+            try:
+                _write(path, {'all': stamp or cache.get('all'), 'rows': rows})
+            except Exception:
+                pass                  # a read-only home still yields rows
         if statuses:
             rows = [r for r in rows if r.get('status') in statuses]
         return [self._norm(r) for r in rows]
@@ -491,6 +535,28 @@ class SimklAccount:
                                                          'anilist'))
         return [r for r in rows if hit(r)]
 
+    def watched(self, show_ids=None, per_call: int = 100) -> List[dict]:
+        """POST /sync/watched: per-episode watched state for titles you name.
+
+        Bulk replacement for `get_watched`: one call covers up to 100 shows
+        and returns only their episodes, instead of downloading the whole
+        library with every episode. `show_ids` is one ids dict or a list of
+        them. Rows carry `seasons[].episodes[]` ({number, watched, aired,
+        last_watched_at}); ids Simkl cannot match come back as `not_found`
+        with no seasons and are dropped here.
+        """
+        one = [show_ids] if isinstance(show_ids, dict) else list(show_ids or [])
+        one = [i for i in one if isinstance(i, dict) and i]
+        out: List[dict] = []
+        for i in range(0, len(one), per_call):
+            d = self._api('/sync/watched', {'extended': 'episodes'},
+                          method='POST',
+                          body=[{'ids': dict(ids)}
+                                for ids in one[i:i + per_call]])
+            out += [r for r in (d if isinstance(d, list) else [])
+                    if isinstance(r, dict) and r.get('seasons')]
+        return out
+
     def mark_watched(self, entry: dict, ep: int) -> int:
         """Record episode `ep` watched; returns how many episodes Simkl added
         (0 when it was already watched)."""
@@ -530,6 +596,30 @@ class SimklAccount:
                   body={'anime': [{'ids': dict(ids), 'rating': n}]})
         return True
 
+    def unrate(self, ids: dict) -> bool:
+        """POST /sync/ratings/remove: clear a score; the title stays listed."""
+        if not ids or not self.logged_in():
+            return False
+        self._api('/sync/ratings/remove', method='POST',
+                  body={'anime': [{'ids': dict(ids)}]})   # rating omitted
+        return True
+
+    def ratings(self, rating=None, type_: str = 'anime') -> List[dict]:
+        """GET /sync/ratings/{type}[/{rating}]: the user's own 1-10 scores.
+
+        `rating` is one value or a CSV like '9,10'; omit it for everything the
+        user rated. Rows are /sync/all-items rows plus `user_rating`."""
+        path = f'/sync/ratings/{type_}'
+        if rating not in (None, ''):
+            path += '/' + str(rating)
+        d = self._api(path, {'language': 'en'})
+        if isinstance(d, list):
+            rows = d
+        else:
+            d = d if isinstance(d, dict) else {}
+            rows = d.get(type_) or d.get('shows') or []
+        return [r for r in rows if isinstance(r, dict)]
+
     def scrobble(self, action: str, ids: dict, episode, season=1,
                  progress=0) -> dict:
         """POST /scrobble/{start|pause|stop}: playback progress, in percent.
@@ -564,6 +654,52 @@ class SimklAccount:
         d = self._api('/sync/activities')
         return d if isinstance(d, dict) else {}
 
+    # --- cross-device resume --------------------------------------------
+    def playback(self, show_ids=None) -> List[dict]:
+        """GET /sync/playback/episodes: resume points saved by /scrobble/pause.
+
+        `show_ids` is one ids dict or a list of them; None keeps every show.
+        Rows: {id, simkl, mal, anilist, title, season, episode, progress
+        (percent 0-100), paused_at}. `id` is what DELETE takes."""
+        try:
+            d = self._api('/sync/playback/episodes')
+        except Exception:
+            return []
+        rows = d if isinstance(d, list) else _rows(d)
+        want = _wanted(show_ids)
+        out: List[dict] = []
+        for it in rows:
+            if not isinstance(it, dict):
+                continue
+            ep = it.get('episode') or {}
+            show = it.get('show') or {}
+            ids = show.get('ids') or {}
+            if want and not any(str(ids.get(k)) in want
+                                for k in ('simkl', 'mal', 'anilist')):
+                continue
+            out.append({'id': it.get('id'),
+                        'simkl': ids.get('simkl'), 'mal': ids.get('mal'),
+                        'anilist': ids.get('anilist'),
+                        'title': show.get('title') or '',
+                        'season': ep.get('season'), 'episode': ep.get('number'),
+                        'progress': it.get('progress'),
+                        'paused_at': it.get('paused_at')})
+        return out
+
+    def clear_playback(self, playback_id) -> bool:
+        """DELETE /sync/playback/{id}: drop a resume point (204, no body).
+
+        404 `empty` means it was already gone (Simkl marked the episode
+        watched, or another device resumed it) - that is still a success."""
+        try:
+            self._api(f'/sync/playback/{int(playback_id)}', method='DELETE',
+                      retries=0)
+            return True
+        except SimklError as ex:
+            return ex.status == 404
+        except Exception:
+            return False
+
 
 class SimklTracker:
     """Playlist-compatible tracker: pushes finished episodes to Simkl.
@@ -575,6 +711,7 @@ class SimklTracker:
     def __init__(self, cfg, http: Optional[HttpClient] = None):
         self.acc = SimklAccount(cfg, http)
         self._entries: Optional[List[dict]] = None
+        self._resume_rows: Optional[List[dict]] = None
 
     def enabled(self) -> bool:
         return self.acc.logged_in()
@@ -601,37 +738,74 @@ class SimklTracker:
                 best, score = e, r
         return best if score >= 0.55 else None
 
+    def _ids(self, title, mal=None, anilist=None) -> dict:
+        """Ids for a playing title: the pinned ones, else the library match."""
+        ids = {k: v for k, v in (('mal', mal), ('anilist', anilist)) if v}
+        if ids:
+            return ids
+        e = self._match(title)
+        return {k: e[k] for k in ('mal', 'anilist', 'simkl')
+                if e and e.get(k)}
+
     def scrobble(self, title, num, progress, action='start', mal=None,
                  anilist=None):
         """Report playback progress. Returns Simkl's answer or None."""
         from . import log
-        ids = {k: v for k, v in (('mal', mal), ('anilist', anilist)) if v}
+        ids = self._ids(title, mal, anilist)
         if not ids:
-            e = self._match(title)
-            if not e:
-                return None
-            ids = {k: e[k] for k in ('mal', 'anilist', 'simkl') if e.get(k)}
+            return None
         try:
             return self.acc.scrobble(action, ids, num, progress=progress)
         except Exception as ex:
             log.cprint(f'simkl: scrobble {action} failed for "{title}" ({ex})')
             return None
 
+    def _playbacks(self) -> List[dict]:
+        if self._resume_rows is None:
+            self._resume_rows = self.acc.playback()
+        return self._resume_rows
+
+    def resume(self, title, num, mal=None, anilist=None) -> Optional[dict]:
+        """A resume point Simkl saved for this episode on any device:
+        {'percent': 42.2, 'id': 900} or None. One list call, cached."""
+        want = _wanted(self._ids(title, mal, anilist))
+        if not want:
+            return None
+        try:
+            for r in self._playbacks():
+                if r.get('episode') != num:
+                    continue
+                if any(str(r.get(k)) in want
+                       for k in ('simkl', 'mal', 'anilist')):
+                    return {'percent': float(r.get('progress') or 0),
+                            'id': r.get('id')}
+        except Exception:
+            pass
+        return None
+
+    def forget(self, title, num, mal=None, anilist=None) -> bool:
+        """Delete the Simkl resume point for an episode we finished here, so
+        another device cannot offer a position behind our watch history."""
+        from . import log
+        r = self.resume(title, num, mal, anilist)
+        if not r or not r.get('id'):
+            return False
+        ok = self.acc.clear_playback(r['id'])
+        if ok:
+            if self._resume_rows:
+                self._resume_rows = [x for x in self._resume_rows
+                                     if x.get('id') != r['id']]
+            log.cprint(f'simkl: dropped resume point for ep{num}')
+        return ok
+
     def mark_watched(self, title, num, ask=False, mal=None, anilist=None):
         from . import log
-        ids = {}
-        if mal:
-            ids['mal'] = mal
-        if anilist:
-            ids['anilist'] = anilist
-        label = (f'mal {mal}' if mal else f'anilist {anilist}') if ids else title
+        ids = self._ids(title, mal, anilist)
         if not ids:
-            e = self._match(title)
-            if not e:
-                log.cprint(f'simkl: no library match for "{title}" — not synced')
-                return None
-            ids = e
-            label = e.get('title') or title
+            log.cprint(f'simkl: no library match for "{title}" — not synced')
+            return None
+        label = f'mal {mal}' if mal else f'anilist {anilist}' if anilist \
+            else title
         try:
             added = self.acc.mark_watched(ids, num)
         except Exception as ex:

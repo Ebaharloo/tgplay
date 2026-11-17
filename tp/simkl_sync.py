@@ -206,18 +206,24 @@ def _ts(value) -> float:
 
 
 def remote_watched(acc: SimklAccount, ids: dict) -> Dict[Tuple[int, int], float]:
-    """{(season, episode): watched_at} for one show, from Simkl."""
+    """{(season, episode): watched_at} for one show, from Simkl.
+
+    One POST /sync/watched (extended=episodes): only this show's episodes come
+    back, so a pull no longer downloads the whole library with every episode.
+    """
     if not any((ids or {}).get(k) for k in IDS):
         return {}
     out: Dict[Tuple[int, int], float] = {}
-    for row in acc.get_watched({k: ids[k] for k in IDS if ids.get(k)}):
+    for row in acc.watched({k: ids[k] for k in IDS if ids.get(k)}):
         for s in row.get('seasons') or []:
             if not isinstance(s, dict):
                 continue
             for e in s.get('episodes') or []:
-                if isinstance(e, dict) and e.get('number') is not None:
+                if (isinstance(e, dict) and e.get('number') is not None
+                        and e.get('watched', True)):
                     out[(int(s.get('number') or 1), int(e['number']))] = _ts(
-                        e.get('watched_at') or e.get('watched-at'))
+                        e.get('last_watched_at') or e.get('watched_at')
+                        or e.get('watched-at'))
         if out:
             break
     return out

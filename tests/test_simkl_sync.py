@@ -143,18 +143,108 @@ def test_reconcile_newer_wins_and_conflict_logged():
 
 def test_remote_watched_reads_seasons():
     class Acc:
-        def get_watched(self, ids):
-            assert ids == {'mal': 21}
+        def watched(self, ids):
+            assert ids == {'mal': 21}      # one show per pull, not the library
             return [{
                 'show': {'ids': {'mal': 21, 'simkl': 4000}},
                 'seasons': [{'number': 1, 'episodes': [
-                    {'number': 1, 'watched_at': '2026-11-01T10:00:00Z'},
-                    {'number': 2, 'watched_at': '2026-11-02T10:00:00Z'}]}]}]
+                    {'number': 1, 'watched': True,
+                     'last_watched_at': '2026-11-01T10:00:00Z'},
+                    {'number': 2, 'watched': True,
+                     'last_watched_at': '2026-11-02T10:00:00Z'},
+                    {'number': 3, 'watched': False}]}]}]
 
     from tp.simkl_sync import remote_watched
     got = remote_watched(Acc(), {'mal': 21})
     assert sorted(got) == [(1, 1), (1, 2)] and got[(1, 2)] > got[(1, 1)]
     assert remote_watched(Acc(), {}) == {}
+
+
+def test_watched_batches_and_drops_unmatched():
+    import tempfile
+    from test_simkl_account import Cfg, FakeHttp
+    from tp import simkl_account as sa
+
+    os.environ['AGP_SIMKL_CLIENT_ID'] = 'cid'
+    row = {'result': 'found', 'seasons': [{'number': 1, 'episodes': [
+        {'number': 4, 'watched': True, 'last_watched_at': '2026-11-01T10:00:00Z'}]}]}
+    http = FakeHttp({'/sync/watched': [[{'result': 'not_found'}, row]]})
+    acc = sa.SimklAccount(Cfg(tempfile.mkdtemp()), http)
+
+    got = acc.watched([{'mal': i} for i in range(150)])
+    assert len(got) == 2 and all(r['seasons'] for r in got)  # not_found dropped
+    posts = [c for c in http.calls if c[0] == 'POST']
+    assert len(posts) == 2                           # 100 + 50: under the cap
+    assert 'extended=episodes' in posts[0][1]
+    assert [len(json.loads(c[2])) for c in posts] == [100, 50]
+    assert json.loads(posts[0][2])[0] == {'ids': {'mal': 0}}
+
+
+def test_library_caches_and_fetches_only_the_delta(tmp_path):
+    import tempfile
+    from test_simkl_account import Cfg, FakeHttp
+    from tp import simkl_account as sa
+
+    os.environ['AGP_SIMKL_CLIENT_ID'] = 'cid'
+
+    class C(Cfg):
+        @property
+        def simkl_library(self):
+            return str(tmp_path / 'simkl_library.json')
+
+    a = {'show': {'title': 'A', 'ids': {'simkl': 10}}, 'status': 'watching'}
+    b = {'show': {'title': 'B', 'ids': {'simkl': 20}}, 'status': 'watching'}
+    http = FakeHttp({'/sync/activities': {'all': 'A1'},
+                     '/sync/all-items/anime': {'anime': [a, b]}})
+    acc = sa.SimklAccount(C(str(tmp_path)), http)
+    assert [r['title'] for r in acc.library()] == ['A', 'B']
+
+    # same stamp: the cache answers, the library endpoint is not called
+    http.calls.clear()
+    assert [r['title'] for r in acc.library()] == ['A', 'B']
+    assert not [c for c in http.calls if 'all-items' in c[1]]
+
+    # stamp moved: one delta call carrying the saved stamp
+    http.routes['/sync/activities'] = {'all': 'A2'}
+    http.routes['/sync/all-items/anime'] = {'anime': [
+        dict(b, watched_episodes_count=5)]}
+    http.calls.clear()
+    rows = acc.library()
+    assert {r['title']: r['watched'] for r in rows} == {'A': 0, 'B': 5}
+    assert 'date_from=A1' in http.calls[-1][1]
+
+    # a failed delta keeps the rows AND the stamp, so the same window retries
+    from test_simkl_account import Err
+    http.routes['/sync/activities'] = {'all': 'A3'}
+    http.routes['/sync/all-items/anime'] = Err(400, {'error': 'bad_request'})
+    http.calls.clear()
+    assert {r['title']: r['watched'] for r in acc.library()} == {'A': 0, 'B': 5}
+    assert json.load(open(C(str(tmp_path)).simkl_library))['all'] == 'A2'
+    http.routes['/sync/all-items/anime'] = {'anime': []}
+    acc.library()
+    assert 'date_from=A2' in http.calls[-1][1]
+
+
+def test_ratings_list_and_remove():
+    import tempfile
+    from test_simkl_account import Cfg, FakeHttp
+    from tp import simkl_account as sa
+
+    os.environ['AGP_SIMKL_CLIENT_ID'] = 'cid'
+    row = {'show': {'title': 'A', 'ids': {'simkl': 10}}, 'user_rating': 9}
+    http = FakeHttp({'/sync/ratings/anime/9,10': {'anime': [row, 'junk']},
+                     '/sync/ratings/anime': {'anime': [row]},
+                     '/sync/ratings/remove': {}})
+    acc = sa.SimklAccount(Cfg(tempfile.mkdtemp()), http)
+
+    assert acc.ratings('9,10') == [row] and 'anime/9,10?' in http.calls[-1][1]
+    assert acc.ratings() == [row] and http.calls[-1][1].count('/sync/ratings/anime?') == 1
+    with open(acc.cfg.simkl_auth, 'w') as f:      # unrate needs a login
+        json.dump({'access_token': 't', 'expires_at': time.time() + 999}, f)
+    assert acc.unrate({'simkl': 10}) is True
+    method, url, data, _ = http.calls[-1]
+    assert method == 'POST' and '/sync/ratings/remove' in url
+    assert json.loads(data) == {'anime': [{'ids': {'simkl': 10}}]}
 
 
 def test_pull_gate_skips_an_unchanged_library(tmp_path):
