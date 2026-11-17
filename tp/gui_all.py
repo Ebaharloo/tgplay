@@ -991,8 +991,9 @@ class OptionsForm(W.QWidget):
 
     Every option keeps the same place in every source: quality/server, audio,
     skip, skip-toggle, fullscreen, pre-download next (+ 'start at cut'), Simkl
-    sync, cut seconds and extra mpv flags. Options the current source cannot
-    use stay visible but disabled, so the panel never changes shape.
+    sync, start at, finish at, cut seconds and extra mpv flags. Options the
+    current source cannot use stay visible but disabled, so the panel never
+    changes shape.
     """
 
     def __init__(self, parent=None):
@@ -1032,6 +1033,16 @@ class OptionsForm(W.QWidget):
         self.cut = W.QLineEdit()
         self.cut.setFixedWidth(70)
         self.cut.setPlaceholderText('0')
+        self.start_at = W.QLineEdit()
+        self.start_at.setFixedWidth(70)
+        self.start_at.setPlaceholderText('mm:ss')
+        self.start_at.setToolTip('Begin the first episode here instead of the '
+                                 'saved resume point (mm:ss or seconds)')
+        self.finish_at = W.QLineEdit()
+        self.finish_at.setFixedWidth(70)
+        self.finish_at.setPlaceholderText('seconds')
+        self.finish_at.setToolTip('Stop the first episode at this absolute '
+                                  'position (mm:ss or seconds)')
         self.extra = W.QLineEdit()
         self.extra.setPlaceholderText('--volume 80')
 
@@ -1054,14 +1065,25 @@ class OptionsForm(W.QWidget):
             r2.addWidget(w)
         r2.addStretch(1)
         form.addLayout(r2)
-        # row 3: numbers / free text
+        # row 3: positions (own row so nothing is clipped)
         r3 = W.QHBoxLayout()
         r3.setSpacing(6)
+        r3.addWidget(W.QLabel('Start at'))
+        r3.addWidget(self.start_at)
+        r3.addWidget(W.QLabel('Finish at'))
+        r3.addWidget(self.finish_at)
         r3.addWidget(W.QLabel('Cut last N s'))
         r3.addWidget(self.cut)
-        r3.addWidget(W.QLabel('Extra mpv flags'))
-        r3.addWidget(self.extra, 1)
+        r3.addStretch(1)
         form.addLayout(r3)
+        # row 4: free text
+        r4 = W.QHBoxLayout()
+        r4.setSpacing(6)
+        r4.addWidget(W.QLabel('Extra mpv flags'))
+        r4.addWidget(self.extra, 1)
+        form.addLayout(r4)
+
+        self.box.setMinimumWidth(560)     # room for every row: no clipping
 
         lay = W.QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -1171,6 +1193,8 @@ class OptionsForm(W.QWidget):
         self.nowait.setChecked(po.nowait)
         self.sync_cb.setChecked(po.sync == 'auto')
         self.cut.setText(str(po.cut or ''))
+        self.start_at.setText('' if po.start is None else str(po.start))
+        self.finish_at.setText('' if po.end is None else str(po.end))
         self.extra.setText(' '.join(po.extras))
         self._next_was = bool(po.next)
         self._next_orig = po.next if not isinstance(po.next, bool) else None
@@ -1239,6 +1263,8 @@ class OptionsForm(W.QWidget):
         po.set_nowait(self.nowait.isChecked())
         po.set_sync(self.sync_cb.isChecked())
         po.set_cut(self.cut.text().strip())
+        po.start = self.start_at.text().strip()
+        po.end = self.finish_at.text().strip()
         import shlex
         try:
             words = shlex.split(self.extra.text())
@@ -1449,7 +1475,7 @@ class MainWindow(W.QWidget):
         sbox.addStretch(1)
 
         self.opts_form = OptionsForm()
-        self.opts_form.setMinimumWidth(452)      # ~1 cm wider than its content
+        self.opts_form.setMinimumWidth(580)      # ~1 cm wider than its content
         band = W.QHBoxLayout()
         band.setSpacing(10)
         band.addLayout(sbox, 1)
@@ -1575,7 +1601,9 @@ class MainWindow(W.QWidget):
                  self.table, self.opts_form.server, self.opts_form.audio_cb,
                  self.opts_form.skip, self.opts_form.toggle, self.opts_form.full,
                  self.opts_form.sync_cb, self.opts_form.nxt,
-                 self.opts_form.nowait, self.opts_form.cut, self.opts_form.extra,
+                 self.opts_form.nowait, self.opts_form.start_at,
+                 self.opts_form.finish_at, self.opts_form.cut,
+                 self.opts_form.extra,
                  self.cast_btn, self.add_btn, self.b_stop, self.b_close,
                  self.feed, self.hist, self.side_btn]
         for a, b in zip(chain, chain[1:]):

@@ -68,7 +68,7 @@ class FakePlayer:
         self.stops = 0
 
     def command(self, url, *, title=None, extra=None, start=None, cut=None,
-                ipc=None):
+                end=None, ipc=None):
         return [url] + list(extra or [])
 
     def play(self, cmd):

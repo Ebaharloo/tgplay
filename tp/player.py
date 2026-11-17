@@ -44,7 +44,8 @@ class Player:
 
     def command(self, url: str, *, title: Optional[str] = None,
                 extra: Optional[List[str]] = None, start: Optional[int] = None,
-                cut: Optional[int] = None, cache_bytes: str = '150MiB',
+                cut: Optional[int] = None, end: Optional[int] = None,
+                cache_bytes: str = '150MiB',
                 readahead: int = 60, vo: str = 'gpu-next,gpu,dispmanx',
                 pin_context: bool = True, ipc: Optional[str] = None) -> List[str]:
         extra = list(extra or [])
@@ -73,8 +74,12 @@ class Player:
             # '42%' = a Simkl resume point; mpv takes a percent natively
             cmd.append(f'--start={start}' if isinstance(start, str)
                        else f'--start={int(start)}')
-        if cut:
-            cmd.append(f'--end=-{int(cut)}')
+        # an explicit --end in the extra flags wins over cut/end
+        if not any(x.startswith('--end') for x in extra):
+            if end:
+                cmd.append(f'--end={int(end)}')     # absolute: supersedes cut
+            elif cut:
+                cmd.append(f'--end=-{int(cut)}')
         if pin_context and not any(f.startswith('--gpu-context') for f in cmd):
             gc = gpu_context()
             if gc:

@@ -13,6 +13,7 @@ from typing import Dict, List, Optional
 from . import log
 from .cache import Cache
 from .episodes import Episode
+from .options import PlaybackOptions
 from .player import Player
 from .playlist import Playlist
 from .prefetch import Prefetcher
@@ -131,11 +132,17 @@ class Session:
                             self._player, self.cfg, skip=self._skip,
                             prefetcher=self._prefetch, tracker=tracker,
                             mal_id=self.mal_id, stop=self._stop)
-        start = self.resume[1] if (self.resume and planned[0].num == self.resume[0]) else None
-        if start:
-            _m, _s = divmod(int(start), 60)
-            log.cprint(f'resume: ep{planned[0].num} at {_m:d}:{_s:02d} '
-                       f'(mpv --start={int(start)})')
+        po = PlaybackOptions(o, m)
+        # an explicit Start at beats the saved resume point
+        start = po.start
+        end = po.end
+        if start is None:
+            start = self.resume[1] if (self.resume and
+                                       planned[0].num == self.resume[0]) else None
+            if start:
+                _m, _s = divmod(int(start), 60)
+                log.cprint(f'resume: ep{planned[0].num} at {_m:d}:{_s:02d} '
+                           f'(mpv --start={int(start)})')
         nf = ('cut' if (o.get('nowait') and o.get('cut')) else o.get('next')) \
             if o.get('next') else False
         sm = o.get('skip')
@@ -143,7 +150,7 @@ class Session:
                            sm in ('all', 'names', 'auto', 'off')) else 'all'
         playlist.run(planned, skip_mode=skip_mode,
                      skip_toggle=bool(o.get('skip_toggle')), cut=o.get('cut'),
-                     start=start, next_frac=nf, extra=m)
+                     start=start, end=end, next_frac=nf, extra=m)
 
     def refresh_labels(self) -> 'Session':
         """Re-pull the episode labels after the provider view changed."""

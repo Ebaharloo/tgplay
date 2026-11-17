@@ -20,6 +20,8 @@ Complete field inventory (== setup.save keys == parse keys == both forms):
                     downloading the next episode is enabled
     nowait          bool — start that download at the cut point
     cut             int or None — stop each episode N s early
+    start           int or None — begin episode 1 here (not the resume point)
+    end             int or None — stop episode 1 at this absolute position
     sync            'auto' / 'off' — push watch progress to Simkl
     fullscreen      bool — extra mpv flag (--fullscreen also lives in extras)
     extra           arbitrary extra mpv flags (list of str)
@@ -35,8 +37,8 @@ FULLSCREEN_FLAG = '--fullscreen'
 DEFAULT_NEXT = 0.60          # fraction where 'next' starts when enabled
 
 _DEFAULT_OPTS = {'a': False, 'skip': False, 'skip_toggle': False, 'e': None,
-                 'f': None, 'cut': None, 'next': False, 'nowait': False,
-                 'sync': 'auto'}
+                 'f': None, 'cut': None, 'start': None, 'end': None,
+                 'next': False, 'nowait': False, 'sync': 'auto'}
 
 
 def quality_key(label) -> Optional[str]:
@@ -73,6 +75,20 @@ def _norm_cut(v):
         return v
     s = str(v or '').strip()
     return int(s) if s.isdigit() else None
+
+
+def _norm_pos(v) -> Optional[int]:
+    """Seconds from 90, '90', '1:30' or '1:02:03'; blank/garbage -> None."""
+    if isinstance(v, int) and not isinstance(v, bool):
+        return v if v >= 0 else None
+    parts = str(v or '').strip().split(':')
+    if not 1 <= len(parts) <= 3:
+        return None
+    try:
+        secs = sum(float(p) * 60 ** i for i, p in enumerate(reversed(parts)))
+    except ValueError:
+        return None
+    return int(secs) if secs >= 0 else None
 
 
 class PlaybackOptions:
@@ -153,6 +169,22 @@ class PlaybackOptions:
         self._o['cut'] = _norm_cut(v)
 
     @property
+    def start(self) -> Optional[int]:
+        return _norm_pos(self._o.get('start'))
+
+    @start.setter
+    def start(self, v):
+        self._o['start'] = _norm_pos(v)
+
+    @property
+    def end(self) -> Optional[int]:
+        return _norm_pos(self._o.get('end'))
+
+    @end.setter
+    def end(self, v):
+        self._o['end'] = _norm_pos(v)
+
+    @property
     def sync(self) -> str:
         return 'off' if self._o.get('sync') == 'off' else 'auto'
 
@@ -218,6 +250,8 @@ class PlaybackOptions:
         o['skip'] = _norm_skip(o.get('skip'))
         o['next'] = _norm_next(o.get('next'))
         o['cut'] = _norm_cut(o.get('cut'))
+        o['start'] = self.start
+        o['end'] = self.end
         o['sync'] = self.sync
         return o
 
@@ -321,6 +355,14 @@ def form_fields(*, groups: List[str] = None, audio: bool = False,
         {'k': 'nowait', 'label': '   start that download at the cut point',
          'kind': 'flag', 'val': po.nowait,
          'help': 'Start it at (duration - Cut) instead of 60%. Needs a Cut.'},
+        {'k': 'start', 'label': 'Start at  (mm:ss or seconds)', 'kind': 'text',
+         'val': '' if po.start is None else str(po.start),
+         'help': 'Begin the first episode at this position instead of the '
+                 'saved resume point. Blank = resume/normal.'},
+        {'k': 'end', 'label': 'Finish at  (mm:ss or seconds)', 'kind': 'text',
+         'val': '' if po.end is None else str(po.end),
+         'help': 'Stop the first episode at this absolute position. '
+                 'Blank = play to the end (or to Cut).'},
         {'k': 'cut', 'label': 'Cut the last N seconds', 'kind': 'text',
          'val': str(po.cut or ''),
          'help': 'Stop each episode N seconds early. Blank = full.'},
@@ -374,6 +416,10 @@ def form_result(fields: List[Dict], opts: Dict, mpv: List[str] = None
         po.set_nowait(bool(by['nowait']['val']))
     if 'cut' in by:
         po.set_cut(by['cut']['val'])
+    if 'start' in by:
+        po.start = by['start']['val']
+    if 'end' in by:
+        po.end = by['end']['val']
     if 'sync' in by:
         po.set_sync(bool(by['sync']['val']))
     if 'full' in by or 'extra' in by:

@@ -17,12 +17,12 @@ from tp import options  # noqa: E402
 
 def test_default_opts_is_legacy_shape():
     o = options.PlaybackOptions.defaults().to_opts()
-    # exactly the tp/cli.parse base dict (keep its shape for old consumers)
-    assert set(o) == {'a', 'skip', 'skip_toggle', 'e', 'f', 'cut', 'next',
-                      'nowait', 'sync'}, o
+    # exactly the tp/cli.parse base dict, plus the new start/end rows
+    assert set(o) == {'a', 'skip', 'skip_toggle', 'e', 'f', 'cut', 'start',
+                      'end', 'next', 'nowait', 'sync'}, o
     assert o == {'a': False, 'skip': False, 'skip_toggle': False, 'e': None,
-                 'f': None, 'cut': None, 'next': False, 'nowait': False,
-                 'sync': 'auto'}, o
+                 'f': None, 'cut': None, 'start': None, 'end': None,
+                 'next': False, 'nowait': False, 'sync': 'auto'}, o
     print('PASS default opts legacy shape')
 
 
@@ -163,11 +163,48 @@ def test_field_inventory_locked():
     print('PASS field inventory locked + full round-trip')
 
 
+def test_start_end_positions():
+    """Start at / Finish at: mm:ss == seconds, blank clears, --end wins."""
+    from tp.player import Player
+    po = options.PlaybackOptions({'start': '1:30', 'end': '90'})
+    assert po.start == po.end == 90
+    assert options.PlaybackOptions({'start': '1:02:03'}).start == 3723
+    assert options.PlaybackOptions({'start': '62'}).start == 62
+    assert options.PlaybackOptions({'start': 62}).start == 62
+    assert options.PlaybackOptions({'start': '', 'end': '  '}).to_opts() \
+        .get('start') is None
+    assert options.PlaybackOptions({'start': '', 'end': '  '}).end is None
+    assert options.PlaybackOptions({'start': 'nope'}).start is None
+    # absolute --end replaces the relative cut --end (never both)
+    p = Player()
+    cmd = p.command('u', start=10, cut=30, end=900)
+    assert '--start=10' in cmd and '--end=900' in cmd, cmd
+    assert '--end=-30' not in cmd, cmd
+    assert sum(f.startswith('--end') for f in cmd) == 1, cmd
+    # an explicit --end in the extra flags is the only --end
+    cmd = p.command('u', cut=30, end=99, extra=['--end=-5'])
+    assert cmd.count('--end=-5') == 1, cmd
+    assert not [f for f in cmd if f.startswith('--end') and f != '--end=-5'], cmd
+    # form round-trip: fields carry seconds, edits parse, blank clears
+    fields = options.form_fields(opts={'start': '1:30', 'end': 120})
+    by = {f['k']: f for f in fields}
+    ks = [f['k'] for f in fields]
+    assert by['start']['kind'] == 'text' and by['start']['val'] == '90'
+    assert by['end']['val'] == '120'
+    assert ks.index('start') < ks.index('cut') and ks.index('end') < ks.index('cut')
+    by['start']['val'] = '2:00'
+    by['end']['val'] = ' '
+    o, _ = options.form_result(fields, {'start': None, 'end': None})
+    assert o['start'] == 120 and o['end'] is None, o
+    print('PASS start/end positions')
+
+
 def main():
     test_default_opts_is_legacy_shape()
     test_normalization()
     test_saved_shape_and_merge_matches_setup()
     test_field_inventory_locked()
+    test_start_end_positions()
     print('OPTIONS OK')
 
 

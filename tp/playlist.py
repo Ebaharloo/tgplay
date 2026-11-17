@@ -90,8 +90,8 @@ class Playlist:
     # --- loop --------------------------------------------------------------
     def run(self, episodes: List[Episode], *, skip_mode: str = 'all',
             skip_toggle: bool = False, cut: Optional[int] = None,
-            start: Optional[int] = None, next_frac=False,
-            extra: Optional[List[str]] = None):
+            start: Optional[int] = None, end: Optional[int] = None,
+            next_frac=False, extra: Optional[List[str]] = None):
         title = self.provider.title
         for i, ep in enumerate(episodes):
             if self.stop_ev is not None and self.stop_ev.is_set():
@@ -196,14 +196,19 @@ class Playlist:
                         log.cprint(f'start: ep{ep.num} at {int(ep_start)}s')
                 elif i == 0:
                     log.cprint(f'start: ep{ep.num} at 0s (no saved position)')
+                ep_end = end if i == 0 else None      # ep 1 only, like start
+                if ep_end is not None:
+                    log.cprint(f'end: ep{ep.num} at {int(ep_end)}s')
                 watcher.start()
                 self._scrobble('start', ep.num, 0)
                 cmd = self.player.command(
                     url, title=name, extra=(list(extra or []) + extra_direct + flags),
-                    start=ep_start, cut=cut, ipc=sock)
+                    start=ep_start, cut=cut, end=ep_end, ipc=sock)
                 tag = (f'  [start {ep_start}s]' if isinstance(ep_start, int)
                        else f'  [start {ep_start}]' if ep_start else '')
-                if cut:
+                if ep_end:
+                    tag += f'  [end {ep_end}s]'
+                elif cut:
                     tag += f'  [cut {cut}s]'
                 if flags:
                     tag += '  [skip]'

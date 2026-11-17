@@ -370,8 +370,8 @@ ApplicationWindow {
                 }
                 // option fields: choice chips cycle (left = back), flags toggle
                 Card {
-                    Layout.preferredWidth: 470
-                    Layout.preferredHeight: 96
+                    Layout.preferredWidth: 640
+                    Layout.preferredHeight: 112
                     opacity: win.session ? 1 : 0.55
                     ColumnLayout {
                         anchors.fill: parent
@@ -414,7 +414,7 @@ ApplicationWindow {
                                 delegate: TF {
                                     property int at: win.fields.indexOf(modelData)
                                     enabled: !!win.session
-                                    Layout.preferredWidth: modelData.k === 'cut' ? 96 : 200
+                                    Layout.preferredWidth: modelData.k === 'extra' ? 220 : 110
                                     placeholderText: modelData.label.split(/\s+/)[0]
                                     text: modelData.val === undefined || modelData.val === null
                                         ? '' : String(modelData.val)
