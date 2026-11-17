@@ -44,6 +44,65 @@ def test_resolve_episodes():
     print('PASS simkl resolve (keyless) + episodes')
 
 
+def test_fallback_to_search_id():
+    """A /redirect miss falls back to /search/id only when a client_id exists."""
+    s = Simkl(client_id='x')
+    s._redirect = lambda **p: None
+    calls = []
+
+    def fake_get(path, **params):
+        calls.append((path, params))
+        return [{'type': 'anime', 'ids': {'simkl': 7}}]
+
+    s._get = fake_get
+    assert s.resolve(mal=1) == 7
+    assert [c[0] for c in calls] == ['/search/id']
+
+    s2 = Simkl(client_id=None)           # keyless: no keyed fallback call
+    s2._redirect = lambda **p: None
+
+    def boom(*a, **k):
+        raise AssertionError('/search/id needs a client_id')
+
+    s2._get = boom
+    assert s2.resolve(mal=1) is None
+    print('PASS simkl /redirect miss -> /search/id fallback')
+
+
+def test_identify_file():
+    s = Simkl(client_id='x')
+    posts = []
+
+    def fake_post(path, body):
+        posts.append((path, body))
+        return {'type': 'episode',
+                'episode': {'season': 1, 'episode': 1100, 'title': 'Luffy vs. Lucci!'},
+                'show': {'title': 'One Piece',
+                         'ids': {'simkl': 38636, 'mal': '62394'}}}
+
+    s._post = fake_post
+    rec = s.identify('/tv/One.Piece.S01E1100.1080p.mkv')
+    assert rec == {'type': 'episode', 'title': 'One Piece', 'season': 1,
+                   'episode': 1100, 'ids': {'simkl': 38636, 'mal': '62394'}}
+    assert posts == [('/search/file',          # basename only, not the full path
+                      {'file': 'One.Piece.S01E1100.1080p.mkv'})]
+    assert s.identify('/tv/One.Piece.S01E1100.1080p.mkv') is rec   # cached
+    assert len(posts) == 1
+
+    movie = Simkl(client_id='x')
+    movie._post = lambda path, body: {'type': 'movie',
+                                      'movie': {'title': 'Akira',
+                                                'ids': {'simkl': 1}}}
+    mrec = movie.identify('Akira.1988.mkv')
+    assert mrec and mrec['title'] == 'Akira' and mrec['season'] is None
+
+    for empty in (None, [], {'type': 'show'}):
+        miss = Simkl(client_id='x')
+        miss._post = lambda path, body, e=empty: e
+        assert miss.identify('garbage.mkv') is None
+    print('PASS simkl identify (search/file) + no-match + cache')
+
+
 def test_metadata_fallback():
     cfg = Config(home=tempfile.mkdtemp(prefix='tgplay-simkl-')).ensure()
     m = Metadata(cfg)
@@ -88,6 +147,8 @@ def test_info_and_page():
 def main():
     test_dig()
     test_resolve_episodes()
+    test_fallback_to_search_id()
+    test_identify_file()
     test_metadata_fallback()
     test_info_and_page()
     print('SIMKL OK')

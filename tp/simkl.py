@@ -5,8 +5,10 @@ Needs a free Simkl client_id: set `AGP_SIMKL_CLIENT_ID`, or
 `~/.config/tgp/simkl.json` = {"client_id": "..."}. Without one every call is a
 silent no-op.
 
-Flow: MAL/AniList id (or a title) -> Simkl id via /search/id -> episode list via
-/anime/episodes/{id} -> {episode number: title}.
+Flow: MAL/AniList id (or a title) -> Simkl id via /redirect (canonical, keyless;
+/search/id is the keyed fallback) -> episode list via /anime/episodes/{id} ->
+{episode number: title}. `identify(path)` names a local video file via
+POST /search/file (needs the user token).
 """
 import json
 import os
@@ -19,6 +21,7 @@ from typing import Callable, Dict, Optional
 from .http import HttpClient, _quiet_close
 
 API = 'https://api.simkl.com'
+APP, VER = 'tgplay', '1.0'
 CONF = os.path.expanduser('~/.config/tgp/simkl.json')
 
 
@@ -58,6 +61,7 @@ class Simkl:
         self._ids: Dict[tuple, Optional[int]] = {}
         self._eps: Dict[int, Dict[int, str]] = {}
         self._records: Dict[int, Optional[dict]] = {}
+        self._files: Dict[str, Optional[dict]] = {}
 
     @staticmethod
     def _file_id() -> Optional[str]:
@@ -69,18 +73,35 @@ class Simkl:
     def available(self) -> bool:
         return bool(self.client_id)
 
+    def _auth(self) -> dict:
+        """The Bearer header user-scoped endpoints need (none when logged out)."""
+        if not self.auth_fn:
+            return {}
+        try:
+            auth = self.auth_fn()
+        except Exception:
+            return {}
+        return {'Authorization': auth} if auth else {}
+
+    def _url(self, path, **params) -> str:
+        params.update({'client_id': self.client_id,
+                       'app-name': APP, 'app-version': VER})
+        return f'{API}{path}?{urllib.parse.urlencode(params)}'
+
     def _get(self, path, **params):
-        params['client_id'] = self.client_id
-        url = f'{API}{path}?{urllib.parse.urlencode(params)}'
-        headers = {}
-        if self.auth_fn:            # /search + user endpoints need the token
-            try:
-                auth = self.auth_fn()
-                if auth:
-                    headers['Authorization'] = auth
-            except Exception:
-                pass
-        r = self.http.open(self.http.request(url, headers=headers))
+        r = self.http.open(self.http.request(self._url(path, **params),
+                                             headers=self._auth()))
+        try:
+            return json.load(r)
+        finally:
+            _quiet_close(r)
+
+    def _post(self, path, body):
+        h = self._auth()
+        h['Content-Type'] = 'application/json'
+        r = self.http.open(self.http.request(
+            self._url(path), headers=h, method='POST',
+            data=json.dumps(body).encode()))
         try:
             return json.load(r)
         finally:
@@ -89,13 +110,14 @@ class Simkl:
     def _redirect(self, **params) -> Optional[int]:
         """Resolve via GET /redirect (works WITHOUT a client_id): read the
         Location header, e.g. .../anime/2158326/zhe-tian -> 2158326."""
-        params['to'] = 'anime'
+        params['to'] = 'simkl'
         url = f'{API}/redirect?{urllib.parse.urlencode(params)}'
+        req = urllib.request.Request(url, headers={'User-Agent': f'{APP}/{VER}'})
         try:
-            _OPENER.open(url, timeout=15)
+            _OPENER.open(req, timeout=15)
         except urllib.error.HTTPError as e:
             loc = (e.headers.get('Location') or '') if e.headers else ''
-            m = re.search(r'/(?:anime|tv)/(\d+)', loc)
+            m = re.search(r'/(?:anime|tv|movies)/(\d+)', loc)
             if m:
                 return int(m.group(1))
         except Exception:
@@ -147,6 +169,34 @@ class Simkl:
         if not sid:
             return None
         return self.episodes(sid).get(int(ep))
+
+    # --- local file identify (POST /search/file) ----------------------------
+    def identify(self, path: str) -> Optional[dict]:
+        """Name one local video file: {'type', 'title', 'season', 'episode',
+        'ids'} or None when Simkl has no match.
+
+        Needs the user token: the shipped client_id is a device app and 401s
+        on this endpoint. One file at a time - Simkl throttles library scans.
+        """
+        name = os.path.basename(str(path or '').replace('\\', '/'))
+        if not name:
+            return None
+        if name in self._files:
+            return self._files[name]
+        rec = None
+        try:
+            d = self._post('/search/file', {'file': name})
+        except Exception:
+            d = None
+        if isinstance(d, dict):                  # null / [] = no match
+            show = d.get('show') or d.get('movie') or {}
+            if show:                              # malformed match -> no match
+                ep = d.get('episode') or {}
+                rec = {'type': d.get('type'), 'title': show.get('title'),
+                       'season': ep.get('season'), 'episode': ep.get('episode'),
+                       'ids': show.get('ids') or {}}
+        self._files[name] = rec
+        return rec
 
     # --- anime record + page link (keyless) --------------------------------
     def info(self, mal=None, anilist=None, query=None) -> Optional[dict]:
