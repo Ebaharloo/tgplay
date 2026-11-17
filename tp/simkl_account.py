@@ -175,7 +175,8 @@ class SimklAccount:
         return bool(self.access_token() and self.client_id)
 
     # --- low level ------------------------------------------------------
-    def _form(self, path: str, data: Dict[str, str]) -> dict:
+    def _form(self, path: str, data: Dict[str, str], timeout=None,
+              tries=None) -> dict:
         body = urllib.parse.urlencode(data).encode()
         req = self.http.request(f'{API}{path}', method='POST',
                                 headers={'Content-Type':
@@ -183,11 +184,14 @@ class SimklAccount:
                                          'User-Agent': f'{APP}/{VER}'},
                                 data=body)
         try:
-            r = self.http.open(req)
+            r = self.http.open(req, timeout=timeout, tries=tries)
         except Exception as ex:
             return {'error': str(ex)}
         try:
-            return json.load(r)
+            try:
+                return json.load(r)
+            except ValueError:
+                return {}     # 200 with an empty body (RFC 7009 revoke)
         finally:
             _quiet_close(r)
 
@@ -332,7 +336,26 @@ class SimklAccount:
             return d['access_token']
         return None
 
+    def revoke(self) -> bool:
+        """POST /oauth2/revoke: kill the grant on the server (both tokens).
+
+        RFC 7009: 200 even for a dead token, so a False answer means the call
+        itself failed and the token stays usable until it expires."""
+        a = self._auth()
+        tok = a.get('refresh_token') or a.get('access_token')
+        if not (tok and self.client_id):
+            return False
+        d = self._form('/oauth2/revoke', {'client_id': self.client_id,
+                                          'token': tok},
+                       timeout=5, tries=1)   # a logout must not hang the UI
+        return not d.get('error')
+
     def logout(self):
+        a = self._auth()
+        tok = a.get('refresh_token') or a.get('access_token')
+        if tok and not self.revoke():
+            print('simkl: server revoke failed - token stays valid until it '
+                  'expires')
         try:
             os.remove(self.cfg.simkl_auth)
             print('simkl: disconnected')
@@ -347,6 +370,19 @@ class SimklAccount:
             return u.get('name') or u.get('username') or u.get('id')
         except Exception:
             return None
+
+    def stats(self, user_id: Optional[int] = None) -> dict:
+        """GET /users/{id}/stats: total minutes, per-catalog counts.
+
+        Simkl computes this live over the whole history (their most expensive
+        call, so call it on an explicit action only - never on a timer."""
+        if user_id is None:
+            d = self._api('/users/settings', method='POST')
+            user_id = ((d.get('account') or {}).get('id')
+                       or (d.get('user') or {}).get('id'))
+        if not user_id:
+            raise SimklError('simkl: no user id for stats')
+        return self._api(f'/users/{int(user_id)}/stats')
 
     def _items(self, type_: str = 'anime', status: Optional[str] = None,
                extra: Dict[str, str] = None) -> List[dict]:

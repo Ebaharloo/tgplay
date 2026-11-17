@@ -17,7 +17,7 @@ tgplay - one launcher for every source.
   tgplay agp|axp|tg|tgp …  run that source directly (same as its own command)
   tgplay <url>            auto-detect the source from the link
   tgplay simkl login      connect your Simkl account (watch-list sync + feed)
-  tgplay simkl status|library|logout
+  tgplay simkl status|library|stats|logout
   tgplay simkl setup      one-time app registration (maintainer)
 
   One field does it all:
@@ -144,6 +144,15 @@ def _simkl_cmd(args: List[str]) -> int:
         return 0 if acc.login() else 1
     if cmd == 'logout':
         acc.logout()
+        return 0
+    if cmd == 'stats':
+        s = acc.stats()
+        mins = int(s.get('total_mins') or 0)
+        anime = (s.get('anime') or {}).get('completed') or {}
+        last = (s.get('watched_last_week') or {}).get('total_mins') or 0
+        print(f'simkl: {mins // 60}h {mins % 60}m watched total, '
+              f'{int(anime.get("count") or 0)} anime completed, '
+              f'{int(last)}m last week')
         return 0
     if cmd in ('library', 'list'):
         rows = acc.library()

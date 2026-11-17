@@ -404,6 +404,63 @@ def test_playlist_reports_progress():
     print('PASS playlist scrobble hook (start/stop)')
 
 
+def test_logout_revokes_then_deletes():
+    os.environ['AGP_SIMKL_CLIENT_ID'] = 'cid'
+    try:
+        d = tempfile.mkdtemp()
+        http = FakeHttp({'/oauth2/revoke': {}})
+        acc = simkl_account.SimklAccount(Cfg(d), http)
+        acc._save(access_token='at', refresh_token='rt')
+        acc.logout()
+        rev = [c for c in http.calls if '/oauth2/revoke' in c[1]]
+        assert rev, http.calls
+        assert b'token=rt' in rev[-1][2], rev[-1][2]
+        assert b'client_id=cid' in rev[-1][2], rev[-1][2]
+        assert not os.path.exists(acc.cfg.simkl_auth)
+
+        # revoke refused (401 invalid_client): local token still goes away
+        http2 = FakeHttp({'/oauth2/revoke': Err(401,
+                                               {'error': 'invalid_client'})})
+        acc2 = simkl_account.SimklAccount(Cfg(tempfile.mkdtemp()), http2)
+        acc2._save(access_token='at', refresh_token='rt')
+        acc2.logout()
+        assert not os.path.exists(acc2.cfg.simkl_auth)
+
+        # nothing saved: no revoke call at all
+        http3 = FakeHttp({})
+        acc3 = simkl_account.SimklAccount(Cfg(tempfile.mkdtemp()), http3)
+        acc3.logout()
+        assert not [c for c in http3.calls if '/oauth2/revoke' in c[1]]
+    finally:
+        os.environ.pop('AGP_SIMKL_CLIENT_ID', None)
+    print('PASS logout revokes the token before deleting it')
+
+
+def test_stats_uses_account_id():
+    os.environ['AGP_SIMKL_CLIENT_ID'] = 'cid'
+    try:
+        http = FakeHttp({
+            '/users/settings': {'account': {'id': 77}, 'user': {'name': 't'}},
+            '/users/77/stats': {'total_mins': 600,
+                                'anime': {'completed': {'count': 4}},
+                                'watched_last_week': {'total_mins': 30}}})
+        acc = simkl_account.SimklAccount(Cfg(tempfile.mkdtemp()), http)
+        acc._save(access_token='at')
+        s = acc.stats()
+        assert s['total_mins'] == 600, s
+        assert any('/users/77/stats' in c[1] for c in http.calls), http.calls
+
+        # explicit id: no /users/settings round-trip
+        http2 = FakeHttp({'/users/9/stats': {'total_mins': 1}})
+        acc2 = simkl_account.SimklAccount(Cfg(tempfile.mkdtemp()), http2)
+        acc2._save(access_token='at')
+        assert acc2.stats(9)['total_mins'] == 1
+        assert not [c for c in http2.calls if '/users/settings' in c[1]]
+    finally:
+        os.environ.pop('AGP_SIMKL_CLIENT_ID', None)
+    print('PASS stats resolves the account id once')
+
+
 def main():
     test_device_login_and_library()
     test_pin_flow_failures()
@@ -413,6 +470,8 @@ def main():
     test_429_retry()
     test_scrobble_ratings_status()
     test_playlist_reports_progress()
+    test_logout_revokes_then_deletes()
+    test_stats_uses_account_id()
     test_find_source()
     print('SIMKL_ACCOUNT OK')
 
