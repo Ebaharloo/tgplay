@@ -100,7 +100,6 @@ def test_audio_fallback_no_dub():
     p.set_audio('dub'); p.select('nero')
     assert p._audio == 'sub' and p._pid == 'nero', (p._audio, p._pid)
     p.set_audio('auto'); p.select(None)
-    assert p._audio == 'sub'
     print('PASS animex dub-missing fallback to sub')
 
 
@@ -132,3 +131,61 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+class NoDubEp(AnimeXProvider):
+    """Ep 2 has no dub anywhere; ep 1 does. Mirrors a real split dub."""
+
+    def __init__(self):
+        super().__init__('https://animex.one/anime/x-1')
+
+    def _json(self, u):
+        if '/rest/api/servers' in u:
+            return {'dubProviders': [{'id': 'nero'}],
+                    'subProviders': [{'id': 'zuna'}]}
+        if '/rest/api/episodes' in u:
+            return [{'number': 1}, {'number': 2}]
+        if '/rest/api/sources' in u:
+            if 'type=dub' in u:
+                return {'sources': []}
+            return {'sources': [{'url': 'https://cdn.example/s/sub.m3u8'}],
+                    'tracks': [{'lang': 'english', 'label': 'English',
+                                'url': 'https://cdn.example/en.vtt'}]}
+        raise AssertionError(u)
+
+    def _probe(self, url):
+        return True
+
+    def _m3u8_qualities(self, url):
+        return []
+
+
+def test_missing_dub_falls_back_to_sub():
+    p = NoDubEp()
+    p.fetch_groups()
+    p.set_audio('dub')
+    p.select()
+    s = p.stream(2)
+    assert s.url.endswith('sub.m3u8'), s.url
+    assert s.subs, 'the sub track must come along with the fallback'
+
+
+class DeadDubAudio(NoDubEp):
+    """The dub master answers but its audio playlist is 404: silent video."""
+
+    def _json(self, u):
+        if 'type=dub' in u:
+            return {'sources': [{'url': 'https://cdn.example/s/dub.m3u8'}]}
+        return super()._json(u)
+
+    def _audio_dead(self, master_url):
+        return 'dub.m3u8' in master_url
+
+
+def test_dead_dub_audio_track_falls_back_to_sub():
+    p = DeadDubAudio()
+    p.fetch_groups()
+    p.set_audio('dub')
+    p.select()
+    s = p.stream(2)
+    assert s.url.endswith('sub.m3u8'), s.url

@@ -361,6 +361,30 @@ class AnimeXProvider(Provider):
         except Exception:
             return False
 
+    def _audio_dead(self, master_url: str) -> bool:
+        """True when the master lists audio renditions and none of them load.
+
+        This is the silent-video case: the dub master still answers, but its
+        audio playlist is gone, so mpv plays picture with no sound."""
+        try:
+            r = self.http.open(self.http.request(master_url, headers={
+                'Referer': MEDIA_REFERER, 'User-Agent': DEFAULT_UA}))
+            body = r.read().decode('utf-8', 'replace')
+        except Exception:
+            return False                  # cannot tell: let mpv try
+        from urllib.parse import urljoin, urlsplit
+        uris = [m.group(1) for m in re.finditer(
+            r'#EXT-X-MEDIA:[^\n]*TYPE=AUDIO[^\n]*URI="([^"]+)"', body)]
+        if not uris:
+            return False                  # media playlist: no audio group here
+        for u in uris:
+            full = urljoin(master_url, u)
+            if '?' not in full and '?' in master_url:
+                full += '?' + urlsplit(master_url).query
+            if self._probe(full):
+                return False
+        return True
+
     def _rendition_url(self, master_url: str, want: str) -> Optional[str]:
         """Resolve a master m3u8 to the media playlist for the requested size."""
         want = (want or '').lower()
@@ -396,14 +420,21 @@ class AnimeXProvider(Provider):
     def stream(self, num: int) -> DirectSource:
         if not self._loaded:
             self.load()
-        order = [self._pid] + [p for p in self._providers.get(self._audio, [])
-                               if p and p != self._pid]
+        want = self._audio
+        # dub first, then the other audio type: a show can have dub on ep 3
+        # and none on ep 4, and a dead dub audio track plays as silent video
+        tried = []
+        for aud in [want, 'sub' if want == 'dub' else 'dub']:
+            pids = [p for p in self._providers.get(aud, []) if p]
+            if aud == want and self._pid in pids:      # preferred server first
+                pids = [self._pid] + [p for p in pids if p != self._pid]
+            tried += [(p, aud) for p in pids]
         last = None
-        for pid in [p for p in order if p]:
+        for pid, aud in tried:
             try:
                 d = self._json(
                     f'{API}/rest/api/sources?id={self.slug}&epNum={num}'
-                    f'&type={self._audio}&providerId={pid}')
+                    f'&type={aud}&providerId={pid}')
             except Exception as ex:
                 last = ex
                 continue
@@ -412,6 +443,11 @@ class AnimeXProvider(Provider):
             if not url or not self._probe(url):
                 last = RuntimeError(f'{pid}: not serving')
                 continue
+            if aud == 'dub' and self._audio_dead(url):
+                last = RuntimeError(f'{pid}: dub audio track is dead')
+                continue
+            if aud != want:
+                log.cprint(f'animex: ep{num} has no {want} - playing {aud}')
             # honor a chosen rendition size (e.g. "720p") by swapping the
             # master playlist for that rendition's media playlist
             if self._size_pref:
@@ -420,7 +456,7 @@ class AnimeXProvider(Provider):
                 if resolved:
                     url = resolved
             subs = []
-            if self._audio == 'sub':
+            if aud == 'sub':
                 for tr in (d.get('tracks') or []):
                     if str(tr.get('lang') or '').lower().startswith('en') and tr.get('url'):
                         subs.append((tr.get('label') or 'English', tr['url']))
