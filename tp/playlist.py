@@ -15,6 +15,7 @@ from typing import List, Optional
 from . import log
 from .episodes import Episode
 from .player import PosWatcher, ipc_seek
+from .prefetch import hls_to_file
 
 # Mark an episode watched once this fraction played (even if the user quits).
 WATCHED_FRAC = float(os.environ.get('AGP_WATCHED_FRAC', '0.70'))
@@ -54,6 +55,7 @@ class Playlist:
         self.stop_ev = stop           # set by Session.stop -> end the playlist
         self.interval = float(os.environ.get('AGP_WATCH_INTERVAL', interval))
         self._pause_at = 0.0          # position of the last Simkl pause push
+        self._pre: dict = {}          # ep num -> warmed by the running episode
 
     # --- progress ----------------------------------------------------------
     def _load(self):
@@ -84,6 +86,72 @@ class Playlist:
             dn = None
         return dn or f'{self.provider.title} - ({ep.num}).mkv'
 
+    def _warm(self, ep):
+        """Warm the next episode while this one still plays: its link, its skip
+        flags, and - for HLS, which has no size to mirror - the bytes, pulled
+        to disk by ffmpeg. The next start then costs no network at all."""
+        try:
+            st = self.provider.stream(ep.num)
+        except Exception as ex:
+            log.cprint(f'next: ep{ep.num} link failed ({ex})')
+            return
+        name = self._name(ep, st)
+        warm = {'name': name, 'flags': None, 'path': None,
+                'ev': threading.Event(),
+                'subs': [f'--sub-file={u}' for _l, u in
+                         (getattr(st, 'subs', []) or [])]}
+        self._pre[ep.num] = warm
+        log.cprint(f'next: warming ep{ep.num} ({name})')
+        if self.skip is not None:
+            try:
+                warm['flags'], note = self.skip.flags(
+                    title=self.provider.title, ep=ep.num,
+                    url=getattr(st, 'url', None),
+                    headers=getattr(st, 'headers', None),
+                    mode=self._skip_mode, toggle=self._skip_toggle,
+                    timeout=6, mal_id=self.mal_id or getattr(
+                        self.provider, 'mal_id', None))
+                log.cprint(f'next: ep{ep.num} skip ready ({note})')
+            except Exception:
+                pass
+        if getattr(st, 'direct', False) and self.cache is not None:
+            safe = re.sub(r'[^A-Za-z0-9._-]', '_', name)
+            self._sweep_hls()          # warmed files are one-shot: keep 2 days
+            out = os.path.join(self.cache.path('hls'), safe)
+            if not out.lower().endswith(('.mkv', '.mp4')):
+                out = os.path.splitext(out)[0] + '.mkv'
+            os.makedirs(os.path.dirname(out), exist_ok=True)
+            t0 = time.monotonic()
+            if hls_to_file(st.url, getattr(st, 'headers', None), out):
+                warm['path'] = out
+                log.cprint(f'next: ep{ep.num} on disk '
+                           f'({os.path.getsize(out) // 1048576}MB in '
+                           f'{time.monotonic() - t0:.0f}s)')
+            else:
+                log.cprint(f'next: ep{ep.num} stayed remote '
+                           '(download did not finish in time)')
+            warm['ev'].set()
+            return
+        if not warm['flags']:
+            warm['flags'] = []          # probe done: do not repeat it
+        p = self.prefetcher.prefetch(name, st)
+        if p and self.proxy is not None:
+            lo = self.prefetcher.publish(self.proxy, name, p)
+            log.cprint(f'next: ep{ep.num} prefetched from {lo} bytes - '
+                       'proxy will serve it from disk')
+        warm['ev'].set()
+
+    def _sweep_hls(self, days: float = 2.0):
+        d = self.cache.path('hls')
+        cut = time.time() - days * 86400
+        try:
+            for f in os.listdir(d):
+                p = os.path.join(d, f)
+                if os.path.isfile(p) and os.path.getmtime(p) < cut:
+                    os.remove(p)
+        except OSError:
+            pass
+
     def _trigger(self, cut, frac, end=None):
         # the stream stops at `end` when set, so the trigger must measure
         # against that shorter length or it never fires
@@ -106,6 +174,7 @@ class Playlist:
             start: Optional[int] = None, end: Optional[int] = None,
             next_frac=False, extra: Optional[List[str]] = None):
         title = self.provider.title
+        self._skip_mode, self._skip_toggle = skip_mode, skip_toggle
         for i, ep in enumerate(episodes):
             if self.stop_ev is not None and self.stop_ev.is_set():
                 return 'stopped'
@@ -113,80 +182,91 @@ class Playlist:
             attempt = 0
             while True:
                 t_ep = time.monotonic()
-                stream = self.provider.stream(ep.num)
-                name = self._name(ep, stream)
-                t_link = time.monotonic() - t_ep
-                direct = getattr(stream, 'direct', False)
-                extra_direct: List[str] = []
-                head_warm = False
-                probe_url, probe_hdr = None, None
-                if direct:
-                    # HLS/DASH: mpv plays the remote URL itself (no proxy)
-                    url = stream.url
-                    ref = (getattr(stream, 'headers', {}) or {}).get('Referer')
-                    if ref:
-                        extra_direct.append(f'--referrer={ref}')
-                    # HLS carries chapters in the manifest, so probe the same
-                    # URL mpv will play (that was the dead-skip bug: direct
-                    # streams were never probed)
-                    probe_url, probe_hdr = stream.url, (stream.headers or {})
-                    for _lbl, sub in (getattr(stream, 'subs', []) or []):
-                        extra_direct.append(f'--sub-file={sub}')
-                else:
-                    self.proxy.register(name, stream)
-                    ready = threading.Event()
-                    self.proxy.prewarm(name, ready)
-                    # brief head peek only - then start: the prewarm keeps
-                    # filling the head in the background and the proxy
-                    # live-reads any gap mpv asks for in the meantime
-                    head_warm = ready.wait(2)
-                    url = self.proxy.url(name)
-                    t_link = time.monotonic() - t_ep   # incl. head warm-up
-                    if head_warm:
-                        probe_url = url
-                log.cprint(f'load: ep{ep.num} link + head peek in '
-                           f'{t_link:.1f}s ({"hls" if direct else "proxy"})')
-
+                warm = self._pre.pop(ep.num, None) or {}
+                ev = warm.get('ev')
+                if ev is not None and not warm.get('path') and not ev.is_set():
+                    t_w = time.monotonic()
+                    if ev.wait(float(os.environ.get('AGP_PREFETCH_WAIT', '25'))):
+                        log.cprint(f'next: ep{ep.num} download finished while '
+                                   f'we waited {time.monotonic() - t_w:.0f}s')
                 flags, note = [], 'off'
-                t_sk = time.monotonic()
-                if self.skip is not None:
-                    try:
-                        flags, note = self.skip.flags(
-                            title=title, ep=ep.num,
-                            url=probe_url, headers=probe_hdr,
-                            mode=skip_mode,
-                            toggle=skip_toggle, timeout=6,
-                            mal_id=self.mal_id or getattr(
-                                self.provider, 'mal_id', None))
-                    except Exception as ex:
-                        flags, note = [], f'failed ({ex})'
-                log.cprint(f'skip[{skip_mode}]: {note} '
-                           f'in {time.monotonic() - t_sk:.1f}s')
+                if 'flags' in warm:
+                    flags, note = warm['flags'] or [], 'prefetched'
+                if warm.get('path') and os.path.exists(warm['path']):
+                    # HLS pulled to disk while the previous episode played:
+                    # no scrape, no skip probe, mpv opens a local file
+                    name, url = warm['name'], warm['path']
+                    direct, head_warm = False, True
+                    probe_url, probe_hdr = None, None
+                    extra_direct: List[str] = list(warm.get('subs') or [])
+                    t_link = time.monotonic() - t_ep
+                    log.cprint(f'load: ep{ep.num} from prefetched file '
+                               f'({os.path.getsize(url) // 1048576}MB)')
+                    stream = None
+                else:
+                    stream = self.provider.stream(ep.num)
+                    name = self._name(ep, stream)
+                    direct = getattr(stream, 'direct', False)
+                    extra_direct: List[str] = []
+                    head_warm = False
+                    probe_url, probe_hdr = None, None
+                    if direct:
+                        # HLS/DASH: mpv plays the remote URL itself (no proxy)
+                        url = stream.url
+                        ref = (getattr(stream, 'headers', {}) or {}).get('Referer')
+                        if ref:
+                            extra_direct.append(f'--referrer={ref}')
+                        # HLS carries chapters in the manifest, so probe the same
+                        # URL mpv will play (that was the dead-skip bug: direct
+                        # streams were never probed)
+                        probe_url, probe_hdr = stream.url, (stream.headers or {})
+                        for _lbl, sub in (getattr(stream, 'subs', []) or []):
+                            extra_direct.append(f'--sub-file={sub}')
+                    else:
+                        self.proxy.register(name, stream)
+                        ready = threading.Event()
+                        self.proxy.prewarm(name, ready)
+                        # brief head peek only - then start: the prewarm keeps
+                        # filling the head in the background and the proxy
+                        # live-reads any gap mpv asks for in the meantime
+                        head_warm = ready.wait(2)
+                        url = self.proxy.url(name)
+                        t_link = time.monotonic() - t_ep   # incl. head warm-up
+                        if head_warm:
+                            probe_url = url
+                    t_link = time.monotonic() - t_ep
+                    log.cprint(f'load: ep{ep.num} link + head peek in '
+                               f'{t_link:.1f}s ({"hls" if direct else "proxy"})')
+
+                if 'flags' not in warm:
+                    if self.skip is not None:
+                        t_sk = time.monotonic()
+                        try:
+                            flags, note = self.skip.flags(
+                                title=title, ep=ep.num,
+                                url=probe_url, headers=probe_hdr,
+                                mode=skip_mode,
+                                toggle=skip_toggle, timeout=6,
+                                mal_id=self.mal_id or getattr(
+                                    self.provider, 'mal_id', None))
+                        except Exception as ex:
+                            flags, note = [], f'failed ({ex})'
+                        log.cprint(f'skip[{skip_mode}]: {note} '
+                                   f'in {time.monotonic() - t_sk:.1f}s')
+                else:
+                    log.cprint(f'skip[{skip_mode}]: {note} (prefetched)')
+
 
                 sock = f'/tmp/tgplay-{os.getpid()}-{ep.num}.ipc'
                 ep_end = end if i == 0 else None      # ep 1 only, like start
                 fire = None
                 on_fire = None
-                if next_frac and nxt is not None and self.prefetcher is not None \
-                        and not direct:
+                if next_frac and nxt is not None and self.prefetcher is not None:
                     fire = self._trigger(cut, next_frac, ep_end)
 
                     def on_fire(_nxt=nxt):
-                        try:
-                            st = self.provider.stream(_nxt.num)
-                            nm = self._name(_nxt, st)
-                            log.cprint(f'next: prefetching ep{_nxt.num}')
-                            def _pf(_nm=nm, _st=st):
-                                p = self.prefetcher.prefetch(_nm, _st)
-                                if p and self.proxy is not None:
-                                    lo = self.prefetcher.publish(self.proxy,
-                                                                 _nm, p)
-                                    log.cprint(f'next: ep{_nxt.num} prefetched '
-                                               f'from {lo} ' 'bytes - proxy '
-                                               'will serve it from disk')
-                            threading.Thread(target=_pf, daemon=True).start()
-                        except Exception:
-                            pass
+                        threading.Thread(target=self._warm, args=(_nxt,),
+                                         daemon=True).start()
 
                 fired = [False]
                 seeked = [False]

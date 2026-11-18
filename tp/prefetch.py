@@ -97,3 +97,35 @@ class Prefetcher:
                        f'{time.monotonic() - t0:.0f}s')
             return path
         return None
+
+
+def hls_to_file(url: str, headers: Optional[Dict[str, str]], out: str,
+                stop: Optional[threading.Event] = None) -> bool:
+    """Pull an HLS stream to `out` with ffmpeg (stream copy, no re-encode).
+
+    Direct (HLS/DASH) sources have no `size`, so the byte reader cannot mirror
+    them - but ffmpeg can, and a local file makes mpv open instantly instead
+    of buffering a cold CDN stream."""
+    import shutil
+    import subprocess
+    ff = shutil.which('ffmpeg')
+    if not ff or (stop is not None and stop.is_set()):
+        return False
+    h = headers or {} if url.startswith('http') else {}
+    part = out + '.part'
+    cmd = [ff, '-nostdin', '-loglevel', 'error', '-y']
+    if h.get('Referer'):
+        cmd += ['-referer', h['Referer']]
+    if h.get('User-Agent'):
+        cmd += ['-user_agent', h['User-Agent']]
+    cmd += ['-i', url, '-c', 'copy', '-f', 'matroska', part]
+    try:
+        rc = subprocess.run(cmd, timeout=3600).returncode
+    except Exception as ex:
+        log.cprint(f'prefetch: ffmpeg failed ({ex})')
+        return False
+    if rc != 0 or not os.path.exists(part) or os.path.getsize(part) < 1024:
+        log.cprint(f'prefetch: ffmpeg gave up on {os.path.basename(out)}')
+        return False
+    os.replace(part, out)
+    return True
