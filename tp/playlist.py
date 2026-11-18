@@ -261,7 +261,8 @@ class Playlist:
                 ep_end = end if i == 0 else None      # ep 1 only, like start
                 fire = None
                 on_fire = None
-                if next_frac and nxt is not None and self.prefetcher is not None:
+                if next_frac and nxt is not None and self.prefetcher is not None \
+                        and os.environ.get('AGP_NO_WARM', '') not in ('1', 'yes'):
                     fire = self._trigger(cut, next_frac, ep_end)
 
                     def on_fire(_nxt=nxt):
