@@ -1800,6 +1800,9 @@ class MainWindow(W.QWidget):
                 self.state['msg'] = f'error: {ex}'
             finally:
                 self.state['playing'] = False
+                # watch marks + Simkl progress moved: reload the rails, feed
+                # and history instead of leaving yesterday's rows on screen
+                self._libq.put(('refresh',))
         threading.Thread(target=run, daemon=True).start()
 
     def _from_here(self):
@@ -2802,6 +2805,12 @@ class MainWindow(W.QWidget):
         self.feed.insertRow(0)
         self.feed.setItem(0, 2, W.QTableWidgetItem('loading…'))
         rails = getattr(self, '_settings', None) or {}
+        if getattr(self, '_lib_busy', False) \
+                and time.time() - getattr(self, '_lib_at', 0.0) < 120:
+            self._lib_again = True        # one read at a time, last wins
+            return
+        self._lib_busy = True
+        self._lib_at = time.time()
 
         def work():
             acc = None
@@ -2972,7 +2981,7 @@ class MainWindow(W.QWidget):
                     continue
             except queue.Empty:
                 return
-            if msg[0] == 'feed-refresh':
+            if msg[0] in ('feed-refresh', 'refresh'):
                 self._refresh_library()
             elif msg[0] == 'status':
                 items = msg[1] or []
@@ -2991,6 +3000,7 @@ class MainWindow(W.QWidget):
                 elif r.get('sent'):
                     self.state['msg'] = f"simkl: {r['sent']} change(s) synced"
                     self.state['msg_until'] = time.time() + 6
+                    self._libq.put(('refresh',))
                 elif r.get('msg'):
                     self.state['msg'] = r['msg']
                     self.state['msg_until'] = time.time() + 8
@@ -3016,6 +3026,10 @@ class MainWindow(W.QWidget):
                 if pm.loadFromData(data):
                     self.shelf.set_poster(u, pm)
             elif msg[0] == 'feed':
+                self._lib_busy = False
+                if getattr(self, '_lib_again', False):
+                    self._lib_again = False
+                    C.QTimer.singleShot(200, self._refresh_library)
                 _, payload, rc = msg
                 if payload is None:
                     self.state['cal'] = self.state['rem'] = None

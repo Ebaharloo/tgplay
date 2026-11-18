@@ -79,10 +79,12 @@ class AppState:
             from ..simkl_sync import SyncQueue, Syncer
             self._simkl_queue = SyncQueue(self.cfg.simkl_queue)
             self._syncer = Syncer(self._simkl_queue,
-                                  acc=SimklAccount(self.cfg, self.http))
+                                  acc=SimklAccount(self.cfg, self.http),
+                                  on_status=self._on_synced)
             self.on_watched_changed = self._queue_watched
         self.lines = []                      # log ring, streamed by /api/events
         self._lib_thread = None
+        self._lib_again = False
         log.SINK = self._sink                # the window's log mirror
 
     # --- injectable seams (tests pass stubs) ------------------------------
@@ -134,6 +136,12 @@ class AppState:
             mal = getattr(self.session, 'mal_id', None)
         return {'mal': mal} if mal else {}
 
+    def _on_synced(self, r):
+        """A pushed batch moved Simkl's own progress: re-read the library, so
+        the shelf, feed and history stop showing yesterday's state."""
+        if isinstance(r, dict) and r.get('sent'):
+            self.refresh_library()
+
     def _queue_watched(self, kind, watched, info):
         """A local watched change: queue it for Simkl (never touches network)."""
         ids = self._sync_ids(info.get('key') or '')
@@ -153,15 +161,28 @@ class AppState:
         self._syncer.wake()
 
     def refresh_library(self):
-        """Queue one library refresh; repeat calls while it runs are ignored."""
+        """Queue one library refresh; a call made while one runs is replayed
+        once afterwards, so a push that lands mid-refresh still shows up."""
         with self.lock:
             if self._lib_thread is not None and self._lib_thread.is_alive():
+                self._lib_again = True
                 return
+            self._lib_again = False
             self._lib_thread = threading.Thread(target=self._library_worker,
                                                 daemon=True)
             self._lib_thread.start()
 
     def _library_worker(self):
+        try:
+            self._library_once()
+        finally:
+            with self.lock:
+                again, self._lib_again = self._lib_again, False
+                self._lib_thread = None      # this run is over: let the next start
+            if again:
+                self.refresh_library()
+
+    def _library_once(self):
         lights = dict(self.lights)
         try:
             for it in self._probe() or []:
@@ -449,6 +470,7 @@ class AppState:
         finally:
             with self.lock:
                 self.playing = False
+            self.refresh_library()        # progress/marks changed: reload rails
 
     def stop(self):
         with self.lock:

@@ -86,6 +86,21 @@ class Playlist:
             dn = None
         return dn or f'{self.provider.title} - ({ep.num}).mkv'
 
+    def _title(self, ep: Episode, name: str) -> str:
+        """MPRIS/media-widget title (KDE notification): the real episode name
+        when the cache has one, else the file name as before."""
+        t = None
+        if self.mal_id:
+            try:
+                from .titles import TitleService
+                t = TitleService(None, self.cfg).get(self.mal_id, ep.num)
+            except Exception:
+                t = None
+        if not t:
+            return name
+        show = (getattr(self.provider, 'title', '') or '').strip()
+        return f'{show} - Ep {ep.num} - {t}' if show else f'Ep {ep.num} - {t}'
+
     def _warm(self, ep):
         """Warm the next episode while this one still plays: its link, its skip
         flags, and - for HLS, which has no size to mirror - the bytes, pulled
@@ -308,7 +323,7 @@ class Playlist:
                 watcher.start()
                 self._scrobble('start', ep.num, 0)
                 cmd = self.player.command(
-                    url, title=name, extra=(list(extra or []) + extra_direct + flags),
+                    url, title=self._title(ep, name), extra=(list(extra or []) + extra_direct + flags),
                     start=ep_start, cut=cut, end=ep_end, ipc=sock)
                 tag = (f'  [start {ep_start}s]' if isinstance(ep_start, int)
                        else f'  [start {ep_start}]' if ep_start else '')

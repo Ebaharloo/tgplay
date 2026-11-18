@@ -262,3 +262,43 @@ def test_watched_queues_simkl_push(tmp_path):
     assert not state._sync_ids('t:sometitle')
     assert len(load_json(cfg.simkl_queue)) == n
 
+
+
+def test_a_pushed_batch_and_a_finished_play_reload_the_rails(tmp_path):
+    """A watched change is pushed to Simkl, but nothing reloads the rails,
+    feed and history afterwards unless we ask: the shelf stayed stale."""
+    cfg = Config(home=str(tmp_path)).ensure()
+    state = AppState(cfg=cfg, extra=False)
+    hits = []
+    state.refresh_library = lambda: hits.append(1)
+    state._on_synced({'sent': 0, 'failed': 0})          # nothing pushed
+    assert hits == []
+    state._on_synced({'sent': 3, 'failed': 0})
+    assert hits == [1]
+    state._play_worker(FakeSession(), {}, [], [])       # run ended
+    assert hits == [1, 1]
+    print('PASS push and end-of-play both reload the rails')
+
+
+def test_a_refresh_asked_mid_run_is_replayed(tmp_path):
+    """A push that lands while a read is in flight used to be dropped: the
+    panels then showed the state from before the push."""
+    cfg = Config(home=str(tmp_path)).ensure()
+    seen = []
+
+    def slow_overview(**_kw):
+        seen.append(1)
+        time.sleep(0.3)
+        return FakeLibrary().overview()
+
+    state = AppState(cfg=cfg, overview=slow_overview,
+                     probe=FakeLibrary.lights, extra=False)
+    state.refresh_library()
+    time.sleep(0.1)              # let the first read start
+    state.refresh_library()      # asked mid-flight -> must run once more
+    for _ in range(60):
+        if len(seen) >= 2 and not (state._lib_thread and state._lib_thread.is_alive()):
+            break
+        time.sleep(0.05)
+    assert len(seen) == 2, seen
+    print('PASS mid-flight refresh is replayed')
