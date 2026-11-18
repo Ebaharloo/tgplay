@@ -210,7 +210,7 @@ def _telegram_target(target):
 def open_session(src: str, target: str, cfg, http, opts: dict = None,
                  mpv: List[str] = None, *, wait_titles: bool = False,
                  window: int = None, matcher: str = None) -> Session:
-    """Build a Session for (src, target): agp / axp / tgp / tg.
+    """Build a Session for (src, target): agp / axp / zoro / tgp / tg.
 
     - `wait_titles`: block briefly (≤5 s) on missing episode names — the
       curses menu wants them now instead of next launch.
@@ -273,6 +273,19 @@ def open_session(src: str, target: str, cfg, http, opts: dict = None,
                                'background (they will show next time)')
             labels = titles.labels(mal, labels)      # re-read post-join
             meta._refreshed.add(mal)
+    elif src == 'zoro':
+        from .providers.zoro import ZoroProvider
+        prov = ZoroProvider(target, quality=opts.get('f'),
+                            audio=opts.get('audio') or 'dub', http=http)
+        prov.fetch_groups()
+        prov.select(opts.get('f'))
+        groups = prov.groups
+        labels = dict(prov.episodes())
+        audio = True
+        mal = meta.link_mal(str(target)) or _safe_mal(meta, prov.title)
+        if mal:
+            labels = titles.labels(mal, labels)
+            meta.remember_link_mal(str(target), mal)
     elif src in ('tg', 'tgp'):
         from .providers.telegram import SingleFileProvider, TelegramProvider
         chat, msg_id = _telegram_target(target)

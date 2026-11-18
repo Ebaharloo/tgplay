@@ -10,3 +10,4 @@ __pycache__/
 # web UI: one shared node_modules (symlink), bundle built by `npm run build`
 web/node_modules
 web/dist
+.worktrees/

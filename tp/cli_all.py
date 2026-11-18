@@ -45,6 +45,10 @@ def route(text: str) -> Optional[Tuple[str, str]]:
         return ('agp', t)
     if 'animex' in tl:
         return ('axp', t)
+    if tl.startswith('zoro:'):
+        return ('zoro', t)
+    if 'hianime' in tl:
+        return ('zoro', t)
     m = re.search(r't\.me/([A-Za-z0-9_]+)(?:/(\d+))?', t)
     if m:
         if m.group(2):
@@ -188,7 +192,7 @@ def main_all(argv: Optional[List[str]] = None) -> int:
         return _simkl_cmd(argv[1:])
 
     # explicit source: `tgplay axp <args...>`
-    if argv and argv[0].lower() in ('agp', 'axp', 'tg', 'tgp'):
+    if argv and argv[0].lower() in ('agp', 'axp', 'zoro', 'tg', 'tgp'):
         return dispatch(argv[0].lower(), None, argv[1:])
 
     flags = [a for a in argv if a.startswith('-')]

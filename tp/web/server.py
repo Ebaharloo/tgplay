@@ -28,7 +28,7 @@ from ..recent import load_rails, save_rails
 
 HOST = '127.0.0.1'
 PORT = 8799
-SOURCES = ('agp', 'axp', 'tgp', 'tg')
+SOURCES = ('agp', 'axp', 'zoro', 'tgp', 'tg')
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DIST = os.path.join(ROOT, 'web', 'dist')
 
