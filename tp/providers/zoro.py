@@ -23,14 +23,36 @@ from urllib.parse import quote
 from ..http import DEFAULT_UA, HttpClient
 from ..sources import DirectSource
 
-# Mirrors in the order they are probed; the first one serving a search page
-# wins and is cached for the process. TGP_ZORO_BASE overrides the probe.
+# Probed in this order; the first one serving a search page wins and is cached
+# for the process. TGP_ZORO_BASE overrides everything.
+# FEED is a repo that only publishes a host after validating it, so its value
+# leads the probe; the tuple is the hand-kept fallback when the feed is down.
+FEED = ('https://raw.githubusercontent.com/niakw/NiakVIO/main/'
+        'provider-domain-history.json')
 MIRRORS = ('https://hianime.fm', 'https://hianime.at', 'https://hianime.nz')
 XOR_KEY = b'otaku-embed-v1'
 WATCH = re.compile(r'href="(?:https?://[^/"]+)?(/watch/[^"]+)"[^>]*title="([^"]+)"')
 EP = re.compile(r'data-number="(\d+)"\s*data-id="(\d+)"')
 SRV = re.compile(r'data-type="([^"]+)"[^>]*?data-server-name="([^"]+)"'
                  r'[^>]*?data-hash="([^"]+)"', re.S)
+
+
+def feed_hosts(http=None) -> list:
+    """Hosts the domain-history feed currently lists for hianime."""
+    try:
+        h = http or HttpClient()
+        doc = json.loads(h.open(h.request(FEED)).read())
+        provs = doc.get('providers') or {}
+        out = []
+        for key, val in provs.items():
+            cur = (val or {}).get('current') or {}
+            if 'hianime' in f'{key} {cur.get("host") or ""}':
+                url = str(cur.get('url') or '').rstrip('/')
+                if url.startswith('http'):
+                    out.append(url)
+        return out
+    except Exception:          # a feed that is down must not break playback
+        return []
 
 
 def open_payload(blob: str) -> dict:
@@ -81,7 +103,9 @@ class ZoroProvider:
         """A mirror that answers right now (probed once per provider)."""
         if not self._base:
             forced = os.environ.get('TGP_ZORO_BASE')
-            for cand in ([forced] if forced else MIRRORS):
+            cands = [forced] if forced else \
+                list(dict.fromkeys(feed_hosts(self.http) + list(MIRRORS)))
+            for cand in cands:
                 try:
                     if '/watch/' in self._get(cand + '/search?keyword=one'):
                         self._base = cand.rstrip('/')
@@ -90,7 +114,7 @@ class ZoroProvider:
                     continue
             else:
                 raise ValueError('zoro: no mirror answered '
-                                 + ', '.join(MIRRORS))
+                                 + ', '.join(cands))
         return self._base
 
     def _get(self, url: str, ref: str = '') -> str:

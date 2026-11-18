@@ -32,6 +32,7 @@ class Fake(ZoroProvider):
     def __init__(self, target='', audio='dub', dead_first=False):
         super().__init__(target, audio=audio)
         self.dead_first = dead_first
+        self._base = 'https://hianime.fm'      # skip the mirror probe
 
     def _get(self, url, ref=''):
         if url.startswith('https://hianime.fm/search?keyword='):
@@ -60,6 +61,15 @@ class Fake(ZoroProvider):
                 'subtitles': [{'lang': 'en', 'label': 'English',
                                'src': 'https://hls.example/en.vtt'}]}))
         raise AssertionError(url)
+
+
+def test_feed_hosts_survives_a_dead_feed(monkeypatch=None):
+    import tp.providers.zoro as z
+    old, z.FEED = z.FEED, 'https://127.0.0.1:1/none.json'
+    try:
+        assert z.feed_hosts() == []
+    finally:
+        z.FEED = old
 
 
 def test_payload_round_trip():
