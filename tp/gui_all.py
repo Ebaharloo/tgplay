@@ -1173,7 +1173,7 @@ class OptionsForm(W.QWidget):
                     quals = [str(q) for q in g['qualities'] if q]
                 elif '·' in lab:
                     q = lab.split('·', 1)[-1].strip()
-                    if q:
+                    if re.match(r'^(\d{3,4}p|~\d+Mbps)$', q):
                         quals = [q]
                 axp_map.setdefault(src, [])
                 for q in quals:

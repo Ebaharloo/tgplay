@@ -28,6 +28,10 @@ API = 'https://pp.animex.one'
 GRAPHQL = 'https://graphql.animex.one/graphql'
 # The media CDN whitelists this referer for the m3u8/segments.
 MEDIA_REFERER = 'https://megaplay.buzz/'
+# Each media host whitelists a different referer, so remember which one worked
+# per host: megavid wants the site, drama top wants itself, nexabloom wants
+# MEDIA_REFERER. Keyed by host only - same host = same rule in practice.
+_HDRS: Dict[str, dict] = {}
 
 
 def base_slug(url: str) -> str:
@@ -170,11 +174,35 @@ class AnimeXProvider(Provider):
             _quiet_close(r)
 
     # --- catalog --------------------------------------------------------
+    def headers_for(self, url: str) -> dict:
+        """Headers that actually get this media host to serve the playlist."""
+        host = re.sub(r'^[a-z]+://([^/]+).*$', r'\1', url or '')
+        if host in _HDRS:
+            return _HDRS[host]
+        own = f'https://{host}/'
+        for hd in ({'Referer': MEDIA_REFERER, 'User-Agent': DEFAULT_UA},
+                   {'Referer': SITE + '/', 'User-Agent': DEFAULT_UA},
+                   {'Referer': own, 'User-Agent': DEFAULT_UA},
+                   {'User-Agent': DEFAULT_UA}):
+            try:
+                r = self.http.open(self.http.request(url, headers=dict(
+                    hd, Accept='*/*', Range='bytes=0-1023')))
+                try:
+                    ok = b'#EXTM3U' in r.read(16)
+                finally:
+                    _quiet_close(r)
+                if ok:
+                    _HDRS[host] = hd
+                    return hd
+            except Exception:
+                continue
+        return {'Referer': MEDIA_REFERER, 'User-Agent': DEFAULT_UA}
+
     def _m3u8_qualities(self, url) -> list:
         """All HLS rendition sizes of one server (e.g. ['1080p','720p','480p'])."""
         try:
-            r = self.http.open(self.http.request(url, headers={
-                'Referer': MEDIA_REFERER, 'User-Agent': DEFAULT_UA}))
+            r = self.http.open(self.http.request(url, headers=dict(
+                self.headers_for(url), Accept='*/*')))
             body = r.read().decode('utf-8', 'replace')
         except Exception:
             return []
@@ -231,8 +259,12 @@ class AnimeXProvider(Provider):
                     qualities = self._m3u8_qualities(url)
                     if qualities:
                         label = f"{pid}  ({'+'.join(tags)})  ·  {qualities[0]}"
+                    elif not self._probe(url):
+                        # listed by the API but refuses every request we can
+                        # make: say so instead of offering a dead pick
+                        label += '  ·  not serving'
             except Exception:
-                pass
+                label += '  ·  not serving'
             groups.append({'id': pid, 'provider': pid, 'label': label,
                            'qualities': qualities})
         self.groups = groups
@@ -350,9 +382,8 @@ class AnimeXProvider(Provider):
         """True when the media CDN actually serves this URL to us (some
         servers' tokens are bound to the browser and answer 'forbidden')."""
         try:
-            r = self.http.open(self.http.request(url, headers={
-                'Referer': MEDIA_REFERER, 'User-Agent': DEFAULT_UA,
-                'Accept': '*/*', 'Range': 'bytes=0-1023'}))
+            r = self.http.open(self.http.request(url, headers=dict(
+                self.headers_for(url), Accept='*/*', Range='bytes=0-1023')))
             try:
                 head = r.read(16)
             finally:
@@ -367,8 +398,8 @@ class AnimeXProvider(Provider):
         This is the silent-video case: the dub master still answers, but its
         audio playlist is gone, so mpv plays picture with no sound."""
         try:
-            r = self.http.open(self.http.request(master_url, headers={
-                'Referer': MEDIA_REFERER, 'User-Agent': DEFAULT_UA}))
+            r = self.http.open(self.http.request(master_url, headers=dict(
+                self.headers_for(master_url), Accept='*/*')))
             body = r.read().decode('utf-8', 'replace')
         except Exception:
             return False                  # cannot tell: let mpv try
@@ -389,8 +420,8 @@ class AnimeXProvider(Provider):
         """Resolve a master m3u8 to the media playlist for the requested size."""
         want = (want or '').lower()
         try:
-            r = self.http.open(self.http.request(master_url, headers={
-                'Referer': MEDIA_REFERER, 'User-Agent': DEFAULT_UA}))
+            r = self.http.open(self.http.request(master_url, headers=dict(
+                self.headers_for(master_url), Accept='*/*')))
             body = r.read().decode('utf-8', 'replace')
         except Exception:
             return None
@@ -461,9 +492,7 @@ class AnimeXProvider(Provider):
                     if str(tr.get('lang') or '').lower().startswith('en') and tr.get('url'):
                         subs.append((tr.get('label') or 'English', tr['url']))
             self._pid = pid            # remember the server that worked
-            return DirectSource(url,
-                                headers={'Referer': MEDIA_REFERER,
-                                         'User-Agent': DEFAULT_UA},
+            return DirectSource(url, headers=dict(self.headers_for(url)),
                                 subs=subs)
         raise RuntimeError(f'animex: no playable source for ep{num} ({last})')
 

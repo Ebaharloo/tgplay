@@ -189,3 +189,34 @@ def test_dead_dub_audio_track_falls_back_to_sub():
     p.select()
     s = p.stream(2)
     assert s.url.endswith('sub.m3u8'), s.url
+
+
+class _OkResp:
+    def read(self, n=None):
+        return b'#EXTM3U\n' if n else b'#EXTM3U\n#EXT-X-STREAM-INF:RESOLUTION=1x1\n'
+
+
+class _RefHttp:
+    """Media host that only answers when the referer is its own origin."""
+
+    def __init__(self, ok):
+        self.ok = ok
+        self.seen = []
+
+    def request(self, url, headers=None, method='GET', data=None):
+        return {'url': url, 'headers': dict(headers or {})}
+
+    def open(self, req, timeout=None, tries=None):
+        if req['headers'].get('Referer') != self.ok:
+            raise RuntimeError('403')
+        return _OkResp()
+
+
+def test_media_host_gets_the_referer_it_accepts_then_cached():
+    p = AnimeXProvider('axp:x-1')
+    p.http = _RefHttp('https://hls.dramahot.top/')
+    u = 'https://hls.dramahot.top/p/x/master.m3u8'
+    assert p.headers_for(u)['Referer'] == 'https://hls.dramahot.top/'
+    n = len(p.http.seen)
+    assert p.headers_for(u)['Referer'] == 'https://hls.dramahot.top/'
+    assert len(p.http.seen) == n, 'a known host must not be re-probed'
