@@ -1,76 +1,62 @@
-# tgplay — OOP rewrite of tg_playlist
+# tgplay
 
-A clean-room, object-oriented rewrite of the `agp` / `tg` / `tgp` streaming
-player, developed **separately** from the original working project at
-`../tg_playlist` (which stays untouched as the reference/stable version).
+Anime/episode player for the desktop. It finds an episode on a source you pick,
+resolves the real stream, and hands it to **mpv** — with episode advance, skip
+intro/outro, sub/dub choice, Simkl tracking and a Qt or web UI.
 
-Goal: each concern is one small class with an explicit interface, injected
-where needed — no module-level globals, no duplicated range servers — so the
-player is easy to test, reuse and tune. See `ARCHITECTURE.md`.
+Sources:
 
-## Status
+| id | source | notes |
+|----|--------|-------|
+| `axp` | AnimeX | per-show servers from the site's own API; per-episode sub/dub with automatic fallback |
+| `agp` | AnimeGate | link-quota limited by the site (150/day) |
+| `zoro` | HiAnime | mirror taken from a validated domain feed, plain HTTP, no browser |
+| `tg` / `tgp` | Telegram | one file / a channel playlist (needs your own api id + a login) |
 
-Phases 1–5 are done. Entry points: `agp` (animegate), `tg` (one Telegram
-file), `tgp` (Telegram channel playlist).
+## Requirements
 
-```
-tp/log.py         colour/emoji logging
-tp/config.py      Config: paths + tunables (injectable)
-tp/http.py        HttpClient: retries + exact byte-range fetches + parallel chunk
-tp/chapters.py    SkipResolver: mkv chapters -> skip flags
-tp/episodes.py    Episode + select()/resume()  (the only place the play list is built)
-tp/sources.py     MediaSource ABC + BytesSource + HttpSource
-tp/cache.py       Cache: mirror geometry + LRU eviction
-tp/proxy.py       RangeProxy: one source-agnostic range server (port fallback)
-tp/providers/     Provider + AnimeGateProvider + TelegramProvider/SingleFileProvider
-tp/metadata.py    AniList -> MAL id, Jikan -> episode titles
-tp/skip.py        SkipService: file chapters, then ani-skip
-tp/prefetch.py    Prefetcher: cancellable mirroring into the Cache
-tp/player.py      Player: mpv command + IPC PosWatcher
-tp/playlist.py    Playlist: resume / retry / skip / cut / --next
-tp/setup.py       MenuUI: remembers last setup        tp/ui.py  terminal form
-tp/gui.py         desktop window (Tkinter): playlist + options + Play
-tp/tracking.py    Tracker: AniList progress sync + new-episode notices
-tp/ui.py          MenuUI: curses option form + recent-link picker
-tp/cli.py         agp wiring        tp/cli_telegram.py  tg/tgp wiring
-agp  tg  tgp      thin entry points
-```
-
-## Auth (same as before)
-- **AnimeGate**: reads your Firefox cookies for `animegate.ir` (log in there).
-- **Telegram**: real-phone login once with `./tgp login` (or `./tg login`);
-  the session file is `~/.config/tgp/tg.session` (base name `tg`, override with
-  `$TG_SESSION`). An existing session from the old project is reused by copying
-  it there: `cp ../tg_playlist/.tg_session.session ~/.config/tgp/tg.session`.
+- Python 3.10+, `mpv` on `PATH` (`ffmpeg` for HLS pre-downloads)
+- `pip install PySide6` for the desktop UI, `pip install telethon` for Telegram
+- optional: [ani-skip](https://github.com/synacktraa/ani-skip) for intro skipping
 
 ## Run
-```
-./agp -h
-./agp --menu
-./agp <anime-url> -e 1-12 -q 720 --skip --cut 30 --next
-./agp login <CLIENT_ID>   # AniList; sync | new | tracking
-./agp simkl <CLIENT_ID>   # Simkl key for episode titles (donghua)
-./agp info <anime-url>    # cross-site links: MAL / AniList / Simkl / AniDB / ...
-./tgp login && ./tgp <channel> -a
-./tg "https://t.me/<channel>/<id>"
 
-python3 tests/test_core.py tests/test_proxy.py tests/test_providers.py \
-        tests/test_player.py tests/test_prefetch.py tests/test_skip.py \
-        tests/test_tracking.py tests/test_ui.py
+```bash
+./tgplay                                   # GUI, pick a source and a show
+./tgplay https://animex.one/watch/<slug>   # a link routes to its source
+./tgplay axp                               # CLI, search/choose in the terminal
+./tgplay zoro:<hianime watch url>
+make test                                  # full suite, no network required
 ```
+
+## Configuration
+
+Nothing secret ships in the repo. It all lives in `~/.config/tgp/`:
+
+- `~/.config/tgp/env` — `KEY=VALUE` lines, mode 600: `AGP_TG_API_ID`,
+  `AGP_TG_API_HASH` (your own app from https://my.telegram.org), optionally
+  `AGP_SIMKL_CLIENT_ID`.
+- `tgplay simkl <client_id>` — stores a Simkl client id (register your own at
+  https://simkl.com/settings/developer/); `tgplay simkl login` then authorizes
+  your account. Without it, tracking is a no-op.
+- `TGP_ZORO_BASE` — pin a HiAnime mirror instead of the automatic probe.
+
+AnimeGate reads your Firefox cookies for `animegate.ir` (log in there first) and
+is rate limited per account: `agp` stops with a clear message once the daily
+quota is gone, the other sources keep working.
+
+## Layout
+
+`tp/` is the engine (sources, providers, playlist, options model), `tests/` the
+suite, `web/` the React front end served by `tp/web/`. `ARCHITECTURE.md` and
+`DESIGN.md` explain the seams; `FEATURES.md` lists what exists.
 
 ## Tests
 
-Every feature has its own model, `tests/test_<feature>.py`. Finalize gate (all tests, non-zero on any failure):
-
-```
-make finalize
+```bash
+make test     # or: env -u PYTHONPATH .venv/bin/python -m pytest tests/ -q
 ```
 
-One feature model: `env -u PYTHONPATH .venv/bin/python -m pytest tests/test_<feature>.py -q`
+## License
 
-## Reference
-
-The original implementation lives in `../tg_playlist` (`agp`, `tg`, `tgp`,
-`tg_server.py`, `opts.py`, `tracking.py`, `ui.py`, `malq.py`, `eptitle.py`,
-plus its test suite). Behaviour should match it; this repo just reorganises it.
+No license file yet — all rights reserved until one is added.
