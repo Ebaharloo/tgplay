@@ -1,4 +1,4 @@
-#!/home/user/coding/python/tgplay/.venv/bin/python
+#!/usr/bin/env python3
 """axp - tgplay CLI: animex.one (English sub/dub) streaming (OOP rewrite)."""
 import os
 import sys

@@ -14,8 +14,29 @@ from ..sources import MediaSource
 from .. import quality
 from .base import Provider
 
-API_ID = 2040
-API_HASH = 'API_HASH_NOW_IN_ENV'
+def _cred(name: str) -> str:
+    """A Telegram api credential: env first, else ~/.config/tgp/env lines."""
+    val = os.environ.get(name)
+    if not val:
+        try:
+            with open(os.path.join(os.path.expanduser('~'), '.config', 'tgp',
+                                  'env')) as f:
+                for line in f:
+                    k, _, v = line.strip().partition('=')
+                    if k.strip() == name:
+                        val = v.strip().strip('"\'')
+                        break
+        except OSError:
+            pass
+    if not val:
+        raise RuntimeError(f'tg: {name} is not set - put it in '
+                           '~/.config/tgp/env or the environment')
+    return val
+
+
+def api_creds() -> Tuple[int, str]:
+    """(api_id, api_hash) from the user's own Telegram app."""
+    return int(_cred('AGP_TG_API_ID')), _cred('AGP_TG_API_HASH')
 
 
 def default_session() -> str:
@@ -40,14 +61,16 @@ def logout(session: Optional[str] = None) -> bool:
     return removed
 
 
-def login(session: Optional[str] = None, api_id: int = API_ID,
-          api_hash: str = API_HASH):
+def login(session: Optional[str] = None, api_id: Optional[int] = None,
+          api_hash: Optional[str] = None):
     """One-time Telegram login (real phone account). Prompts for phone/code.
 
     Deliberately single-shot: it does NOT retry. Repeated failed attempts can
     get the account temporarily blocked (Telegram FloodWait), so failures are
     reported plainly and the caller must choose to try again later."""
     from telethon import TelegramClient
+    if not (api_id and api_hash):
+        api_id, api_hash = api_creds()
     session = session or default_session()
     os.makedirs(os.path.dirname(session), exist_ok=True)
     try:
@@ -132,7 +155,8 @@ class _TelegramBase:
     def _init_client(self, session):
         from telethon import TelegramClient  # lazy
         self.session = session or default_session()
-        self.client = TelegramClient(self.session, API_ID, API_HASH)
+        api_id, api_hash = api_creds()
+        self.client = TelegramClient(self.session, api_id, api_hash)
         self.loop = self.client.loop
         self._loop_started = False
 

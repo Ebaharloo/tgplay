@@ -1,4 +1,4 @@
-#!/home/user/coding/python/tgplay/.venv/bin/python
+#!/usr/bin/env python3
 """agp - tgplay CLI entry point (OOP rewrite)."""
 import os
 import sys

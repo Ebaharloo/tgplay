@@ -11,3 +11,12 @@ __pycache__/
 web/node_modules
 web/dist
 .worktrees/
+
+# local state and captures (never published)
+.env
+*.session
+simkl*.json
+ui-audit/
+ui-coverage*/
+web/shots/
+mpv-shot*.jpg

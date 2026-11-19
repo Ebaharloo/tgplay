@@ -1,4 +1,4 @@
-#!/home/user/coding/python/tgplay/.venv/bin/python
+#!/usr/bin/env python3
 """tg - tgplay CLI: stream one Telegram video (OOP rewrite)."""
 import os
 import sys

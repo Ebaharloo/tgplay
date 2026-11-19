@@ -54,12 +54,11 @@ class SimklError(Exception):
         self.payload = payload or {}
 
 
-# One public client_id for the whole app, so users never register their own.
-# A client_id is public (safe to commit); each user still authorizes their OWN
-# account via the device/PIN link. Register the app ONCE at
+# No client_id ships with the app: register your own once at
 # https://simkl.com/settings/developer/ (client type "TV, devices & command
-# line"), then paste its client_id here to share it with every user.
-BUILTIN_CLIENT_ID = 'SIMKL_CLIENT_ID_NOW_IN_CONFIG'
+# line") and hand it over with `tgplay simkl <client_id>` (stored in
+# ~/.config/tgp/simkl.json) or AGP_SIMKL_CLIENT_ID.
+BUILTIN_CLIENT_ID = ''
 
 
 def _read(path, default):
