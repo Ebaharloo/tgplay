@@ -1335,15 +1335,16 @@ class MainWindow(W.QWidget):
         self._rq: 'queue.Queue' = queue.Queue()      # search results
         self._libq: 'queue.Queue' = queue.Queue()    # sidebar payloads
         self._poster_pending = set()                 # shelf poster downloads
-        # one hook for every watched change: queue to pending_sync.json FIRST,
-        # then a daemon worker pushes it to Simkl (offline, restart, 500-safe)
-        from .simkl_account import STATUSES, SimklAccount
-        from .simkl_sync import SyncQueue, Syncer
-        self._simkl_acc = SimklAccount(self._wcfg, self._http)
-        self._simkl_queue = SyncQueue(self._wcfg.simkl_queue)
-        self._syncer = Syncer(
-            self._simkl_queue, acc=self._simkl_acc,
+        # ONE tracking rig: the durable queue is the only write path, and the
+        # registry decides which service gets each feature
+        from .tracking import Tracking
+        self._tr = Tracking(
+            self._wcfg, self._http,
             on_status=lambda r: self._libq.put(('simkl-sync', r)))
+        self._simkl_acc = self._tr.client
+        self._simkl_queue = self._tr.queue
+        self._syncer = self._tr.syncer
+        from .simkl_account import STATUSES
         self.on_watched_changed = self._queue_watched
         self._prev_sink = _log.SINK
         _log.SINK = lambda s: self._lq.put(str(s))
@@ -1859,16 +1860,18 @@ class MainWindow(W.QWidget):
         s = self.state['session']
         if s is None:
             return ''
-        return _watched.key_for(s.title, {'mal': getattr(s, 'mal_id', None)})
+        return _watched.key_for(s.title, {
+            'simkl': getattr(s, 'simkl_id', None),
+            'mal': getattr(s, 'mal_id', None)})
 
     def _mark_watched(self, kind, num, nums):
-        """Store + repaint + the one hook; Simkl sync subscribes, never the menu."""
+        """Store + repaint + the one hook; the queue is the only writer."""
         if num is None:
             return
         wkey = self._wkey()
         forced = {'season': True, 'season_unwatched': False,
                   'till_here': True}.get(kind)
-        kind, on = _watched.change(self._wcfg, wkey, kind, num, nums, forced)
+        kind, on = self._tr.watched.change(wkey, kind, num, nums, forced)
         self._paint_watched()
         if self.on_watched_changed is not None:
             self.on_watched_changed(kind, on,
@@ -1879,30 +1882,26 @@ class MainWindow(W.QWidget):
     def _sync_ids(self, key: str) -> dict:
         """Queue/pull ids from a store key ('simkl:1', 'mal:2', 't:title')."""
         k, _, v = (key or '').partition(':')
-        if k in ('simkl', 'mal') and v.isdigit():
+        if k in ('simkl', 'mal', 'anilist') and v.isdigit():
             return {k: int(v)}
         s = self.state['session']
         mal = getattr(s, 'mal_id', None) or getattr(
             getattr(s, 'provider', None), 'mal_id', None)
-        return {'mal': mal} if mal else {}
+        simkl = getattr(s, 'simkl_id', None)
+        ids = {'mal': mal} if mal else {}
+        if simkl:
+            ids['simkl'] = simkl
+        return ids
 
     def _queue_watched(self, kind, watched, info):
-        """A local watched change: queue it for Simkl (never touches network)."""
+        """A local watched change: queue it for every service (no network)."""
         ids = self._sync_ids(info.get('key') or '')
         if not ids:
             self.state['msg'] = 'watched locally; Simkl needs a Simkl/MAL id'
             return
-        if kind == 'episode':
-            self._simkl_queue.put(ids, 1, info.get('num'), watched)
-        elif kind in ('season', 'season_unwatched', 'till_here'):
-            # per episode, so a partial list only marks what is on screen
-            nums = info.get('nums') or []
-            if kind == 'till_here':
-                nums = _watched.upto(info.get('num'), nums)
-            for n in nums:
-                self._simkl_queue.put(ids, 1, n, bool(watched))
-        else:
-            self._simkl_queue.put(ids, None, None, watched, kind='show')
+        n = self._tr.watched.queue_change(kind, watched, info, ids)
+        if not n:
+            self.state['msg'] = 'watched locally; Simkl is not connected'
         self._syncer.wake()
 
     def _paint_watched(self):
@@ -2551,9 +2550,7 @@ class MainWindow(W.QWidget):
                 'Everything else works without it.')
 
     def _simkl_connect(self):
-        from .simkl_account import SimklAccount
-        dlg = SimklConnectDialog(SimklAccount(self._cfg, self._http),
-                                 parent=self)
+        dlg = SimklConnectDialog(self._tr.client, parent=self)
         if dlg.exec() == W.QDialog.Accepted:
             self.state['msg'] = 'Simkl connected'
             _log.cprint('simkl: connected from the window')
@@ -2565,50 +2562,17 @@ class MainWindow(W.QWidget):
     def _simkl_pull(self, keys=None):
         """Pull Simkl watched state into the local store (worker thread).
 
-        Local newer wins: an episode only Simkl knows is added locally; one
-        both know keeps the newer timestamp, and each such conflict is logged.
+        The feature owns the merge, so a tombstoned unmark stays unmarked and
+        its remove is queued.
         """
-        from .config import load_json
-        from .simkl_sync import pull_done, pull_gate, reconcile, remote_watched
-        snap = ''
-        if keys is None:
-            try:
-                moved, snap = pull_gate(self._simkl_acc,
-                                        self._wcfg.simkl_activities)
-            except Exception as ex:
-                moved = True          # cannot tell: pull as before
-                _log.cprint(f'simkl: activities check failed ({ex})')
-            if not moved:
-                _log.cprint('simkl: no list changed since the last pull — '
-                            'skipped')
-                return
-        store = load_json(self._wcfg.watched, {}) or {}
-        for key in (keys or [k for k in store if store.get(k)]):
-            ids = self._sync_ids(key)
-            if not ids:
-                continue
-            try:
-                remote = remote_watched(self._simkl_acc, ids)
-            except Exception as ex:
-                _log.cprint(f'simkl: pull failed for {key} ({ex})')
-                return
-            if not remote:
-                continue
-            local = _watched.state(self._wcfg, key)
-            lts = {(1, n): local['at'].get(n, 0.0) for n in local['eps']}
-            merged, conflicts = reconcile(lts, remote)
-            added = 0
-            for _ep, num in merged:
-                if num not in local['eps']:
-                    _watched.set_episode(self._wcfg, key, num, True)
-                    added += 1
-            for c in conflicts:
-                _log.cprint(f"simkl: {key} ep{c['episode'][1]} conflict — "
-                            f"kept {c['kept']} timestamp")
-            if added:
-                _log.cprint(f'simkl: pulled {added} watched ep(s) into {key}')
-                self._libq.put(('watched-repaint',))
-        pull_done(self._wcfg.simkl_activities, snap)
+        try:
+            added = self._tr.pull(id_map=self._sync_ids, keys=keys)
+        except Exception as ex:
+            _log.cprint(f'simkl: pull failed ({ex})')
+            return
+        if added:
+            _log.cprint(f'simkl: pulled {added} watched ep(s)')
+            self._libq.put(('watched-repaint',))
 
     def _simkl_menu(self):
         """Light clicked while connected: pull, rate/status the loaded show, or
@@ -2630,11 +2594,13 @@ class MainWindow(W.QWidget):
         a_off = menu.addAction('⏏  Disconnect Simkl')
         pick = menu.exec(G.QCursor.pos())
         if pick in rate:
-            self._simkl_write(f'rated {rate[pick]}/10', acc.rate, ids,
-                              rate[pick])
+            self._tr.ratings.rate(ids, rate[pick])
+            self._syncer.wake()
+            self._simkl_note(f'rated {rate[pick]}/10 (queued)')
         elif pick in status:
-            self._simkl_write(f'list: {status[pick]}', acc.add_to_list, ids,
-                              status[pick])
+            self._tr.lists.set(ids, status[pick])
+            self._syncer.wake()
+            self._simkl_note(f'list: {status[pick]} (queued)')
         elif pick is a_pull:
             self.state['msg'] = 'pulling watched state from Simkl…'
             threading.Thread(target=self._simkl_pull, daemon=True).start()
@@ -2651,17 +2617,9 @@ class MainWindow(W.QWidget):
         except Exception:
             return {}
 
-    def _simkl_write(self, what, fn, *args):
-        """One Simkl write from a menu pick, on a worker thread."""
-        def work():
-            try:
-                ok = bool(fn(*args))
-                msg = f'Simkl: {what}' if ok else f'Simkl: {what} failed'
-            except Exception as ex:
-                msg = f'Simkl: {what} failed ({ex})'
-            _log.cprint(msg)
-            self._libq.put(('simkl-sync', {'msg': msg}))
-        threading.Thread(target=work, daemon=True).start()
+    def _simkl_note(self, msg):
+        _log.cprint(msg)
+        self._libq.put(('simkl-sync', {'msg': msg}))
 
     def _show_cast(self):
         """Open the cast dialog for the current show (cache-first, instant).
@@ -2674,9 +2632,9 @@ class MainWindow(W.QWidget):
             self.state['msg'] = 'load a show first'
             return
         try:
-            from .characters import CharactersService
             from .bangumi import Bangumi
-            svc = CharactersService(self._cfg, self._http, bangumi=Bangumi())
+            svc = self._tr.cast.service
+            svc.bangumi = svc.bangumi or Bangumi()
         except Exception:
             svc = None
         mal = getattr(s, 'mal_id', None) or getattr(s.provider, 'mal_id', None)
@@ -2695,14 +2653,14 @@ class MainWindow(W.QWidget):
         def work():
             try:
                 from .metadata import Metadata
-                from .simkl_account import SimklAccount
                 mal = getattr(s.provider, 'mal_id', None)
                 if not mal:
                     mal = Metadata(self._cfg, self._http).resolve_mal(
                         s.title, ask=False)
                 ids = {'mal': mal} if mal else {'title': s.title}
-                ok = SimklAccount(self._cfg, self._http).add_to_list(
-                    ids, 'watching')
+                ok = self._tr.lists.set(ids, 'watching')
+                if ok:
+                    self._syncer.wake()
                 self.state['msg'] = ('added to Simkl list' if ok
                                      else 'could not add to Simkl (logged in?)')
                 if ok:
@@ -2726,10 +2684,10 @@ class MainWindow(W.QWidget):
 
     @staticmethod
     def _feed_fetch(cfg, http):
-        """Simkl's CDN schedule + trending rows (no auth, cached an hour)."""
-        from .simkl_extra import SimklExtra
-        ex = SimklExtra(cfg, http)
-        return ex.calendar(), ex.trending()
+        """Simkl's schedule + trending rows (no auth, cached an hour)."""
+        from .tracking import Tracking
+        tr = Tracking(cfg, http)
+        return tr.calendar.calendar(), tr.calendar.trending()
 
     @staticmethod
     def _fetch_extra(cfg, http, rows, days):
@@ -2805,9 +2763,7 @@ class MainWindow(W.QWidget):
         def work():
             acc = None
             try:
-                from .simkl_account import SimklAccount
-                acc = (SimklAccount(self._cfg, self._http)
-                       if self._cfg is not None else None)
+                acc = self._tr.client
                 connected = bool(acc and acc.logged_in())
             except Exception as ex:
                 connected = False
@@ -3102,9 +3058,9 @@ class MainWindow(W.QWidget):
 
         def work():
             try:
-                from .simkl_account import SimklAccount
-                ok = SimklAccount(self._cfg, self._http).add_to_list(
-                    ids, status)
+                ok = self._tr.lists.set(ids, status)
+                if ok:
+                    self._syncer.wake()
                 self.state['msg'] = (f'Simkl → {status}' if ok
                                      else 'Simkl update failed (logged in?)')
                 if ok:

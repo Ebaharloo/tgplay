@@ -43,10 +43,15 @@ def state(cfg, key):
         at = {int(k): float(v) for k, v in (d.get('at') or {}).items()}
     except Exception:
         at = {}
+    tomb = {}
+    try:                # episode numbers the user unmarked here (tombstones)
+        tomb = {int(k): float(v) for k, v in (d.get('tomb') or {}).items()}
+    except Exception:
+        tomb = {}
     return {'eps': {int(n) for n in (d.get('eps') or [])
                     if str(n).isdigit()},
             'complete': bool(d.get('complete')),
-            'at': at}
+            'at': at, 'tomb': tomb}
 
 
 def _put(cfg, key, st):
@@ -57,8 +62,11 @@ def _put(cfg, key, st):
         d = {}
     at = {str(n): float(ts) for n, ts in (st.get('at') or {}).items()
           if n in st['eps']}
+    # a tombstone is this store's authority: a remote mark cannot undo it
+    tomb = {str(n): float(ts) for n, ts in (st.get('tomb') or {}).items()
+            if n not in st['eps']}
     d[key] = {'eps': sorted(st['eps']), 'complete': bool(st['complete']),
-              'at': at}
+              'at': at, 'tomb': tomb}
     save_json(p, d)
 
 
@@ -68,11 +76,12 @@ def set_episode(cfg, key, num, watched=None):
     num = int(num)
     on = (num not in st['eps']) if watched is None else bool(watched)
     st['eps'] = (st['eps'] | {num}) if on else (st['eps'] - {num})
-    # shortcut: an unmark leaves no tombstone, so a Simkl pull only ever adds
-    # episodes; add one if a local unmark must beat a remote mark
     st['at'].pop(num, None)
     if on:
         st['at'][num] = time.time()
+        st['tomb'].pop(num, None)
+    else:                   # tombstone: the local unmark beats a remote mark
+        st['tomb'][num] = time.time()
     _put(cfg, key, st)
     return on
 
@@ -87,6 +96,9 @@ def set_season(cfg, key, nums, watched):
         st['at'].pop(n, None)
         if watched:
             st['at'][n] = now
+            st['tomb'].pop(n, None)
+        else:
+            st['tomb'][n] = now
     _put(cfg, key, st)
     return bool(watched)
 

@@ -127,10 +127,6 @@ class Config:
         return self._p('simkl_activities.json')
 
     @property
-    def simkl_library(self):
-        return self._p('simkl_library.json')
-
-    @property
     def tg_session(self):
         # NB: no '.session' suffix - telethon appends it, and would otherwise
         # treat the path as the literal file.

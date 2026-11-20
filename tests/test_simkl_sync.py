@@ -190,7 +190,9 @@ def test_library_caches_and_fetches_only_the_delta(tmp_path):
     class C(Cfg):
         @property
         def simkl_library(self):
-            return str(tmp_path / 'simkl_library.json')
+            return str(tmp_path / 'simkl_activities.json')
+
+        simkl_activities = simkl_library
 
     a = {'show': {'title': 'A', 'ids': {'simkl': 10}}, 'status': 'watching'}
     b = {'show': {'title': 'B', 'ids': {'simkl': 20}}, 'status': 'watching'}

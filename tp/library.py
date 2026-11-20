@@ -12,54 +12,27 @@ import urllib.parse
 from typing import List, Optional, Tuple
 
 from .http import HttpClient, _quiet_close
-from .simkl_account import SimklAccount
+from .tracking.simkl_client import SimklClient
 
 CAL = 'https://data.simkl.in/calendar/v2/anime.json'
 
 
 def _fetch_calendar(http, client_id: Optional[str], ids: set, days: int) -> List[dict]:
-    """Upcoming episodes (next `days`) for the given Simkl ids, soonest first."""
-    from datetime import datetime, timedelta, timezone
-    if not ids:
-        return []
-    url = CAL + '?' + urllib.parse.urlencode(
-        {'client_id': client_id or '', 'app-name': 'tgplay',
-         'app-version': '1.0'})
+    """Upcoming episodes (next `days`) for the given Simkl ids, soonest first.
+
+    One feed implementation lives in `tp.tracking.simkl_client`; this keeps the
+    old call shape for the sidebar."""
     try:
-        r = http.open(http.request(url, headers={'User-Agent': 'tgplay/1.0'}))
-        try:
-            d = json.load(r)
-        finally:
-            _quiet_close(r)
+        return SimklClient(None, http, client_id=client_id).calendar(days, ids)
     except Exception:
         return []
-    meta = d.get('metadata') or {}
-    now = datetime.now(timezone.utc)
-    horizon = now + timedelta(days=days)
-    out = []
-    for e in d.get('calendar') or []:
-        if e.get('simkl_id') not in ids:
-            continue
-        try:
-            dt = datetime.fromisoformat(str(e.get('date')).replace('Z', '+00:00'))
-        except Exception:
-            continue
-        if not (now <= dt <= horizon):
-            continue
-        ep = e.get('episode') or {}
-        m = meta.get(str(e.get('simkl_id'))) or {}
-        out.append({'title': m.get('title') or '', 'simkl': e.get('simkl_id'),
-                    'air_date': e.get('date'), 'next_ep': ep.get('episode'),
-                    'ep_title': ep.get('title'), 'kind': 'upcoming'})
-    out.sort(key=lambda x: str(x.get('air_date')))
-    return out
 
 
 def overview(cfg, http: Optional[HttpClient] = None, aired_days: int = 7,
              cal_days: int = 14, hist_limit: int = 15) -> dict:
     """Fetch the library once (+ the calendar once) and derive everything."""
     from datetime import date, timedelta
-    acc = SimklAccount(cfg, http)
+    acc = SimklClient(cfg, http)
     http = http or HttpClient()
     rows = acc.library(('watching', 'plantowatch', 'hold', 'completed', 'dropped'))
     watch_ids = {e['simkl'] for e in rows

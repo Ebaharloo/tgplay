@@ -1,4 +1,4 @@
-"""tp.tracking - AniList progress sync + new-episode notifications.
+"""tp.tracking.anilist_client - the ONE AniList GraphQL client.
 
 AniList only (the metadata resolver already speaks AniList). Auth is the OAuth
 "Auth Pin" flow: create an app, redirect = https://anilist.co/api/v2/oauth/pin,
@@ -11,8 +11,8 @@ import shutil
 import subprocess
 from typing import Optional
 
-from .config import Config
-from .http import HttpClient
+from ..config import Config
+from ..http import HttpClient
 
 API = 'https://graphql.anilist.co'
 _SEARCH = ('query($s:String){Page(page:1,perPage:8){media(search:$s,type:ANIME){'
@@ -27,7 +27,7 @@ def _read(path, default):
 
 
 def _write(path, d):
-    from .config import save_json
+    from ..config import save_json
     save_json(path, d)
 
 
@@ -65,7 +65,7 @@ class Tracker:
         try:
             d = json.load(r)
         finally:
-            from .http import _quiet_close
+            from ..http import _quiet_close
             _quiet_close(r)
         if d.get('errors'):
             raise RuntimeError(d['errors'][0].get('message', 'graphql error'))
@@ -301,95 +301,61 @@ class Tracker:
         return self.status()
 
 
-class MultiTracker:
-    """Fan progress out to every enabled tracker (AniList + Simkl hub)."""
-
-    def __init__(self, trackers):
-        self.trackers = [t for t in (trackers or []) if t is not None]
-
-    def enabled(self) -> bool:
-        for t in self.trackers:
-            try:
-                if t.enabled():
-                    return True
-            except Exception:
-                pass
-        return False
-
-    def mark_watched(self, title, num, ask=False, mal=None, anilist=None):
-        from . import log
-        done = []
-        for t in self.trackers:
-            try:
-                if t.enabled() and t.mark_watched(title, num, mal=mal,
-                                                  anilist=anilist):
-                    name = type(t).__name__.replace('Tracker', '') or 'tracker'
-                    done.append(name)
-            except Exception as ex:
-                log.cprint(f'track: {type(t).__name__} failed ({ex})')
-        if done:
-            log.cprint(f'synced: ep {num} → {", ".join(done)}')
-        return done
+# Simkl list status -> AniList MediaListStatus (the map that was missing)
+STATUS_MAP = {'watching': 'CURRENT', 'plantowatch': 'PLANNING',
+              'completed': 'COMPLETED', 'hold': 'PAUSED',
+              'dropped': 'DROPPED'}
 
 
-    def scrobble(self, title, num, progress, action='start', mal=None,
-                 anilist=None):
-        """Report playback progress; the first tracker that can, does."""
-        from . import log
-        for t in self.trackers:
-            fn = getattr(t, 'scrobble', None)
-            if fn is None:
-                continue
-            try:
-                if t.enabled():
-                    return fn(title, num, progress, action=action, mal=mal,
-                              anilist=anilist)
-            except Exception as ex:
-                log.cprint(f'track: {type(t).__name__} scrobble failed ({ex})')
-        return None
-
-    def resume(self, title, num, mal=None, anilist=None):
-        """A resume point any tracker knows for this episode, or None."""
-        for t in self.trackers:
-            fn = getattr(t, 'resume', None)
-            if fn is None:
-                continue
-            try:
-                if t.enabled():
-                    got = fn(title, num, mal=mal, anilist=anilist)
-                    if got:
-                        return got
-            except Exception:
-                pass
-        return None
-
-    def forget(self, title, num, mal=None, anilist=None):
-        """Drop the resume point for an episode finished here, every tracker."""
-        for t in self.trackers:
-            fn = getattr(t, 'forget', None)
-            if fn is None:
-                continue
-            try:
-                if t.enabled():
-                    fn(title, num, mal=mal, anilist=anilist)
-            except Exception:
-                pass
+def gql(query, variables=None, token=None, http=None, timeout=20):
+    """POST one GraphQL query; raises RuntimeError on a GraphQL error."""
+    h = {'Content-Type': 'application/json', 'Accept': 'application/json',
+         'User-Agent': 'tgplay/1.0'}
+    if token:
+        h['Authorization'] = 'Bearer ' + token
+    body = json.dumps({'query': query, 'variables': variables or {}}).encode()
+    if http is None:
+        with urllib.request.urlopen(
+                urllib.request.Request(ANILIST_GQL, data=body, headers=h),
+                timeout=timeout) as r:
+            d = json.load(r)
+    else:
+        r = http.open(http.request(ANILIST_GQL, method='POST', headers=h,
+                                   data=body))
+        try:
+            d = json.load(r)
+        finally:
+            _quiet_close(r)
+    if d.get('errors'):
+        raise RuntimeError(d['errors'][0].get('message', 'graphql error'))
+    return d.get('data') or {}
 
 
-def make_tracker(cfg, http=None, sync: bool = True):
-    """Build the progress trackers: Simkl (the hub) + AniList. Returns None
-    when syncing is turned off."""
-    if not sync:
-        return None
-    trackers = []
-    try:
-        from .simkl_account import SimklTracker
-        trackers.append(SimklTracker(cfg, http))
-    except Exception:
-        pass
-    try:
-        trackers.append(Tracker(cfg, http))
-    except Exception:
-        pass
-    mt = MultiTracker(trackers)
-    return mt if mt.trackers else None
+class AniListClient(Tracker):
+    def __init__(self, cfg, http: Optional[HttpClient] = None):
+        super().__init__(cfg, http)
+
+    def save_progress(self, media_id, watched, total=None, token=None,
+                      status=None):
+        """One SaveMediaListEntry: progress + the mapped list status.
+
+        `status` is a Simkl status name or an AniList one; None derives
+        CURRENT/COMPLETED from the episode count (the old behaviour).
+        """
+        st = (status if status in STATUS_MAP.values()
+              else STATUS_MAP.get(status or '')
+              or ('COMPLETED' if (total and watched >= total) else 'CURRENT'))
+        q = ('mutation($id:Int,$p:Int,$s:MediaListStatus){'
+             'SaveMediaListEntry(mediaId:$id,progress:$p,status:$s)'
+             '{progress status}}')
+        return self._gql(q, {'id': int(media_id), 'p': int(watched), 's': st},
+                         token=token)['data']['SaveMediaListEntry']
+
+    def set_status(self, media_id, status, progress=None, token=None):
+        st = STATUS_MAP.get(status, status)
+        q = ('mutation($id:Int,$s:MediaListStatus,$p:Int){'
+             'SaveMediaListEntry(mediaId:$id,status:$s,progress:$p)'
+             '{progress status}}')
+        return self._gql(q, {'id': int(media_id), 's': st,
+                             'p': None if progress is None else int(progress)},
+                         token=token)['data']['SaveMediaListEntry']

@@ -442,11 +442,14 @@ class SimklAccount:
         A failed delta keeps the cached rows AND their stamp, so the same
         delta is fetched again next time instead of being lost.
 
+        ONE stamp file (`simkl_activities.json`) serves this cache and the
+        watched pull, so the two can never disagree about "anything moved?".
+
         shortcut: a delta never reports a removal from a list, so a title
-        dropped elsewhere stays in the cache until simkl_library.json is
-        deleted; add an ids_only diff if that ever matters.
+        dropped elsewhere stays in the cache until the cache is cleared;
+        add an ids_only diff if that ever matters.
         """
-        path = self.cfg.simkl_library
+        path = self.cfg.simkl_activities
         cache = _read(path, {})
         cache = cache if isinstance(cache, dict) else {}
         old = cache.get('rows') or []

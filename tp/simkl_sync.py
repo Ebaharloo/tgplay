@@ -38,13 +38,17 @@ def show_key(ids) -> str:
     return ''
 
 
-def queue_key(ids, season=None, ep=None, kind=EP) -> str:
+def queue_key(ids, season=None, ep=None, kind=EP, svc='simkl') -> str:
     base = show_key(ids) or f'title:{ids.get("title", "")}'
     if kind == EP:
-        return f'{base}|s{int(season)}|e{int(ep)}'
-    if kind == SEASON:
-        return f'{base}|s{int(season)}'
-    return f'{base}|all'
+        base = f'{base}|s{int(season)}|e{int(ep)}'
+    elif kind == SEASON:
+        base = f'{base}|s{int(season)}'
+    elif kind == SHOW:
+        base = f'{base}|all'
+    else:                       # list/rating/unrate: one state per show+op
+        base = f'{base}|{kind}'
+    return base if svc == 'simkl' else f'{svc}|{base}'
 
 
 class SyncQueue:
@@ -58,11 +62,14 @@ class SyncQueue:
         return d if isinstance(d, dict) else {}
 
     def put(self, ids, season=None, ep=None, watched=True,
-            kind=EP) -> str:
-        key = queue_key(ids, season, ep, kind)
+            kind=EP, svc='simkl', **extra) -> str:
+        key = queue_key(ids, season, ep, kind, svc)
         item = {'ids': {k: ids[k] for k in IDS if (ids or {}).get(k)},
-                'kind': kind, 'watched': bool(watched),
+                'kind': kind, 'watched': bool(watched), 'svc': svc,
                 'at': time.time(), 'tries': 0, 'error': ''}
+        if not item['ids'] and (ids or {}).get('title'):
+            item['ids'] = {'title': ids['title']}   # Simkl resolves by title
+        item.update(extra)
         if kind in (EP, SEASON):
             item['season'] = int(season)
         if kind == EP:
@@ -103,7 +110,7 @@ class SyncQueue:
 
 
 class SimklPusher:
-    """item -> one SimklAccount history call (raises SimklError on failure)."""
+    """item -> one SimklAccount call (raises SimklError on failure)."""
 
     # (kind, watched) -> (account method, extra positional args)
     CALLS = {
@@ -119,9 +126,40 @@ class SimklPusher:
         self.acc = acc
 
     def __call__(self, item: dict) -> None:
-        name, args = self.CALLS[(item['kind'], bool(item['watched']))]
+        kind = item['kind']
+        if kind == 'list':                  # add_to_list swallows a failure
+            if not self.acc.add_to_list(item['ids'], item['status']):
+                raise RuntimeError('simkl: add_to_list failed')
+            return
+        if kind == 'rating':
+            if not self.acc.rate(item['ids'], int(item['rating'])):
+                raise RuntimeError('simkl: rate failed')
+            return
+        if kind == 'unrate':
+            if not self.acc.unrate(item['ids']):
+                raise RuntimeError('simkl: unrate failed')
+            return
+        name, args = self.CALLS[(kind, bool(item['watched']))]
         getattr(self.acc, name)(item['ids'],
                                 *[item[a] for a in args])
+
+
+class AniListPusher:
+    """item -> one AniList write, same durable queue as Simkl."""
+
+    def __init__(self, client):
+        self.client = client
+
+    def __call__(self, item: dict) -> None:
+        mid = (item.get('ids') or {}).get('anilist')
+        if not mid:
+            return                          # Simkl is the hub for this show
+        if item['kind'] == 'list':
+            self.client.set_status(mid, item['status'])
+        elif item['kind'] in (EP, SEASON) and item['watched']:
+            # AniList progress only counts up: a season mark = its last ep
+            ep = item.get('ep') or item.get('last') or item.get('season')
+            self.client.save_progress(mid, ep)
 
 
 class Syncer:
@@ -129,9 +167,15 @@ class Syncer:
 
     def __init__(self, queue: SyncQueue, acc: Optional[SimklAccount] = None,
                  push: Optional[Callable[[dict], None]] = None,
+                 pushers: Optional[Dict[str, Callable[[dict], None]]] = None,
                  interval: float = 60.0,
                  on_status: Optional[Callable[[dict], None]] = None):
         self.queue = queue
+        self.pushers = dict(pushers or {})
+        if acc is not None:
+            self.pushers.setdefault('simkl', SimklPusher(acc))
+        if push is not None:
+            self.pushers.setdefault('simkl', push)
         self.push = push or (SimklPusher(acc) if acc is not None else None)
         self.interval = interval
         self.on_status = on_status
@@ -145,14 +189,18 @@ class Syncer:
         self._wake.set()
 
     def flush(self) -> dict:
-        """One pass over the queue: push, drop what Simkl accepted, keep the
-        failures. Returns {'sent', 'failed', 'pending'}."""
+        """One pass over the queue: push, drop what the service accepted, keep
+        the failures. Returns {'sent', 'failed', 'pending'}."""
         sent = failed = 0
-        if self.push is None:            # not connected: keep everything queued
+        if not self.pushers:             # not connected: keep everything queued
             return {'sent': 0, 'failed': 0, 'pending': len(self.queue)}
         for key, item in self.queue.items().items():
+            push = self.pushers.get(item.get('svc') or 'simkl') or self.push
+            if push is None:             # that service is not connected yet
+                failed += 1
+                continue
             try:
-                self.push(item)
+                push(item)
             except Exception as ex:
                 failed += 1
                 self.last_error = str(ex)
@@ -240,9 +288,15 @@ def pull_gate(acc: SimklAccount, path: str) -> Tuple[bool, str]:
 
 
 def pull_done(path: str, snapshot: str) -> None:
-    """Remember a completed pull, so the next one can be skipped."""
+    """Remember a completed pull, so the next one can be skipped.
+
+    The same file also caches the library rows, so this merges one stamp into
+    it instead of clobbering the cache."""
     if snapshot:
-        save_json(path, {'all': snapshot})
+        d = load_json(path, {}) or {}
+        d = d if isinstance(d, dict) else {}
+        d['all'] = snapshot
+        save_json(path, d)
 
 
 def reconcile(local: Dict[Tuple[int, int], float],

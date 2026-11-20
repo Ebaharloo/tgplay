@@ -78,7 +78,11 @@ class Cfg:
 
     @property
     def simkl_library(self):
-        return os.path.join(self._d, 'simkl_library.json')
+        return os.path.join(self._d, 'simkl_activities.json')
+
+    @property
+    def simkl_activities(self):
+        return os.path.join(self._d, 'simkl_activities.json')
 
 
 WATCHING = {'watching': [
