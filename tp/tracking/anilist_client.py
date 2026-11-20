@@ -259,7 +259,29 @@ class Tracker:
         print(f"tracking: logged in as {u['name']}")
         return u
 
-    def authorize_browser(self, client_id, port=8642, timeout=300):
+    def _exchange(self, client_id, client_secret, code, redirect_uri):
+        """authorization_code -> access token (AniList needs the secret)."""
+        import urllib.parse
+        body = urllib.parse.urlencode({
+            'grant_type': 'authorization_code', 'client_id': client_id,
+            'client_secret': client_secret or '', 'redirect_uri': redirect_uri,
+            'code': code}).encode()
+        req = self.http.request('https://anilist.co/api/v2/oauth/token',
+                                method='POST', headers={
+                                    'Content-Type':
+                                        'application/x-www-form-urlencoded'},
+                                data=body)
+        r = self.http.open(req, timeout=20)
+        try:
+            d = json.load(r)
+        finally:
+            r.close()
+        if not d.get('access_token'):
+            raise RuntimeError(f'anilist token exchange failed: {d}')
+        return d['access_token']
+
+    def authorize_browser(self, client_id, client_secret=None, port=8642,
+                          timeout=300):
         """Real OAuth: open the AniList authorize page, catch the redirect on
         a localhost callback, exchange nothing (implicit), save the token.
 
@@ -286,6 +308,17 @@ class Tracker:
                             b'font-family:sans-serif;text-align:center;'
                             b'padding-top:40px"><h2>&#10003; AniList '
                             b'connected - you can close this tab.</h2></body>')
+                elif self.path.startswith('/?code='):
+                    q = urllib.parse.parse_qs(self.path[2:])
+                    code = (q.get('code') or [''])[0]
+                    if code:
+                        result['code'] = code
+                        done.set()
+                    body = (b'<meta charset="utf-8">'
+                            b'<body style="background:#111;color:#ddd;'
+                            b'font-family:sans-serif;text-align:center;'
+                            b'padding-top:40px"><h2>&#10003; AniList '
+                            b'authorized - one moment&hellip;</h2></body>')
                 else:
                     body = (b'<meta charset="utf-8">'
                             b'<script>if(location.hash.length>1)'
@@ -306,13 +339,16 @@ class Tracker:
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         try:
             redir = f'http://localhost:{port}/'
+            # AniList ONLY supports the authorization-code grant:
+            # response_type=token answers 'unsupported_grant_type'.
             url = ('https://anilist.co/api/v2/oauth/authorize?client_id='
-                   f'{client_id}&response_type=token&redirect_uri='
+                   f'{client_id}&response_type=code&redirect_uri='
                    + urllib.parse.quote(redir, safe=''))
             webbrowser.open(url)
             if not done.wait(timeout):
                 return None
-            tok = result['token']
+            code = result['code']
+            tok = self._exchange(client_id, client_secret, code, redir)
             user = self.viewer(tok)
             a = self._auth()
             a.update({'client_id': client_id, 'token': tok,

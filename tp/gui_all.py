@@ -2565,23 +2565,31 @@ class MainWindow(W.QWidget):
         a = tr._auth() or {}
         cid = (os.environ.get('AGP_ANILIST_CLIENT_ID')
                or a.get('client_id'))
-        if not cid:
+        secret = a.get('client_secret')
+        if not (cid and secret):
             import webbrowser
             W.QMessageBox.information(
                 self, 'AniList - one-time setup',
-                'anilist.co/settings/developer is opening. There:\n'
-                '1. open your app (or create one)\n'
-                '2. set Redirect URL EXACTLY to:\n'
+                'anilist.co/settings/developer is opening. There, in your '
+                'app:\n'
+                '1. set Redirect URL EXACTLY to:\n'
                 '       http://localhost:8642/\n'
-                '3. Save, then paste the CLIENT ID below.\n'
-                'Never needed again - after this, logins are one click.')
+                '2. Save\n'
+                '3. paste the CLIENT ID and the CLIENT SECRET below.\n'
+                'One time only - after this, logins are one click.')
             webbrowser.open('https://anilist.co/settings/developer')
             cid, ok = W.QInputDialog.getText(
                 self, 'AniList client id', 'client id:')
             if not ok or not cid.strip():
                 return
+            secret, ok = W.QInputDialog.getText(
+                self, 'AniList client secret',
+                'client secret (from the same page):')
+            if not ok or not secret.strip():
+                return
             cid = cid.strip()
-            a.update({'client_id': cid})
+            secret = secret.strip()
+            a.update({'client_id': cid, 'client_secret': secret})
             from .config import save_json
             save_json(tr.cfg.anilist_auth, a)
         import threading
@@ -2596,7 +2604,7 @@ class MainWindow(W.QWidget):
 
         def work():
             try:
-                out['user'] = tr.authorize_browser(cid)
+                out['user'] = tr.authorize_browser(cid, client_secret=secret)
             except Exception as ex:
                 out['err'] = str(ex)
             out['done'] = True

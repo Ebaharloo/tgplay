@@ -25,23 +25,32 @@ def _tracker(tmp, monkeypatch):
     return tr
 
 
-def test_callback_catches_the_fragment_token(tmp_path, monkeypatch):
+def test_callback_catches_the_code_and_exchanges_it(tmp_path, monkeypatch):
+    """AniList only supports the authorization-code grant (response_type=
+    token answers unsupported_grant_type - user screenshot 2026-11-20)."""
     tr = _tracker(tmp_path, monkeypatch)
     got = {}
     def open_browser(url):
         got['url'] = url
-        # the browser hits the redirect: fragment is JS-relayed to /t
+        # the browser lands on localhost with the code in the QUERY (no
+        # fragment with response_type=code) - the server catches it directly
         threading.Timer(
             0.4, lambda: urllib.request.urlopen(
-                'http://127.0.0.1:8642/t?access_token=abc123&expires_in=100',
+                'http://127.0.0.1:8642/?code=authcode123',
                 timeout=5).read()).start()
     monkeypatch.setattr('webbrowser.open', open_browser)
-    user = tr.authorize_browser(30700, port=8642, timeout=15)
+    monkeypatch.setattr(Tracker, '_exchange',
+                        lambda self, cid, secret, code, redir:
+                        'exchanged-token'
+                        if code == 'authcode123' else (_ for _ in ()).throw(
+                            AssertionError(code)))
+    user = tr.authorize_browser(30700, client_secret='sec', port=8642,
+                                timeout=15)
     assert user == {'name': 'tester'}, user
-    assert 'response_type=token' in got['url']
+    assert 'response_type=code' in got['url']
     assert 'redirect_uri=http%3A%2F%2Flocalhost%3A8642%2F' in got['url'], got
     saved = open(f'{tmp_path}/anilist_auth.json').read()
-    assert 'abc123' in saved and '"enabled": true' in saved
+    assert 'exchanged-token' in saved and '"enabled": true' in saved
 
 
 def test_timeout_returns_none(tmp_path, monkeypatch):
