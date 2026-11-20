@@ -106,9 +106,13 @@ class Playlist:
         if self.skip is not None:
             # proxied streams: the same bytes through our proxy answer when the
             # origin hides chapters; direct HLS has no proxy to fall back to
-            proxy_url = (self.proxy.url(name)
-                         if (self.proxy is not None
-                             and not getattr(st, 'direct', False)) else None)
+            if self.proxy is not None and not getattr(st, 'direct', False):
+                # register here, not just in the main loop: the probe URL must
+                # be servable, and publish() needs the name to set_local
+                self.proxy.register(name, st)
+                proxy_url = self.proxy.url(name)
+            else:
+                proxy_url = None
             try:
                 warm['flags'], note = self.skip.flags(
                     title=self.provider.title, ep=ep.num,
