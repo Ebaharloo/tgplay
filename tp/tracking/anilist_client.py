@@ -338,7 +338,10 @@ class Tracker:
         srv = http.server.ThreadingHTTPServer(('127.0.0.1', port), Callback)
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         try:
-            redir = f'http://localhost:{port}/'
+            # send EXACTLY the redirect the user registered - AniList
+            # compares the strings, and 'http://localhost:8642' without the
+            # trailing slash was the mismatch (user report 2026-11-20)
+            redir = f'http://localhost:{port}'
             # AniList ONLY supports the authorization-code grant:
             # response_type=token answers 'unsupported_grant_type'.
             url = ('https://anilist.co/api/v2/oauth/authorize?client_id='

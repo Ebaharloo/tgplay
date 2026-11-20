@@ -2573,7 +2573,7 @@ class MainWindow(W.QWidget):
                 'anilist.co/settings/developer is opening. There, in your '
                 'app:\n'
                 '1. set Redirect URL EXACTLY to:\n'
-                '       http://localhost:8642/\n'
+                '       http://localhost:8642\n'
                 '2. Save\n'
                 '3. paste the CLIENT ID and the CLIENT SECRET below.\n'
                 'One time only - after this, logins are one click.')
@@ -2615,7 +2615,29 @@ class MainWindow(W.QWidget):
             time.sleep(0.05)
         prog.close()
         if 'err' in out:
-            self.state['msg'] = f'anilist: {out["err"]}'
+            err = out['err']
+            self.state['msg'] = f'anilist: {err}'
+            if 'invalid_client' in err or 'token exchange failed' in err:
+                # the stored client id/secret is wrong (the secret is
+                # case-sensitive) - offer an immediate re-entry, else the
+                # dead credentials are kept forever
+                box = W.QMessageBox(self)
+                box.setWindowTitle('AniList')
+                box.setText('AniList rejected the client id/secret '
+                            '(invalid_client).')
+                box.setInformativeText(
+                    'Copy-paste BOTH values from anilist.co/settings/'
+                    'developer - the secret is case-sensitive. '
+                    'Re-enter them now?')
+                box.setStandardButtons(W.QMessageBox.Yes |
+                                       W.QMessageBox.No)
+                if box.exec() == W.QMessageBox.Yes:
+                    a = tr._auth() or {}
+                    a.pop('client_id', None)
+                    a.pop('client_secret', None)
+                    from .config import save_json
+                    save_json(tr.cfg.anilist_auth, a)
+                    return self._anilist_connect()
             return
         user = out.get('user')
         if user is None and not prog.wasCanceled():

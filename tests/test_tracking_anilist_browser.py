@@ -48,7 +48,7 @@ def test_callback_catches_the_code_and_exchanges_it(tmp_path, monkeypatch):
                                 timeout=15)
     assert user == {'name': 'tester'}, user
     assert 'response_type=code' in got['url']
-    assert 'redirect_uri=http%3A%2F%2Flocalhost%3A8642%2F' in got['url'], got
+    assert 'redirect_uri=http%3A%2F%2Flocalhost%3A8642' in got['url'], got
     saved = open(f'{tmp_path}/anilist_auth.json').read()
     assert 'exchanged-token' in saved and '"enabled": true' in saved
 
