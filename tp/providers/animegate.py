@@ -17,6 +17,7 @@ from ..sources import HttpSource
 from ..features.audio import NoAudio
 from ..features.quality import AgpQuality
 from ..features.servers import AgpServers
+from ..features.sizes import AgpSizes
 from .base import NoServersYet, Provider
 
 BASE = 'https://animegate.ir'
@@ -179,6 +180,7 @@ class AnimeGateProvider(Provider):
     audio = NoAudio()          # one audio track per file (features.audio)
     quality = AgpQuality()
     servers = AgpServers()
+    sizes = AgpSizes()
 
     def __init__(self, url, quality=None, all_groups=False, http=None,
                  cookies=None, prompt=None):

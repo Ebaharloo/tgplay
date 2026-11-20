@@ -9,6 +9,7 @@ and never branch on a src literal.
 from .audio import Audio, AxpAudio, NoAudio, ZoroAudio
 from .quality import AgpQuality, AxpQuality, NoQuality, Quality, TgQuality
 from .search import AgpSearch, AxpSearch, Search, ZoroSearch
+from .sizes import AgpSizes, NoSizes, Sizes, TgSizes
 from .servers import (AgpServers, AxpServers, Servers, TgServers,
                       ZoroServers)
 
@@ -19,6 +20,7 @@ REGISTRY = {
     'search': {'agp': AgpSearch, 'axp': AxpSearch, 'zoro': ZoroSearch},
     'servers': {'tg': TgServers, 'tgp': TgServers, 'agp': AgpServers,
                 'axp': AxpServers, 'zoro': ZoroServers},
+    'sizes': {'tg': TgSizes, 'tgp': TgSizes, 'agp': AgpSizes},
 }
 
 

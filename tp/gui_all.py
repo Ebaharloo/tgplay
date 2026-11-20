@@ -2017,7 +2017,8 @@ class MainWindow(W.QWidget):
             self.table.setItem(i, 1, W.QTableWidgetItem(
                 s.labels.get(n, f'Episode {n}')))
             self.table.setItem(i, 2, W.QTableWidgetItem(
-                '—' if s.src == 'axp' else '…'))
+                '—' if (getattr(s, 'sizes', None) is not None
+                        and not s.sizes.capable) else '…'))
         self.ebox.setTitle(f'Episodes ({len(nums)})')
         self._paint_watched()                     # tick + dim the watched rows
         if nums:
@@ -2032,8 +2033,11 @@ class MainWindow(W.QWidget):
         """Fill the Size column from the provider (AGP probes its signed
         CDN links in a background thread; Telegram/TGP know right away;
         AnimeX is HLS - no size)."""
-        if s is None or s.src == 'axp' or s.src not in ('agp', 'tg', 'tgp'):
+        if s is None:
             return
+        sz = getattr(s, 'sizes', None)
+        if sz is not None and not sz.capable:
+            return                       # HLS sources have no size to probe
         nums = sorted(s.labels)
 
         def work():

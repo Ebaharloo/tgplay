@@ -24,6 +24,7 @@ from ..sources import DirectSource
 from ..features.audio import AxpAudio
 from ..features.quality import AxpQuality
 from ..features.servers import AxpServers
+from ..features.sizes import NoSizes
 from .base import NoServersYet, Provider
 
 SITE = 'https://animex.one'
@@ -80,6 +81,7 @@ class AnimeXProvider(Provider):
     audio = AxpAudio()
     quality = AxpQuality()
     servers = AxpServers()
+    sizes = NoSizes()
 
     def __init__(self, url: str, quality=None, audio: str = 'dub',
                  provider: Optional[str] = None, http: Optional[HttpClient] = None):

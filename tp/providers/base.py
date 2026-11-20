@@ -5,6 +5,7 @@ from typing import Dict
 from ..features.audio import NoAudio
 from ..features.quality import NoQuality
 from ..features.servers import Servers
+from ..features.sizes import NoSizes
 from ..sources import MediaSource
 
 
@@ -19,6 +20,7 @@ class Provider(ABC):
     audio = NoAudio()        # dub/sub choice (NoAudio = none, e.g. tg/agp)
     quality = NoQuality()    # server/rendition menu shape
     servers = Servers()      # server-selection policy
+    sizes = NoSizes()        # file-size knowledge (NoSizes = HLS sources)
 
     @abstractmethod
     def episodes(self) -> Dict[int, str]:

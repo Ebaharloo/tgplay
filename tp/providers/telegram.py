@@ -14,6 +14,7 @@ from ..sources import MediaSource
 from ..features.audio import NoAudio
 from ..features.quality import TgQuality
 from ..features.servers import TgServers
+from ..features.sizes import TgSizes
 from .base import Provider
 
 def _cred(name: str) -> str:
@@ -180,6 +181,7 @@ class TelegramProvider(_TelegramBase, Provider):
     audio = NoAudio()          # one file = one audio track
     quality = TgQuality()
     servers = TgServers()
+    sizes = TgSizes()
 
     def __init__(self, chat, session=None, window: int = 50, matcher=None):
         self.chat = chat
@@ -282,6 +284,7 @@ class SingleFileProvider(_TelegramBase, Provider):
     audio = NoAudio()
     quality = TgQuality()
     servers = TgServers()
+    sizes = TgSizes()
 
     def __init__(self, chat, msg_id, session=None):
         self.chat = chat
