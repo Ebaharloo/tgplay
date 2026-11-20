@@ -117,11 +117,38 @@ def test_port_fallback():
         s.close()
 
 
+def test_re_register_keeps_the_attached_window():
+    """_warm registers and publishes; the main loop registers the same bytes
+    again (a fresh source object, same URL) and must not drop the window."""
+    from tp.sources import HttpSource
+    p = RangeProxy(port=0, head_b=64, tail_b=64).start()
+    try:
+        url = 'https://cdn.example/w.mkv'
+        p.register('w.mkv', HttpSource(url), size=len(DATA))
+        tmp = tempfile.mkdtemp(prefix='tgplay-rereg-')
+        path = os.path.join(tmp, 'w.mkv')
+        open(path, 'wb').write(DATA[:1000])
+        p.set_local('w.mkv', path, len(DATA), lo=0, live=True)
+
+        again = p.register('w.mkv', HttpSource(url), size=len(DATA))
+        assert again.local_path == path, 're-register dropped the window'
+        assert again.size == len(DATA)
+
+        # a genuinely different stream under the same name is replaced
+        other = HttpSource('https://cdn.example/other.mkv')
+        assert p.register('w.mkv', other).local_path is None
+        assert p.get('w.mkv').source is other
+        print('PASS re-register keeps the window')
+    finally:
+        p.stop()
+
+
 def main():
     test_proxy_ranges()
     test_local_mirror()
     test_cache()
     test_port_fallback()
+    test_re_register_keeps_the_attached_window()
     print('PROXY OK')
 
 

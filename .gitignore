@@ -7,9 +7,7 @@ __pycache__/
 *.ts
 *.bin
 
-# web UI: one shared node_modules (symlink), bundle built by `npm run build`
-web/node_modules
-web/dist
+# local scratch worktrees
 .worktrees/
 
 # local state and captures (never published)
@@ -18,5 +16,4 @@ web/dist
 simkl*.json
 ui-audit/
 ui-coverage*/
-web/shots/
 mpv-shot*.jpg

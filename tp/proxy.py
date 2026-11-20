@@ -55,6 +55,16 @@ class RangeProxy:
     # --- registry ----------------------------------------------------------
     def register(self, name: str, source: MediaSource,
                  size: Optional[int] = None) -> Stream:
+        st = self.streams.get(name)
+        same_url = getattr(st.source, 'url', None) if st is not None else None
+        if st is not None and (st.source is source or (
+                same_url and same_url == getattr(source, 'url', None))):
+            # same bytes under the same name (warm path, then the main loop):
+            # keep the head/tail and any window publish() already attached
+            st.source = source
+            if size:
+                st.size = size
+            return st
         st = Stream(name=name, source=source, size=size or 0)
         self.streams[name] = st
         return st

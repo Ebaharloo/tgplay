@@ -2,7 +2,7 @@
 
 Anime/episode player for the desktop. It finds an episode on a source you pick,
 resolves the real stream, and hands it to **mpv** — with episode advance, skip
-intro/outro, sub/dub choice, Simkl tracking and a Qt or web UI.
+intro/outro, sub/dub choice, Simkl tracking and a Qt UI.
 
 Sources:
 
@@ -47,9 +47,9 @@ quota is gone, the other sources keep working.
 
 ## Layout
 
-`tp/` is the engine (sources, providers, playlist, options model), `tests/` the
-suite, `web/` the React front end served by `tp/web/`. `ARCHITECTURE.md` and
-`DESIGN.md` explain the seams; `FEATURES.md` lists what exists.
+`tp/` is the engine (sources, providers, playlist, options model) and `tests/` the
+suite. `ARCHITECTURE.md` and `DESIGN.md` explain the seams; `FEATURES.md` lists
+what exists.
 
 ## Tests
 
