@@ -199,6 +199,20 @@ class AnimeGateProvider(Provider):
         self.http = http or HttpClient()
         self._cookies = cookies
         self.prompt = prompt
+        # a direct /download/ link has no /anime/ slug: it IS one episode.
+        # slug_title() would crash on it ('links are not belong to AGP').
+        self.single = '/download/' in url
+        if self.single:
+            from urllib.parse import unquote
+            name = unquote(url.rstrip('/').rsplit('/', 1)[-1])
+            self.title = re.sub(r'^\[[^\]]+\]\s*', '', name)
+            self._loaded = True
+            self._eps = {1: url}
+            self._labels = {1: self.title}
+            self._cs = self._cookies if self._cookies is not None \
+                else firefox_cookies()
+            self.group = None
+            return
         self.title = slug_title(url)
         self.group = None
         self.groups = None
@@ -245,6 +259,8 @@ class AnimeGateProvider(Provider):
         return self
 
     def load(self):
+        if self.single:
+            return self
         self.fetch_groups()
         self.select(self.quality_name)
         return self
