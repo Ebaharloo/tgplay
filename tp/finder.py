@@ -127,7 +127,7 @@ class ShowFinder:
         return best
 
     def find(self, title: str = None, entry: Dict = None,
-             sources=('agp', 'axp')) -> List[dict]:
+             sources=('agp', 'axp', 'zoro')) -> List[dict]:
         """Candidates from every source, best match first.
 
         Each hit keeps its provider ids (malId/anilistId) and gains
@@ -165,11 +165,9 @@ class ShowFinder:
     @staticmethod
     def _search_one(src: str, name: str) -> List[dict]:
         try:
-            if src == 'axp':
-                from .providers.animex import search as ax
-                return ax(name) or []
-            from .providers.animegate import search as ag
-            return ag(name) or []
+            from .features import get
+            cls = get(src, 'search')
+            return cls().search(name) or [] if cls else []
         except Exception:
             return []
 

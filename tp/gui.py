@@ -162,7 +162,7 @@ def launcher():
         status.configure(text='searching…')
         root.update_idletasks()
         try:
-            got = search_all(t, http=http, sources=('agp', 'axp')) or []
+            got = search_all(t, http=http, sources=('agp', 'axp', 'zoro')) or []
         except Exception:
             got = []
         fill(got)

@@ -134,7 +134,7 @@ def search_variants(title: str, http: Optional[HttpClient] = None,
     for q in title_variants(title):
         try:
             from .search import search_all
-            got = search_all(q, http=http, sources=('agp', 'axp'),
+            got = search_all(q, http=http, sources=('agp', 'axp', 'zoro'),
                              limit=limit_each) or []
         except Exception:
             got = []
@@ -160,8 +160,9 @@ def ranked(results: List[dict], title: str) -> List[dict]:
 
     def score(r):
         got = _norm_title(r.get('title', ''))
+        # ties go to a row that PROVES its MAL id (axp carries malId)
         return (difflib.SequenceMatcher(None, want, got).ratio(),
-                1 if r.get('source') == 'axp' else 0)
+                1 if r.get('malId') else 0)
 
     return sorted(results, key=score, reverse=True)
 

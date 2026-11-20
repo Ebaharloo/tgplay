@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
@@ -77,17 +78,17 @@ def test_animex_bare_slug():
 
 
 def test_search_all_sources():
-    ag = lambda q, **k: [{'title': 'A', 'url': 'u1', 'source': 'agp'}]
-    ax = lambda q, **k: [{'title': 'B', 'url': 'u2', 'source': 'axp'}]
-    old_ag, old_ax = animegate.search, animex.search
-    animegate.search, animex.search = ag, ax
-    try:
+    ag = lambda self, q, **k: [{'title': 'A', 'url': 'u1', 'source': 'agp'}]
+    ax = lambda self, q, **k: [{'title': 'B', 'url': 'u2', 'source': 'axp'}]
+    from tp.features import search as fse
+    with mock.patch.object(fse.AgpSearch, 'search', ag), \
+            mock.patch.object(fse.AxpSearch, 'search', ax), \
+            mock.patch.object(fse.ZoroSearch, 'search',
+                              lambda self, q, **k: []):
         assert searchmod.search_all('x') == [{'title': 'A', 'url': 'u1', 'source': 'agp'},
                                              {'title': 'B', 'url': 'u2', 'source': 'axp'}]
         assert searchmod.search_all('x', sources=('axp',))[0]['source'] == 'axp'
         assert searchmod.search_all('  ') == []
-    finally:
-        animegate.search, animex.search = old_ag, old_ax
     print('PASS search_all routing')
 
 

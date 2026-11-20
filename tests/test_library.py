@@ -31,7 +31,7 @@ def test_ranked_closest_title_first_and_axp_wins_ties():
     rows = [
         {'title': 'Something Else', 'source': 'agp', 'url': 'a'},
         {'title': 'Bleach', 'source': 'agp', 'url': 'b'},
-        {'title': 'Bleach', 'source': 'axp', 'url': 'c'},
+        {'title': 'Bleach', 'source': 'axp', 'url': 'c', 'malId': 269},
     ]
     got = library.ranked(rows, 'bleach')
     assert got[0]['url'] == 'c', [r['url'] for r in got]   # same title -> axp (dub) first

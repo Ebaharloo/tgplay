@@ -105,7 +105,7 @@ def _choose_plain() -> Optional[Tuple[str, str]]:
     except EOFError:
         return None
     from .search import search_all
-    got = search_all(q, sources=('agp', 'axp'))
+    got = search_all(q, sources=('agp', 'axp', 'zoro'))
     for i, item in enumerate(got, 1):
         print(f'  {i}) [{item["source"]}] {item["title"]}')
     if not got:

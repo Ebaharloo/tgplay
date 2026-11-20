@@ -34,6 +34,7 @@ FEED = ('https://raw.githubusercontent.com/niakw/NiakVIO/main/'
         'provider-domain-history.json')
 MIRRORS = ('https://hianime.fm', 'https://hianime.at', 'https://hianime.nz')
 XOR_KEY = b'otaku-embed-v1'
+_BASE_OK = ''          # last mirror that answered a probe (per process)
 WATCH = re.compile(r'href="(?:https?://[^/"]+)?(/watch/[^"]+)"[^>]*title="([^"]+)"')
 EP = re.compile(r'data-number="(\d+)"\s*data-id="(\d+)"')
 SRV = re.compile(r'data-type="([^"]+)"[^>]*?data-server-name="([^"]+)"'
@@ -76,6 +77,9 @@ class ZoroProvider:
                  http=None):
         self.http = http or HttpClient()
         self._base = ''
+        # `zoro:<slug>` (search-hit routing) and watch links both land here
+        if target.lower().startswith('zoro:'):
+            target = target[5:]
         self.slug = '/' + target.split('/watch/', 1)[-1].lstrip('/') \
             if target else ''
         self.slug = self.slug.split('?')[0].split('ep=')[0].rstrip('/')
@@ -107,15 +111,21 @@ class ZoroProvider:
     # --- HTTP ------------------------------------------------------------
     @property
     def base(self) -> str:
-        """A mirror that answers right now (probed once per provider)."""
+        """A mirror that answers right now (probed once per process)."""
+        global _BASE_OK
         if not self._base:
             forced = os.environ.get('TGP_ZORO_BASE')
+            if not forced and _BASE_OK:
+                self._base = _BASE_OK
+                return self._base
             cands = [forced] if forced else \
                 list(dict.fromkeys(feed_hosts(self.http) + list(MIRRORS)))
             for cand in cands:
                 try:
                     if '/watch/' in self._get(cand + '/search?keyword=one'):
                         self._base = cand.rstrip('/')
+                        if not forced:
+                            _BASE_OK = self._base
                         break
                 except Exception:
                     continue
