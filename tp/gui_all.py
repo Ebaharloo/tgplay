@@ -2562,33 +2562,38 @@ class MainWindow(W.QWidget):
         except Exception as ex:
             self.state['msg'] = f'anilist: {ex}'
             return
+        a = tr._auth() or {}
         cid = (os.environ.get('AGP_ANILIST_CLIENT_ID')
-               or (tr._auth() or {}).get('client_id'))
+               or a.get('client_id'))
         if not cid:
+            import webbrowser
             W.QMessageBox.information(
-                self, 'AniList one-time setup',
-                'Create (or reuse) an AniList app at\n'
-                'anilist.co/settings/developer - Redirect URL:\n'
-                'https://anilist.co/api/v2/oauth/pin\n\n'
-                'Then paste its CLIENT ID here and press OK. '
-                'The browser authorize page opens right after.')
+                self, 'AniList - one-time setup',
+                'One time only: open anilist.co/settings/developer\n'
+                '(it is opening for you), create an app with redirect\n'
+                '  https://anilist.co/api/v2/oauth/pin\n'
+                'and paste its CLIENT ID here. Never needed again.')
+            webbrowser.open('https://anilist.co/settings/developer')
             cid, ok = W.QInputDialog.getText(
                 self, 'AniList client id', 'client id:')
             if not ok or not cid.strip():
                 return
             cid = cid.strip()
+            a.update({'client_id': cid})
+            from .config import save_json
+            save_json(tr.cfg.anilist_auth, a)
         url = ('https://anilist.co/api/v2/oauth/authorize?client_id='
                f'{cid}&response_type=token')
+        import webbrowser
+        webbrowser.open(url)                 # the authorize page, never /pin
         tok, ok = W.QInputDialog.getMultiLineText(
             self, 'AniList authorization',
-            'AniList opens in your browser now.\n'
-            'Press AUTHORIZE - the page then shows your token.\n'
+            'The AniList page is open.\n'
+            'Press AUTHORIZE - it shows your access token.\n'
             'Copy that token here and press OK:', '')
         if not (ok and tok.strip()):
             return
         try:
-            import webbrowser
-            webbrowser.open(url)
             user = tr.login(client_id=cid, tok=tok.strip(),
                             open_browser=False)
         except Exception as ex:

@@ -198,6 +198,15 @@ class SimklAccount:
                                 data=body)
         try:
             r = self.http.open(req, timeout=timeout, tries=tries)
+        except urllib.error.HTTPError as ex:
+            # the 4xx BODY carries the real error field: the device flow
+            # answers 400 {error: authorization_pending} while the user has
+            # not approved yet - that is NORMAL and must keep polling
+            try:
+                import urllib.error as _ue
+                return json.load(ex) if True else {}
+            except Exception:
+                return {'error': str(ex)}
         except Exception as ex:
             return {'error': str(ex)}
         try:
