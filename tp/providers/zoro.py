@@ -22,6 +22,8 @@ from urllib.parse import quote
 
 from ..http import DEFAULT_UA, HttpClient
 from ..sources import DirectSource
+from ..features.audio import ZoroAudio
+from ..features.quality import NoQuality
 
 # Probed in this order; the first one serving a search page wins and is cached
 # for the process. TGP_ZORO_BASE overrides everything.
@@ -65,6 +67,9 @@ def open_payload(blob: str) -> dict:
 class ZoroProvider:
     """HiAnime page -> servers -> a direct HLS source with its subtitles."""
 
+    audio = ZoroAudio()
+    quality = NoQuality()
+
     def __init__(self, target: str = '', quality=None, audio: str = 'dub',
                  http=None):
         self.http = http or HttpClient()
@@ -72,8 +77,8 @@ class ZoroProvider:
         self.slug = '/' + target.split('/watch/', 1)[-1].lstrip('/') \
             if target else ''
         self.slug = self.slug.split('?')[0].split('ep=')[0].rstrip('/')
-        self.audio = audio or 'dub'
-        self.quality = quality
+        self.audio_name = audio or 'dub'
+        self.quality_name = quality
         self.groups = []
         self.title = self._page_title()
         self.mal_id = None
@@ -151,7 +156,7 @@ class ZoroProvider:
 
     # --- the session's provider surface ---------------------------------
     def set_audio(self, audio):
-        self.audio = audio or self.audio
+        self.audio_name = audio or self.audio_name
         return self
 
     def fetch_groups(self):
@@ -165,14 +170,14 @@ class ZoroProvider:
                         'label': f'{name} ({audio})', 'audio': audio}
                        for audio, name, _embed in rows] or \
             [{'id': 'hi anime', 'provider': 'zoro', 'label': 'hi anime',
-              'audio': self.audio}]
+              'audio': self.audio_name}]
         return self.groups
 
     def select(self, quality=None):
         """A picked server label also picks its audio (sub vs dub)."""
         for g in self.groups or []:
             if quality and g.get('id') == quality:
-                self.audio = g.get('audio') or self.audio
+                self.audio_name = g.get('audio') or self.audio_name
         return self
 
     def episodes(self) -> dict:
@@ -189,8 +194,8 @@ class ZoroProvider:
         """The episode's stream: chosen audio first, the other one next."""
         eid = self.episode_ids(self.slug)[int(num)]
         rows = self.servers(eid)
-        order = [r for r in rows if r[0] == self.audio] \
-            + [r for r in rows if r[0] != self.audio]
+        order = [r for r in rows if r[0] == self.audio_name] \
+            + [r for r in rows if r[0] != self.audio_name]
         last = None
         for audio, name, embed in order:
             try:

@@ -111,8 +111,9 @@ class Session:
         self._player.stop()
         # the Telegram views are already narrowed/planned at build time:
         # re-selecting here would renumber them (see cli_telegram)
-        if self.src == 'axp':                  # audio first: select() keeps it
-            self.provider.set_audio(o.get('audio') or 'dub')
+        # audio choice at play time: each source's own Audio object applies
+        # it (axp + zoro have one; tg/agp's NoAudio is a no-op)
+        self.provider.audio.prepare(self.provider, o.get('audio'))
         if self.src not in ('tg', 'tgp'):
             self.provider.select(o.get('f'))
         eps = self.provider.episodes()
@@ -240,7 +241,6 @@ def open_session(src: str, target: str, cfg, http, opts: dict = None,
         # titles of (already-aired) episodes — clean BEFORE anything reads
         labels = {n: (clean_ep_name(t) or t)
                   for n, t in dict(prov.episodes()).items()}
-        audio = True
         # SAME name sync as AGP: the AnimeX API usually only serves generic
         # 'Episode N' - fill real names from the MAL/Simkl episode cache.
         # The provider carries the EXACT MAL id of the entry (AnimeX gives
@@ -281,7 +281,6 @@ def open_session(src: str, target: str, cfg, http, opts: dict = None,
         prov.select(opts.get('f'))
         groups = prov.groups
         labels = dict(prov.episodes())
-        audio = True
         mal = meta.link_mal(str(target)) or _safe_mal(meta, prov.title)
         if mal:
             labels = titles.labels(mal, labels)
@@ -300,7 +299,6 @@ def open_session(src: str, target: str, cfg, http, opts: dict = None,
             prov.load()
             labels = dict(prov.episodes())
         groups = []
-        audio = False
     else:                                    # agp (default)
         from .providers.animegate import AnimeGateProvider
         prov = AnimeGateProvider(target, quality=opts.get('f'), http=http)
@@ -338,7 +336,6 @@ def open_session(src: str, target: str, cfg, http, opts: dict = None,
         if mal:
             meta.remember_link_mal(str(target), mal)
         groups = prov.groups
-        audio = False
 
     log.cprint(f'>> {prov.title} - {len(labels)} episodes '
                f'({time.monotonic() - t_open:.1f}s)')
@@ -353,4 +350,4 @@ def open_session(src: str, target: str, cfg, http, opts: dict = None,
 
     return Session(src, prov, cfg, http, meta, titles, groups=groups,
                    labels=labels, resume=_resume(cfg, prov.title), opts=opts,
-                   mpv=mpv, audio=audio, link=link, mal_id=mal)
+                   mpv=mpv, audio=prov.audio.capable, link=link, mal_id=mal)

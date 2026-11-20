@@ -12,6 +12,8 @@ from typing import Dict, List, Optional, Tuple
 
 from ..sources import MediaSource
 from .. import quality
+from ..features.audio import NoAudio
+from ..features.quality import TgQuality
 from .base import Provider
 
 def _cred(name: str) -> str:
@@ -175,6 +177,9 @@ class _TelegramBase:
 
 
 class TelegramProvider(_TelegramBase, Provider):
+    audio = NoAudio()          # one file = one audio track
+    quality = TgQuality()
+
     def __init__(self, chat, session=None, window: int = 50, matcher=None):
         self.chat = chat
         self.title = chat
@@ -272,6 +277,9 @@ class TelegramProvider(_TelegramBase, Provider):
 
 class SingleFileProvider(_TelegramBase, Provider):
     """One Telegram message (the `tg <link>` case), exposed as one episode."""
+
+    audio = NoAudio()
+    quality = TgQuality()
 
     def __init__(self, chat, msg_id, session=None):
         self.chat = chat

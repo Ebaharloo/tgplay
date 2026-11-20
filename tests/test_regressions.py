@@ -40,6 +40,9 @@ class Stream:
 
 class FakeProvider:
     title = 'One Piece'
+    # axp fakes carry the real AnimeX Audio object (play applies it)
+    from tp.features.audio import AxpAudio as _A
+    audio = _A()
 
     def __init__(self, nums=(1, 2, 3)):
         self.nums = list(nums)

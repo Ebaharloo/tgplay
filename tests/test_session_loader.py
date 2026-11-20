@@ -118,6 +118,8 @@ def test_axp_episode_labels_cleaned():
 
     class FakeAX:
         title = 'Chainsmoker Cat'
+        from tp.features.audio import AxpAudio as _A
+        audio = _A()
 
         def __init__(self, target, quality=None, audio=None, http=None):
             self.groups = []

@@ -14,6 +14,8 @@ from typing import Dict, List, Optional, Tuple
 
 from ..http import HttpClient, _quiet_close
 from ..sources import HttpSource
+from ..features.audio import NoAudio
+from ..features.quality import AgpQuality
 from .base import NoServersYet, Provider
 
 BASE = 'https://animegate.ir'
@@ -173,10 +175,13 @@ class GateAuth:
 
 
 class AnimeGateProvider(Provider):
+    audio = NoAudio()          # one audio track per file (features.audio)
+    quality = AgpQuality()
+
     def __init__(self, url, quality=None, all_groups=False, http=None,
                  cookies=None, prompt=None):
         self.url = url
-        self.quality = quality
+        self.quality_name = quality
         self.all_groups = all_groups
         self.http = http or HttpClient()
         self._cookies = cookies
@@ -203,7 +208,7 @@ class AnimeGateProvider(Provider):
     def select(self, quality=None):
         if self.groups is None:
             self.fetch_groups()
-        want = quality if quality is not None else self.quality
+        want = quality if quality is not None else self.quality_name
         if not self.groups:
             raise NoServersYet(
                 f'"{self.title}": nothing playable uploaded on AnimeGate '
@@ -228,7 +233,7 @@ class AnimeGateProvider(Provider):
 
     def load(self):
         self.fetch_groups()
-        self.select(self.quality)
+        self.select(self.quality_name)
         return self
 
     def episodes(self) -> Dict[int, str]:

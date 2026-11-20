@@ -2,14 +2,21 @@
 from abc import ABC, abstractmethod
 from typing import Dict
 
+from ..features.audio import NoAudio
+from ..features.quality import NoQuality
 from ..sources import MediaSource
 
 
 class Provider(ABC):
     """A streamable catalog: episodes by number, and a fresh byte source each
-    time (signed links expire, so a source is built per play, not cached)."""
+    time (signed links expire, so a source is built per play, not cached).
+
+    Per-source behaviour lives in feature objects (`audio`, `quality`, ...),
+    not in `src ==` checks at the call sites."""
 
     title: str = ''
+    audio = NoAudio()        # dub/sub choice (NoAudio = none, e.g. tg/agp)
+    quality = NoQuality()    # server/rendition menu shape
 
     @abstractmethod
     def episodes(self) -> Dict[int, str]:

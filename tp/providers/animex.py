@@ -21,6 +21,8 @@ from typing import Dict, List, Optional
 from .. import log
 from ..http import HttpClient, DEFAULT_UA, _quiet_close
 from ..sources import DirectSource
+from ..features.audio import AxpAudio
+from ..features.quality import AxpQuality
 from .base import NoServersYet, Provider
 
 SITE = 'https://animex.one'
@@ -74,11 +76,14 @@ def _find_anime(obj):
 
 
 class AnimeXProvider(Provider):
+    audio = AxpAudio()
+    quality = AxpQuality()
+
     def __init__(self, url: str, quality=None, audio: str = 'dub',
                  provider: Optional[str] = None, http: Optional[HttpClient] = None):
         self.url = url
-        self.quality = quality
-        self.audio = (audio or 'dub').lower()
+        self.quality_name = quality
+        self.audio_name = (audio or 'dub').lower()
         self.provider = provider
         self.http = http or HttpClient()
         self.title = pretty_title(base_slug(url))
@@ -89,7 +94,7 @@ class AnimeXProvider(Provider):
         self._providers: Dict[str, List[str]] = {'dub': [], 'sub': []}
         self._tips: Dict[str, str] = {}
         self._eps: Dict[int, str] = {}
-        self._audio = self.audio
+        self._audio = self.audio_name
         self._pid: Optional[str] = provider
         self._pref: Optional[str] = provider
         self._size_pref: Optional[str] = None
@@ -273,7 +278,7 @@ class AnimeXProvider(Provider):
     def set_audio(self, audio):
         """Preferred audio: 'dub' (default), 'sub', or 'auto' (dub if present)."""
         a = (audio or 'dub').lower()
-        self.audio = a if a in ('dub', 'sub', 'auto') else 'dub'
+        self.audio_name = a if a in ('dub', 'sub', 'auto') else 'dub'
         self._chosen = False
         self._loaded = False
         return self
@@ -284,9 +289,7 @@ class AnimeXProvider(Provider):
             self.fetch_groups()
         self._pref = self._parse_server(quality)
         # remember a requested rendition (e.g. "720p") if present
-        m = re.search(r'(\d{3,4}p)', str(quality or ''), re.I)
-        if m:
-            self._size_pref = m.group(1).lower()
+        self._size_pref = self.quality.size_pref(quality) or None
         self._resolve_audio()
         if not self._providers.get(self._audio) \
                 and not self._providers.get('dub') \
@@ -312,7 +315,7 @@ class AnimeXProvider(Provider):
     def _resolve_audio(self):
         """Pick the final (audio, server); warn + fall back when an audio
         isn't available (e.g. a title with no dub starts in sub)."""
-        want = self.audio
+        want = self.audio_name
         provs = self._providers
         if want == 'auto':
             want = 'dub' if provs.get('dub') else 'sub'
@@ -344,7 +347,7 @@ class AnimeXProvider(Provider):
         if not self.groups:
             self.fetch_groups()
         if not self._chosen:
-            self.select(self.quality)
+            self.select(self.quality_name)
         self._load_eps()
         self._loaded = True
         return self

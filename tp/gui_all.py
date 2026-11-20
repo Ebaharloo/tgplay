@@ -1160,28 +1160,12 @@ class OptionsForm(W.QWidget):
             else PlaybackOptions.defaults()
         s_opts = s.opts if s is not None else {}
         labels = [str(g['label']) for g in s.groups] if s is not None else []
-        is_axp = bool(s is not None and s.audio)
-        # AnimeX labels look like "nero  (dub+sub)  ·  1080p"; split them so
-        # the user can pick the server and the rendition independently.
-        axp_map = {}  # server -> list of quality strings
-        if is_axp:
-            for g in (s.groups or []):
-                lab = str(g.get('label') if isinstance(g, dict) else g)
-                src = lab.split()[0] if lab.split() else lab
-                quals = []
-                if isinstance(g, dict) and g.get('qualities'):
-                    quals = [str(q) for q in g['qualities'] if q]
-                elif '·' in lab:
-                    q = lab.split('·', 1)[-1].strip()
-                    if re.match(r'^(\d{3,4}p|~\d+Mbps)$', q):
-                        quals = [q]
-                axp_map.setdefault(src, [])
-                for q in quals:
-                    if q not in axp_map[src]:
-                        axp_map[src].append(q)
-            sources = list(axp_map)
-        else:
-            sources = labels
+        # the session's Quality object renders the menu: axp splits its
+        # labels into a server x size map, every other source lists labels
+        q = getattr(s, 'quality', None)
+        sources, axp_map = (q.menus(s.groups) if q is not None
+                            else (labels, {}))
+        is_axp = bool(axp_map)
         self.server.blockSignals(True)
         self.server.clear()
         self.server.addItems(sources)
@@ -1238,7 +1222,7 @@ class OptionsForm(W.QWidget):
         if has_audio:
             self.audio_cb.setCurrentText(po.audio_mode)
         else:
-            self.audio_cb.setToolTip('Only AnimeX offers dub / sub.')
+            self.audio_cb.setToolTip('This source offers no dub / sub choice.')
         # skip / toggles / next / cut / extras
         self.skip.setCurrentText(
             s_opts.get('skip') if isinstance(s_opts.get('skip'), str)
