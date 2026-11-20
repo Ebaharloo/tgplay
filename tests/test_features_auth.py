@@ -91,6 +91,31 @@ def test_axp_headers_cache_is_per_host_and_cached():
     fa.AxpAuth._HDRS.clear()
 
 
+def test_empty_cookie_jar_is_re_read_after_a_later_login(monkeypatch):
+    """The app can start before the user logs in to AnimeGate; the jar must
+    NOT stay empty for the process lifetime (user report 2026-11-20: logged
+    in several times, app kept saying session dead)."""
+    import tp.providers.animegate as ag
+
+    class FakeGate:
+        def __init__(self):
+            self._cookies = {}
+            self.n = 0
+        def cookies(self):
+            self.n += 1
+            if self.n > 1:
+                self._cookies = {'animegate_mr_session': 'live'}
+            return self._cookies
+        def alive(self):
+            return True, 'ok'
+
+    monkeypatch.setattr(ag, 'GateAuth', FakeGate)
+    g = FakeGate()
+    assert g.cookies() == {}                     # before login: empty jar
+    assert g.cookies() == {'animegate_mr_session': 'live'}   # after login
+    assert g.n == 2                              # re-read happened
+
+
 def test_agp_health_and_login_delegate_to_gateauth():
     auth = fa.AgpAuth()
     with mock.patch('tp.providers.animegate.GateAuth') as G:

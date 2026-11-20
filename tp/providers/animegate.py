@@ -147,7 +147,10 @@ class GateAuth:
         self._page: Optional[str] = None
 
     def cookies(self) -> Dict[str, str]:
-        if self._cookies is None:
+        # Re-read whenever the jar is empty: the app can start before the user
+        # logs in (or a read can fail), and a cached empty jar made every
+        # retry "logged out" forever even after a successful login.
+        if not self._cookies:
             try:
                 self._cookies = firefox_cookies()
             except Exception:
