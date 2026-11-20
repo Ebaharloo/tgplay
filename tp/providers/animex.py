@@ -22,6 +22,7 @@ from .. import log
 from ..http import HttpClient, DEFAULT_UA, _quiet_close
 from ..sources import DirectSource
 from ..features.audio import AxpAudio
+from ..features.auth import AxpAuth
 from ..features.quality import AxpQuality
 from ..features.servers import AxpServers
 from ..features.sizes import NoSizes
@@ -34,10 +35,6 @@ API = 'https://pp.animex.one'
 GRAPHQL = 'https://graphql.animex.one/graphql'
 # The media CDN whitelists this referer for the m3u8/segments.
 MEDIA_REFERER = 'https://megaplay.buzz/'
-# Each media host whitelists a different referer, so remember which one worked
-# per host: megavid wants the site, drama top wants itself, nexabloom wants
-# MEDIA_REFERER. Keyed by host only - same host = same rule in practice.
-_HDRS: Dict[str, dict] = {}
 
 
 def base_slug(url: str) -> str:
@@ -86,6 +83,7 @@ class AnimeXProvider(Provider):
     sizes = NoSizes()
     titles = AxpTitles()
     warm = HlsWarm()
+    auth = AxpAuth()
 
     def __init__(self, url: str, quality=None, audio: str = 'dub',
                  provider: Optional[str] = None, http: Optional[HttpClient] = None):
@@ -189,27 +187,7 @@ class AnimeXProvider(Provider):
     # --- catalog --------------------------------------------------------
     def headers_for(self, url: str) -> dict:
         """Headers that actually get this media host to serve the playlist."""
-        host = re.sub(r'^[a-z]+://([^/]+).*$', r'\1', url or '')
-        if host in _HDRS:
-            return _HDRS[host]
-        own = f'https://{host}/'
-        for hd in ({'Referer': MEDIA_REFERER, 'User-Agent': DEFAULT_UA},
-                   {'Referer': SITE + '/', 'User-Agent': DEFAULT_UA},
-                   {'Referer': own, 'User-Agent': DEFAULT_UA},
-                   {'User-Agent': DEFAULT_UA}):
-            try:
-                r = self.http.open(self.http.request(url, headers=dict(
-                    hd, Accept='*/*', Range='bytes=0-1023')))
-                try:
-                    ok = b'#EXTM3U' in r.read(16)
-                finally:
-                    _quiet_close(r)
-                if ok:
-                    _HDRS[host] = hd
-                    return hd
-            except Exception:
-                continue
-        return {'Referer': MEDIA_REFERER, 'User-Agent': DEFAULT_UA}
+        return self.auth.headers_for(url, self.http)
 
     def _m3u8_qualities(self, url) -> list:
         """All HLS rendition sizes of one server (e.g. ['1080p','720p','480p'])."""

@@ -12,6 +12,7 @@ from typing import Dict, List, Optional, Tuple
 
 from ..sources import MediaSource
 from ..features.audio import NoAudio
+from ..features.auth import TgAuth
 from ..features.quality import TgQuality
 from ..features.servers import TgServers
 from ..features.sizes import TgSizes
@@ -186,6 +187,7 @@ class TelegramProvider(_TelegramBase, Provider):
     sizes = TgSizes()
     titles = TgTitles()
     warm = MirrorWarm()
+    auth = TgAuth()
 
     def __init__(self, chat, session=None, window: int = 50, matcher=None):
         self.chat = chat
@@ -291,6 +293,7 @@ class SingleFileProvider(_TelegramBase, Provider):
     sizes = TgSizes()
     titles = TgTitles()
     warm = MirrorWarm()
+    auth = TgAuth()
 
     def __init__(self, chat, msg_id, session=None):
         self.single = True           # one message: never logged as a "show"

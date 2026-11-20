@@ -92,8 +92,8 @@ class Session:
         self.link = link
         self.title = provider.title
         self._proxy: Optional[RangeProxy] = None
-        self._player = Player(referer=('https://megaplay.buzz/' if src == 'axp'
-                                       else 'https://animegate.ir/'))
+        # the player's default referer is the source's own auth knowledge
+        self._player = Player(referer=self.provider.auth.default_referer())
         self._skip = SkipService(metadata=meta)
         self._cache = Cache(cfg.cache_dir, cfg.cache_budget)
         self._prefetch = Prefetcher(self._cache)

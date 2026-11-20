@@ -66,28 +66,40 @@ def detect(url: str) -> Optional[str]:
 
 
 def dispatch(src: str, target: Optional[str], extra=()) -> int:
-    """Run the per-source CLI with the chosen target."""
+    """Run the per-source CLI with the chosen target (the routing table
+    owns which launcher + how the target reaches it)."""
     if src == 'search':
         src = detect(target) or 'agp'
+    return LAUNCHERS.get(src, lambda t, e: 2)(target, extra)
+
+
+def _launch(module: str, main_name: str):
+    def go(target: Optional[str], extra=()) -> int:
+        import importlib
+        args = list(extra) + (['--menu', target] if target else [])
+        return getattr(importlib.import_module(module), main_name)(args) or 0
+    return go
+
+
+def _launch_tg(target: Optional[str], extra=()) -> int:
+    """Telegram: 'chan 123' means menu over one file message; a t.me link
+    or a bare channel is one argument."""
+    from .cli_telegram import main_tg
     args = list(extra)
     if target:
-        if src == 'tg' and 't.me/' not in target and ' ' in target:
+        if 't.me/' not in target and ' ' in target:
             args += ['--menu'] + target.split()
         else:
             args += ['--menu', target]
-    if src == 'agp':
-        from .cli import main
-        return main(args) or 0
-    if src == 'axp':
-        from .cli_animex import main_axp
-        return main_axp(args) or 0
-    if src == 'tgp':
-        from .cli_telegram import main_tgp
-        return main_tgp(args) or 0
-    if src == 'tg':
-        from .cli_telegram import main_tg
-        return main_tg(args or ['--menu']) or 0
-    return 2
+    return main_tg(args or ['--menu']) or 0
+
+
+LAUNCHERS = {
+    'agp': _launch('tp.cli', 'main'),
+    'axp': _launch('tp.cli_animex', 'main_axp'),
+    'tgp': _launch('tp.cli_telegram', 'main_tgp'),
+    'tg': _launch_tg,
+}
 
 
 def _choose_plain() -> Optional[Tuple[str, str]]:

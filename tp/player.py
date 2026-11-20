@@ -36,7 +36,7 @@ def gpu_context(env=None) -> Optional[str]:
 
 class Player:
     def __init__(self, binary: str = 'mpv', user_agent: str = DEFAULT_UA,
-                 referer: str = 'https://animegate.ir/'):
+                 referer: Optional[str] = None):
         self.binary = binary
         self.user_agent = user_agent
         self.referer = referer
@@ -62,7 +62,7 @@ class Player:
             start = None            # an explicit --start in extra flags wins
         cmd = [self.binary, '--ytdl=no',
                f'--user-agent={self.user_agent}',
-               f'--referrer={self.referer}',
+               *(('--referrer=' + self.referer,) if self.referer else ()),
                f'--vo={vo}', '--cache=yes',
                f'--demuxer-max-bytes={cache_bytes}',
                f'--demuxer-readahead-secs={readahead}',

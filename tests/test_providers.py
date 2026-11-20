@@ -228,12 +228,15 @@ def test_gate_auth_alive():
     ok, why = g.alive()
     assert ok is True and why == 'ok', (ok, why)
 
-    from tp.gui_all import MainWindow
+    from tp.features import auth as fa
     for msg in ('no links (logged out / cookie expired?)',
                 'no csrf token (page changed)',
                 'no firefox cookies (log in...)',
                 'HTTP Error 403: Forbidden'):
-        assert _re.search(MainWindow._GATE_MARKERS, msg, _re.I), msg
+        assert fa.AgpAuth.dead('agp', 'https://animegate.ir/x', msg), msg
+    assert fa.AgpAuth.dead('agp', 'https://animegate.ir/x',
+                           'connection reset') is None
+    assert fa.AgpAuth.dead('axp', 'axp:slug', 'HTTP Error 403') is None
     print('PASS GateAuth alive/expired + GUI dead-marker detection')
 
 

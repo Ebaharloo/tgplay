@@ -15,6 +15,7 @@ from typing import Dict, List, Optional, Tuple
 from ..http import HttpClient, _quiet_close
 from ..sources import HttpSource
 from ..features.audio import NoAudio
+from ..features.auth import AgpAuth
 from ..features.quality import AgpQuality
 from ..features.servers import AgpServers
 from ..features.sizes import AgpSizes
@@ -185,6 +186,7 @@ class AnimeGateProvider(Provider):
     sizes = AgpSizes()
     titles = MalTitles()
     warm = MirrorWarm()
+    auth = AgpAuth()
 
     def __init__(self, url, quality=None, all_groups=False, http=None,
                  cookies=None, prompt=None):

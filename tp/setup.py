@@ -12,6 +12,10 @@ from typing import List, Tuple
 
 from .options import PlaybackOptions, quality_key as _quality_key  # noqa: F401
 
+# The flat ui.json from before per-source namespacing belonged to this source
+# (it was the only one then); the storage-format migration keeps its name.
+LEGACY_KEY = 'agp'
+
 
 def load(path, key: str = 'agp') -> dict:
     try:
@@ -22,7 +26,7 @@ def load(path, key: str = 'agp') -> dict:
         return {}
     if isinstance(d.get(key), dict):        # namespaced per source
         return d[key]
-    if key == 'agp' and ('quality' in d or 'skip' in d or 'extra' in d):
+    if key == LEGACY_KEY and ('quality' in d or 'skip' in d or 'extra' in d):
         return d                            # legacy flat file belongs to agp
     return {}
 
@@ -38,7 +42,7 @@ def save(path, opts: dict, mpv: List[str], key: str = 'agp') -> dict:
         except Exception:
             all_ = {}
         if key not in all_ and ('quality' in all_ or 'skip' in all_):
-            all_ = {'agp': all_}            # migrate the legacy flat file
+            all_ = {LEGACY_KEY: all_}       # migrate the legacy flat file
         all_[key] = d
         from .config import save_json
         save_json(path, all_)

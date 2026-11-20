@@ -47,6 +47,8 @@ class FakeProvider:
     servers = _S()
     from tp.features.warm import MirrorWarm as _W
     warm = _W()
+    from tp.features.auth import AxpAuth as _AU
+    auth = _AU()
 
     def __init__(self, nums=(1, 2, 3)):
         self.nums = list(nums)

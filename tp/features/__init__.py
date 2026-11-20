@@ -7,6 +7,7 @@ ask for a feature through the provider (`provider.audio`, `provider.quality`)
 and never branch on a src literal.
 """
 from .audio import Audio, AxpAudio, NoAudio, ZoroAudio
+from .auth import AgpAuth, Auth, AxpAuth, TgAuth, ZoroAuth
 from .quality import AgpQuality, AxpQuality, NoQuality, Quality, TgQuality
 from .search import AgpSearch, AxpSearch, Search, ZoroSearch
 from .servers import (AgpServers, AxpServers, Servers, TgServers,
@@ -17,6 +18,8 @@ from .warm import HlsWarm, MirrorWarm, Warm
 
 REGISTRY = {
     'audio': {'axp': AxpAudio, 'zoro': ZoroAudio},
+    'auth': {'tg': TgAuth, 'tgp': TgAuth, 'agp': AgpAuth,
+             'axp': AxpAuth, 'zoro': ZoroAuth},
     'quality': {'tg': TgQuality, 'tgp': TgQuality, 'agp': AgpQuality,
                 'axp': AxpQuality},
     'search': {'agp': AgpSearch, 'axp': AxpSearch, 'zoro': ZoroSearch},

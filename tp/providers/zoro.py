@@ -23,6 +23,7 @@ from urllib.parse import quote
 from ..http import DEFAULT_UA, HttpClient
 from ..sources import DirectSource
 from ..features.audio import ZoroAudio
+from ..features.auth import ZoroAuth
 from ..features.quality import NoQuality
 from ..features.servers import ZoroServers
 from ..features.sizes import NoSizes
@@ -78,6 +79,7 @@ class ZoroProvider:
     sizes = NoSizes()
     titles = ZoroTitles()
     warm = HlsWarm()
+    auth = ZoroAuth()
 
     def __init__(self, target: str = '', quality=None, audio: str = 'dub',
                  http=None):

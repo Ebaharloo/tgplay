@@ -124,6 +124,8 @@ def test_axp_episode_labels_cleaned():
         audio = _A()
         servers = _S()
         titles = _T()
+        from tp.features.auth import AxpAuth as _AU
+        auth = _AU()
 
         def __init__(self, target, quality=None, audio=None, http=None):
             self.groups = []

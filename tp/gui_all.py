@@ -12,7 +12,7 @@ import re
 import tempfile
 import threading
 import time
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 
 from PySide6 import QtWidgets as W, QtCore as C, QtGui as G
 
@@ -2080,10 +2080,11 @@ class MainWindow(W.QWidget):
         """GUI-thread completion of load_target (delivered via _libq)."""
         self.state['loading'] = False
         if ex is not None:
-            dead = self._gate_dead(str(src), str(target), ex)
-            self.state['msg'] = (f'AnimeGate session dead ({dead}) - links '
-                                 'need a new login; re-choose after signing in'
-                                 if dead else f'error: {ex}')
+            auth, dead = self._auth_dead(str(src), str(target), ex)
+            self.state['msg'] = (
+                f'{auth.label} session dead ({dead}) - links '
+                'need a new login; re-choose after signing in'
+                if dead else f'error: {ex}')
             # keep the results list visible: the user picks another
             # source / season from the same list (no random pick); the
             # app keeps working with the data it has (results, history,
@@ -2096,7 +2097,7 @@ class MainWindow(W.QWidget):
             self.res_stack.setCurrentWidget(self.results)
             self.list_head.setText('Results')
             if dead:
-                self._gate_auth_flow(src, target, dead)
+                self._gate_auth_flow(auth, dead)
             return
         self.set_session(s)
         if self._cfg is not None:
@@ -2105,52 +2106,53 @@ class MainWindow(W.QWidget):
         # typed query stay exactly as they were (nothing empties mid-window)
         self.state['msg'] = ''
 
-    # --- auth health (AnimeGate cookie session) -------------------------
-    _GATE_MARKERS = (r'logged out|cookie expired|no csrf token|'
-                     r'no links \(logged|no firefox cookies|'
-                     r'HTTP Error (401|403)')
-
+    # --- auth health (per-source session-dead detection) ----------------
     @classmethod
-    def _gate_dead(cls, src: str, target: str, ex) -> Optional[str]:
-        """A reason string when a load failed ONLY because the AnimeGate
-        cookie session is dead (so the user is asked to re-authenticate)."""
-        if 'animegate' not in f'{src} {target}'.lower():
-            return None
-        m = str(ex)
-        return m if re.search(cls._GATE_MARKERS, m, re.I) else None
+    def _auth_dead(cls, src: str, target: str, ex
+                   ) -> Tuple[Optional[type], Optional[str]]:
+        """(Auth class, reason) when a load failed ONLY because one source's
+        auth is dead (else (None, None)). The marker regexes live on the
+        source's own Auth object - the GUI only scans the registry."""
+        from . import features
+        for acls in features.REGISTRY['auth'].values():
+            reason = acls.dead(src, target, ex)
+            if reason:
+                return acls, reason
+        return None, None
 
-    def _gate_auth_flow(self, src, target, dead: str):
-        """Ask the user to open the AnimeGate login page and re-authenticate;
-        once signed in, one click reloads the show with fresh cookies.
+    def _gate_auth_flow(self, auth, dead: str):
+        """Ask the user to open the source's login page and re-authenticate;
+        once signed in, one click reloads the show with fresh credentials.
         While auth stays unavailable the app works with its cache."""
-        self.state['gate_last'] = (src, target)
+        self.state['gate_auth'] = auth
         C.QTimer.singleShot(0, self._gate_nag)
 
     def _gate_nag(self):
-        from .providers.animegate import GateAuth
-        if self.state.get('gate_nagged'):
+        auth = self.state.get('gate_auth')
+        if auth is None or self.state.get('gate_nagged'):
             return
         self.state['gate_nagged'] = True
         box = W.QMessageBox(self)
-        box.setWindowTitle('AnimeGate login expired')
-        box.setText('AnimeGate reports the browser session is logged out,\n'
+        box.setWindowTitle(f'{auth.label} login expired')
+        box.setText(f'{auth.label} reports the browser session is logged '
+                    'out,\n'
                     'so its links are dead until you authenticate again.')
         box.setInformativeText(
             'Open the login page and sign in - tgplay re-reads the cookies\n'
             'on the next load. Until then it keeps working with the data it\n'
             'has (results, history, the last loaded show, cache).')
-        b_open = box.addButton('🌐 Open AnimeGate login',
+        b_open = box.addButton(f'🌐 Open {auth.label} login',
                                W.QMessageBox.AcceptRole)
         box.addButton('Continue with cache', W.QMessageBox.RejectRole)
         box.exec()
         if box.clickedButton() is b_open:
             try:
-                GateAuth().open_login()
+                auth().open_login()
             except Exception as ex:
                 self.state['msg'] = f'error: {ex}'
             W.QMessageBox.information(
                 self, 'After signing in…',
-                'Log in to AnimeGate in Firefox, then press OK.\n'
+                f'Log in to {auth.label} in Firefox, then press OK.\n'
                 'The show reloads with fresh cookies.')
             self._gate_retry()
 
