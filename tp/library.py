@@ -17,14 +17,18 @@ from .tracking.simkl_client import SimklClient
 CAL = 'https://data.simkl.in/calendar/v2/anime.json'
 
 
-def _fetch_calendar(http, client_id: Optional[str], ids: set, days: int) -> List[dict]:
+def _fetch_calendar(cfg, http: Optional[HttpClient], ids: set, days: int) -> List[dict]:
     """Upcoming episodes (next `days`) for the given Simkl ids, soonest first.
 
     One feed implementation lives in `tp.tracking.simkl_client`; this keeps the
-    old call shape for the sidebar."""
+    old call shape for the sidebar. The client MUST get the real cfg: a None
+    cfg makes _client_id() raise and this used to swallow it into an empty
+    calendar (the empty-Calendar-tab bug)."""
     try:
-        return SimklClient(None, http, client_id=client_id).calendar(days, ids)
-    except Exception:
+        return SimklClient(cfg, http).calendar(days, ids)
+    except Exception as ex:
+        import logging
+        logging.getLogger('tp').warning('calendar fetch failed: %s', ex)
         return []
 
 
@@ -39,7 +43,7 @@ def overview(cfg, http: Optional[HttpClient] = None, aired_days: int = 7,
                  if e.get('status') in ('watching', 'plantowatch') and e.get('simkl')}
     today = date.today()
     cut = (today - timedelta(days=aired_days)).isoformat()
-    upcoming = _fetch_calendar(http, acc.client_id, watch_ids, cal_days)
+    upcoming = _fetch_calendar(cfg, http, watch_ids, cal_days)
     aired = []
     for e in rows:
         d = str(e.get('air_date') or '')[:10]
