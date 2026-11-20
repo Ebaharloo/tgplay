@@ -19,7 +19,6 @@ from .playlist import Playlist
 from .prefetch import Prefetcher
 from .proxy import RangeProxy
 from .skip import SkipService
-from .titles import clean_ep_name
 
 
 class SessionLoader:
@@ -183,31 +182,6 @@ class Session:
         return f'ep {ep}   {mm:02d}:{ss:02d}'
 
 
-def _safe_mal(meta, title):
-    """Fuzzy title -> MAL id (never raises); the found id is pinned to the
-    link by the caller. Whether its names may be PAINTED onto a page is
-    decided by the paint guard in TitleService.labels()."""
-    try:
-        mal = meta.cached_mal(title)
-        if mal is None:
-            mal = meta.resolve_mal(title, ask=False)
-        return mal
-    except Exception:
-        return None
-
-
-def _telegram_target(target):
-    """('channel', msg_id) for a t.me link / 'channel msgid' (msg_id may be None)."""
-    import re
-    m = re.search(r't\.me/([A-Za-z0-9_]+)(?:/(\d+))?', target or '')
-    if m:
-        return m.group(1), (int(m.group(2)) if m.group(2) else None)
-    parts = (target or '').split()
-    if len(parts) >= 2 and parts[1].isdigit():
-        return parts[0].lstrip('@'), int(parts[1])
-    return (target or '').lstrip('@'), None
-
-
 def open_session(src: str, target: str, cfg, http, opts: dict = None,
                  mpv: List[str] = None, *, wait_titles: bool = False,
                  window: int = None, matcher: str = None) -> Session:
@@ -217,6 +191,7 @@ def open_session(src: str, target: str, cfg, http, opts: dict = None,
       curses menu wants them now instead of next launch.
     - `window`/`matcher`: Telegram-only knobs (--window N, -f name matcher).
     """
+    from . import features
     from .cli import _link_get, _log_show
     from .metadata import Metadata
     from .titles import TitleService
@@ -227,121 +202,20 @@ def open_session(src: str, target: str, cfg, http, opts: dict = None,
     meta = Metadata(cfg, http)
     titles = TitleService(meta, cfg)
     src = (src or 'agp').lower()
-    mal = None                                    # pinned MAL entry (per src)
 
-    if src == 'axp':
-        from .providers.animex import AnimeXProvider
-        prov = AnimeXProvider(target, quality=opts.get('f'),
-                              audio=opts.get('audio') or 'dub', http=http)
-        prov.set_audio(opts.get('audio') or 'dub')
-        prov.fetch_groups()
-        prov.select(opts.get('f'))
-        groups = prov.groups
-        # the AnimeX API embeds Bangumi's 'Release: date - ' marker in the
-        # titles of (already-aired) episodes — clean BEFORE anything reads
-        labels = {n: (clean_ep_name(t) or t)
-                  for n, t in dict(prov.episodes()).items()}
-        # SAME name sync as AGP: the AnimeX API usually only serves generic
-        # 'Episode N' - fill real names from the MAL/Simkl episode cache.
-        # The provider carries the EXACT MAL id of the entry (AnimeX gives
-        # us malId); the id is pinned to the link so it never re-resolves.
-        mal = getattr(prov, 'mal_id', None) or meta.link_mal(str(target)) \
-            or _safe_mal(meta, prov.title)
-        if mal:
-            labels = titles.labels(mal, labels)
-            meta.remember_link_mal(str(target), mal)
-            missing_now = [n for n in labels
-                           if str(labels[n]).startswith('Episode ')]
-            if missing_now and len(missing_now) == len(labels):
-                cached = titles.cache_count(mal)
-                if cached and cached != len(labels):
-                    log.cprint(f'titles: kept clean - MAL lists {cached} '
-                               f'episodes but this page has {len(labels)}; '
-                               'painting would mix seasons')
-        missing = [n for n in labels if str(labels[n]).startswith('Episode ')]
-        if missing and mal:
-            log.cprint(f'titles: looking up {len(missing)} missing '
-                       'episode name(s)...')
-            ax_th = threading.Thread(
-                target=lambda: meta.refresh_titles(mal, prov.title),
-                daemon=True)
-            ax_th.start()
-            if wait_titles:              # the curses menu wants names NOW
-                ax_th.join(timeout=5)
-                if ax_th.is_alive():
-                    log.cprint('titles: still fetching names in the '
-                               'background (they will show next time)')
-            labels = titles.labels(mal, labels)      # re-read post-join
-            meta._refreshed.add(mal)
-    elif src == 'zoro':
-        from .providers.zoro import ZoroProvider
-        prov = ZoroProvider(target, quality=opts.get('f'),
-                            audio=opts.get('audio') or 'dub', http=http)
-        prov.fetch_groups()
-        prov.select(opts.get('f'))
-        groups = prov.groups
-        labels = dict(prov.episodes())
-        mal = meta.link_mal(str(target)) or _safe_mal(meta, prov.title)
-        if mal:
-            labels = titles.labels(mal, labels)
-            meta.remember_link_mal(str(target), mal)
-    elif src in ('tg', 'tgp'):
-        from .providers.telegram import SingleFileProvider, TelegramProvider
-        chat, msg_id = _telegram_target(target)
-        if src == 'tg' and msg_id is not None:
-            prov = SingleFileProvider(chat, msg_id, cfg.tg_session)
-            prov.load()
-            labels = dict(prov.episodes())
-        else:
-            prov = TelegramProvider(chat, session=cfg.tg_session,
-                                    window=int(window or 50),
-                                    matcher=matcher)
-            prov.load()
-            labels = dict(prov.episodes())
-        groups = []
-    else:                                    # agp (default)
-        from .providers.animegate import AnimeGateProvider
-        prov = AnimeGateProvider(target, quality=opts.get('f'), http=http)
-        prov.fetch_groups()
-        prov.select(opts.get('f'))
-        eps = prov.episodes()
-        # MAL id: pinned link id first, else fuzzy title resolution — find
-        # it once and it sticks to this page forever
-        mal = meta.link_mal(str(target)) or _safe_mal(meta, prov.title)
-        labels = titles.labels(mal, {n: f'Episode {n}' for n in eps})
-        missing = [n for n in labels
-                   if str(labels[n]).startswith('Episode ')]
-        if mal and missing and len(missing) == len(labels):
-            cached = titles.cache_count(mal)
-            if cached and cached != len(eps):
-                log.cprint(f'titles: kept clean - MAL lists {cached} '
-                           f'episodes but this page has {len(eps)}; painting '
-                           'would mix seasons (pick the per-season link to '
-                           'get the right names)')
-        th = None
-        if missing and mal:
-            log.cprint(f'titles: looking up {len(missing)} missing '
-                       'episode name(s)...')
-            th = threading.Thread(
-                target=lambda: meta.refresh_titles(mal, prov.title),
-                daemon=True)
-            th.start()
-            if wait_titles:                  # the terminal menu wants names NOW
-                th.join(timeout=5)
-                if th.is_alive():
-                    log.cprint('titles: still fetching names in the '
-                               'background (they will show next time)')
-            labels = titles.labels(mal, {n: f'Episode {n}' for n in eps})
-            meta._refreshed.add(mal)
-        if mal:
-            meta.remember_link_mal(str(target), mal)
-        groups = prov.groups
+    factory = features.get(src, 'provider')
+    prov = factory(target, cfg=cfg, opts=opts, window=window,
+                   matcher=matcher, http=http)
+    prov.load()                       # groups + episode list (per provider)
+    groups = getattr(prov, 'groups', None) or []
+    labels, mal = prov.titles.open_labels(prov, meta, titles, target,
+                                          wait_titles=wait_titles)
 
     log.cprint(f'>> {prov.title} - {len(labels)} episodes '
                f'({time.monotonic() - t_open:.1f}s)')
 
     link = _link_get(cfg, prov.title)
-    if link is None and src != 'tg':
+    if link is None and not getattr(prov, 'single', False):
         try:
             _log_show(cfg, meta, prov.title)
         except Exception:

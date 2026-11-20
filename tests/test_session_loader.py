@@ -119,12 +119,19 @@ def test_axp_episode_labels_cleaned():
     class FakeAX:
         title = 'Chainsmoker Cat'
         from tp.features.audio import AxpAudio as _A
+        from tp.features.servers import AxpServers as _S
+        from tp.features.titles import AxpTitles as _T
         audio = _A()
+        servers = _S()
+        titles = _T()
 
         def __init__(self, target, quality=None, audio=None, http=None):
             self.groups = []
             self._eps = {9: 'Release: 2026/09/03 15:00 GMT - Little Sis',
                          10: 'Fine Name'}
+
+        def load(self):
+            pass                  # fake pre-populates _eps in __init__
 
         def set_audio(self, a):
             return self
@@ -141,7 +148,7 @@ def test_axp_episode_labels_cleaned():
     home = tempfile.mkdtemp(prefix='tgplay-axp-labels-')
     cfg = Cfg(os.path.join(home, 'progress.json'))
     with mock.patch('tp.providers.animex.AnimeXProvider', FakeAX), \
-            mock.patch('tp.session._safe_mal', lambda *a, **k: None), \
+            mock.patch('tp.features.titles.safe_mal', lambda *a, **k: None), \
             mock.patch('tp.cli._link_get', lambda *a, **k: 'https://x'):
         s = session.open_session('axp', 'axp:whatever', cfg, http=None,
                                  opts={}, mpv=[])

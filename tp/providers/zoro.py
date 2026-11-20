@@ -26,6 +26,7 @@ from ..features.audio import ZoroAudio
 from ..features.quality import NoQuality
 from ..features.servers import ZoroServers
 from ..features.sizes import NoSizes
+from ..features.titles import ZoroTitles
 
 # Probed in this order; the first one serving a search page wins and is cached
 # for the process. TGP_ZORO_BASE overrides everything.
@@ -74,6 +75,7 @@ class ZoroProvider:
     quality = NoQuality()
     servers = ZoroServers()
     sizes = NoSizes()
+    titles = ZoroTitles()
 
     def __init__(self, target: str = '', quality=None, audio: str = 'dub',
                  http=None):
@@ -192,6 +194,11 @@ class ZoroProvider:
         for g in self.groups or []:
             if quality and g.get('id') == quality:
                 self.audio_name = g.get('audio') or self.audio_name
+        return self
+
+    def load(self):
+        self.fetch_groups()
+        self.select(self.quality_name)
         return self
 
     def episodes(self) -> dict:
