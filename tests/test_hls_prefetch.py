@@ -20,6 +20,7 @@ from tp.cache import Cache  # noqa: E402
 from tp.config import Config  # noqa: E402
 from tp.episodes import Episode  # noqa: E402
 from tp.playlist import Playlist  # noqa: E402
+from tp.features.warm import HlsWarm  # noqa: E402
 
 pytestmark = pytest.mark.skipif(shutil.which('ffmpeg') is None
                                 and shutil.which('ffmpeg') is None,
@@ -38,6 +39,7 @@ class Stream:
 class Provider:
     title = 'Test Show'
     mal_id = None
+    warm = HlsWarm()
 
     def __init__(self, url):
         self.url = url

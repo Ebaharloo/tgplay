@@ -19,6 +19,7 @@ from ..features.quality import AgpQuality
 from ..features.servers import AgpServers
 from ..features.sizes import AgpSizes
 from ..features.titles import MalTitles
+from ..features.warm import MirrorWarm
 from .base import NoServersYet, Provider
 
 BASE = 'https://animegate.ir'
@@ -183,6 +184,7 @@ class AnimeGateProvider(Provider):
     servers = AgpServers()
     sizes = AgpSizes()
     titles = MalTitles()
+    warm = MirrorWarm()
 
     def __init__(self, url, quality=None, all_groups=False, http=None,
                  cookies=None, prompt=None):

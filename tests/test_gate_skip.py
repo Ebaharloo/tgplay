@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 
 from tp.chapters import ChapterReader  # noqa: E402
 from tp.episodes import Episode  # noqa: E402
+from tp.features.warm import MirrorWarm  # noqa: E402
 from tp.playlist import Playlist  # noqa: E402
 from tp.proxy import RangeProxy  # noqa: E402
 from tp.skip import SkipDecider, SkipService, probe_targets  # noqa: E402
@@ -144,7 +145,8 @@ def test_warm_path_proxy_candidate_is_registered_with_the_proxy():
     st = HttpSource('https://cdn.example/x/2.mkv', headers={'Referer': 'r'})
     prov = types.SimpleNamespace(title='T', mal_id=None,
                                  stream=lambda n: st,
-                                 display_name=lambda n: 'ep2.mkv')
+                                 display_name=lambda n: 'ep2.mkv',
+                                 warm=MirrorWarm())
     seen = []
 
     def read(url, headers=None, timeout=None):

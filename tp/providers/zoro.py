@@ -27,6 +27,7 @@ from ..features.quality import NoQuality
 from ..features.servers import ZoroServers
 from ..features.sizes import NoSizes
 from ..features.titles import ZoroTitles
+from ..features.warm import HlsWarm
 
 # Probed in this order; the first one serving a search page wins and is cached
 # for the process. TGP_ZORO_BASE overrides everything.
@@ -76,6 +77,7 @@ class ZoroProvider:
     servers = ZoroServers()
     sizes = NoSizes()
     titles = ZoroTitles()
+    warm = HlsWarm()
 
     def __init__(self, target: str = '', quality=None, audio: str = 'dub',
                  http=None):

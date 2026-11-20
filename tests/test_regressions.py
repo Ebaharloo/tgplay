@@ -45,6 +45,8 @@ class FakeProvider:
     from tp.features.servers import AxpServers as _S
     audio = _A()
     servers = _S()
+    from tp.features.warm import MirrorWarm as _W
+    warm = _W()
 
     def __init__(self, nums=(1, 2, 3)):
         self.nums = list(nums)

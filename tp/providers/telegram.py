@@ -16,6 +16,7 @@ from ..features.quality import TgQuality
 from ..features.servers import TgServers
 from ..features.sizes import TgSizes
 from ..features.titles import TgTitles
+from ..features.warm import MirrorWarm
 from .base import Provider
 
 def _cred(name: str) -> str:
@@ -184,6 +185,7 @@ class TelegramProvider(_TelegramBase, Provider):
     servers = TgServers()
     sizes = TgSizes()
     titles = TgTitles()
+    warm = MirrorWarm()
 
     def __init__(self, chat, session=None, window: int = 50, matcher=None):
         self.chat = chat
@@ -288,6 +290,7 @@ class SingleFileProvider(_TelegramBase, Provider):
     servers = TgServers()
     sizes = TgSizes()
     titles = TgTitles()
+    warm = MirrorWarm()
 
     def __init__(self, chat, msg_id, session=None):
         self.single = True           # one message: never logged as a "show"

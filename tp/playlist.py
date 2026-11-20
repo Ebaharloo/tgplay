@@ -15,7 +15,6 @@ from typing import List, Optional
 from . import log
 from .episodes import Episode
 from .player import PosWatcher, ipc_seek
-from .prefetch import hls_to_file
 from .skip import probe_targets
 
 # Mark an episode watched once this fraction played (even if the user quits).
@@ -123,31 +122,11 @@ class Playlist:
                 log.cprint(f'next: ep{ep.num} skip ready ({note})')
             except Exception:
                 pass
-        if getattr(st, 'direct', False) and self.cache is not None:
-            safe = re.sub(r'[^A-Za-z0-9._-]', '_', name)
-            self._sweep_hls()          # warmed files are one-shot: keep 2 days
-            out = os.path.join(self.cache.path('hls'), safe)
-            if not out.lower().endswith(('.mkv', '.mp4')):
-                out = os.path.splitext(out)[0] + '.mkv'
-            os.makedirs(os.path.dirname(out), exist_ok=True)
-            t0 = time.monotonic()
-            if hls_to_file(st.url, getattr(st, 'headers', None), out):
-                warm['path'] = out
-                log.cprint(f'next: ep{ep.num} on disk '
-                           f'({os.path.getsize(out) // 1048576}MB in '
-                           f'{time.monotonic() - t0:.0f}s)')
-            else:
-                log.cprint(f'next: ep{ep.num} stayed remote '
-                           '(download did not finish in time)')
-            warm['ev'].set()
-            return
         if not warm['flags']:
             warm['flags'] = []          # probe done: do not repeat it
-        p = self.prefetcher.prefetch(name, st)
-        if p and self.proxy is not None:
-            lo = self.prefetcher.publish(self.proxy, name, p)
-            log.cprint(f'next: ep{ep.num} prefetched from {lo} bytes - '
-                       'proxy will serve it from disk')
+        path = self.provider.warm.run(self, st, name, ep.num)
+        if path:
+            warm['path'] = path
         warm['ev'].set()
 
     def _sweep_hls(self, days: float = 2.0):

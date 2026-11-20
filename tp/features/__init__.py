@@ -13,6 +13,7 @@ from .servers import (AgpServers, AxpServers, Servers, TgServers,
                       ZoroServers)
 from .sizes import AgpSizes, NoSizes, Sizes, TgSizes
 from .titles import (AxpTitles, MalTitles, TgTitles, Titles, ZoroTitles)
+from .warm import HlsWarm, MirrorWarm, Warm
 
 REGISTRY = {
     'audio': {'axp': AxpAudio, 'zoro': ZoroAudio},
@@ -24,6 +25,8 @@ REGISTRY = {
     'sizes': {'tg': TgSizes, 'tgp': TgSizes, 'agp': AgpSizes},
     'titles': {'tg': TgTitles, 'tgp': TgTitles, 'agp': MalTitles,
                'axp': AxpTitles, 'zoro': ZoroTitles},
+    'warm': {'tg': MirrorWarm, 'tgp': MirrorWarm, 'agp': MirrorWarm,
+             'axp': HlsWarm, 'zoro': HlsWarm},
 }
 
 

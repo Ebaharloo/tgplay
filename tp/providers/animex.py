@@ -26,6 +26,7 @@ from ..features.quality import AxpQuality
 from ..features.servers import AxpServers
 from ..features.sizes import NoSizes
 from ..features.titles import AxpTitles
+from ..features.warm import HlsWarm
 from .base import NoServersYet, Provider
 
 SITE = 'https://animex.one'
@@ -84,6 +85,7 @@ class AnimeXProvider(Provider):
     servers = AxpServers()
     sizes = NoSizes()
     titles = AxpTitles()
+    warm = HlsWarm()
 
     def __init__(self, url: str, quality=None, audio: str = 'dub',
                  provider: Optional[str] = None, http: Optional[HttpClient] = None):
