@@ -27,6 +27,9 @@ IDS = ('simkl', 'mal', 'anilist')
 # the GUI thread writes the queue while the worker drains it: one lock, and
 # every write is a locked read-modify-write (the simkl_extra.py convention)
 _LOCK = threading.Lock()
+# one flush at a time per PROCESS: the window and a playlist rig share the same
+# queue file, and two readers would push the same item twice
+_PUSH_LOCK = threading.Lock()
 
 
 def show_key(ids) -> str:
@@ -191,6 +194,10 @@ class Syncer:
     def flush(self) -> dict:
         """One pass over the queue: push, drop what the service accepted, keep
         the failures. Returns {'sent', 'failed', 'pending'}."""
+        with _PUSH_LOCK:
+            return self._flush_once()
+
+    def _flush_once(self) -> dict:
         sent = failed = 0
         if not self.pushers:             # not connected: keep everything queued
             return {'sent': 0, 'failed': 0, 'pending': len(self.queue)}
