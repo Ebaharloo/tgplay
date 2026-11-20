@@ -4,6 +4,7 @@ from typing import Dict
 
 from ..features.audio import NoAudio
 from ..features.quality import NoQuality
+from ..features.servers import Servers
 from ..sources import MediaSource
 
 
@@ -17,6 +18,7 @@ class Provider(ABC):
     title: str = ''
     audio = NoAudio()        # dub/sub choice (NoAudio = none, e.g. tg/agp)
     quality = NoQuality()    # server/rendition menu shape
+    servers = Servers()      # server-selection policy
 
     @abstractmethod
     def episodes(self) -> Dict[int, str]:

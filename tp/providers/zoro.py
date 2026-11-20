@@ -24,6 +24,7 @@ from ..http import DEFAULT_UA, HttpClient
 from ..sources import DirectSource
 from ..features.audio import ZoroAudio
 from ..features.quality import NoQuality
+from ..features.servers import ZoroServers
 
 # Probed in this order; the first one serving a search page wins and is cached
 # for the process. TGP_ZORO_BASE overrides everything.
@@ -69,6 +70,7 @@ class ZoroProvider:
 
     audio = ZoroAudio()
     quality = NoQuality()
+    servers = ZoroServers()
 
     def __init__(self, target: str = '', quality=None, audio: str = 'dub',
                  http=None):
@@ -146,7 +148,7 @@ class ZoroProvider:
             f'{self.base}/api/theme/episode/list/{nid}')).get('html', '')
         return {int(n): int(i) for n, i in EP.findall(html)}
 
-    def servers(self, ep_id: int):
+    def server_rows(self, ep_id: int):
         """[(audio, server name, embed url)] as the site lists them."""
         html = json.loads(self._get(
             f'{self.base}/api/theme/episode/servers?episodeId={int(ep_id)}'
@@ -163,7 +165,7 @@ class ZoroProvider:
         """One label per server the site lists, in its order."""
         try:
             ids = self.episode_ids(self.slug)
-            rows = self.servers(next(iter(ids.values())))
+            rows = self.server_rows(next(iter(ids.values())))
         except Exception:
             rows = []
         self.groups = [{'id': f'{name} ({audio})', 'provider': name,
@@ -193,7 +195,7 @@ class ZoroProvider:
     def stream(self, num: int) -> DirectSource:
         """The episode's stream: chosen audio first, the other one next."""
         eid = self.episode_ids(self.slug)[int(num)]
-        rows = self.servers(eid)
+        rows = self.server_rows(eid)
         order = [r for r in rows if r[0] == self.audio_name] \
             + [r for r in rows if r[0] != self.audio_name]
         last = None

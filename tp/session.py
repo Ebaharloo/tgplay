@@ -114,7 +114,7 @@ class Session:
         # audio choice at play time: each source's own Audio object applies
         # it (axp + zoro have one; tg/agp's NoAudio is a no-op)
         self.provider.audio.prepare(self.provider, o.get('audio'))
-        if self.src not in ('tg', 'tgp'):
+        if self.provider.servers.reselects:    # tg views must not renumber
             self.provider.select(o.get('f'))
         eps = self.provider.episodes()
         planned = [Episode(k, eps[k]) for k in chosen if k in eps]

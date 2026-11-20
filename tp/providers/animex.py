@@ -23,6 +23,7 @@ from ..http import HttpClient, DEFAULT_UA, _quiet_close
 from ..sources import DirectSource
 from ..features.audio import AxpAudio
 from ..features.quality import AxpQuality
+from ..features.servers import AxpServers
 from .base import NoServersYet, Provider
 
 SITE = 'https://animex.one'
@@ -78,6 +79,7 @@ def _find_anime(obj):
 class AnimeXProvider(Provider):
     audio = AxpAudio()
     quality = AxpQuality()
+    servers = AxpServers()
 
     def __init__(self, url: str, quality=None, audio: str = 'dub',
                  provider: Optional[str] = None, http: Optional[HttpClient] = None):

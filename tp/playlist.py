@@ -361,10 +361,10 @@ class Playlist:
                         self.proxy.streams.pop(name, None)
                     except Exception:
                         pass
-                    rot = getattr(self.provider, 'rotate', None)
-                    if callable(rot):
+                    sv = getattr(self.provider, 'servers', None)
+                    if sv is not None:
                         try:
-                            rot()          # try the next server (animex)
+                            sv.rotate(self.provider)   # next server (axp/zoro)
                         except Exception:
                             pass
                     log.cprint(f'load: ep{ep.num} failed to open -> retry {attempt}')

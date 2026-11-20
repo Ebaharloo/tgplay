@@ -7,12 +7,16 @@ ask for a feature through the provider (`provider.audio`, `provider.quality`)
 and never branch on a src literal.
 """
 from .audio import Audio, AxpAudio, NoAudio, ZoroAudio
+from .servers import (AgpServers, AxpServers, Servers, TgServers,
+                      ZoroServers)
 from .quality import (AgpQuality, AxpQuality, NoQuality, Quality, TgQuality)
 
 REGISTRY = {
     'audio': {'axp': AxpAudio, 'zoro': ZoroAudio},
     'quality': {'tg': TgQuality, 'tgp': TgQuality, 'agp': AgpQuality,
                 'axp': AxpQuality},
+    'servers': {'tg': TgServers, 'tgp': TgServers, 'agp': AgpServers,
+                'axp': AxpServers, 'zoro': ZoroServers},
 }
 
 

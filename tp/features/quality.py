@@ -27,6 +27,11 @@ def _labels(groups) -> List[str]:
 class TgQuality(Quality):
     """Telegram: quality variants parsed from the .mkv file names."""
 
+    def group(self, names):
+        """(qualities, {quality: [names]}) from tp.quality's filename parse."""
+        from .. import quality as qmod
+        return qmod.group(names)
+
 
 class AgpQuality(Quality):
     """AnimeGate: the site's group labels ARE the qualities."""

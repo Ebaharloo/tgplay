@@ -11,9 +11,9 @@ import threading
 from typing import Dict, List, Optional, Tuple
 
 from ..sources import MediaSource
-from .. import quality
 from ..features.audio import NoAudio
 from ..features.quality import TgQuality
+from ..features.servers import TgServers
 from .base import Provider
 
 def _cred(name: str) -> str:
@@ -179,6 +179,7 @@ class _TelegramBase:
 class TelegramProvider(_TelegramBase, Provider):
     audio = NoAudio()          # one file = one audio track
     quality = TgQuality()
+    servers = TgServers()
 
     def __init__(self, chat, session=None, window: int = 50, matcher=None):
         self.chat = chat
@@ -214,7 +215,7 @@ class TelegramProvider(_TelegramBase, Provider):
         self.run_loop()
         self._items = self._await(self._load_async())
         self._view = list(self._items)
-        self._qualities, self._byq = quality.group(
+        self._qualities, self._byq = self.quality.group(
             [n for _m, n, _s in self._items])
         self._loaded = True
         return self
@@ -280,6 +281,7 @@ class SingleFileProvider(_TelegramBase, Provider):
 
     audio = NoAudio()
     quality = TgQuality()
+    servers = TgServers()
 
     def __init__(self, chat, msg_id, session=None):
         self.chat = chat
