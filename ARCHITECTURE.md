@@ -23,7 +23,8 @@ explicit interface, injected where needed, individually testable.
    model.py       Episode, Chapter, Media, Progress   (value objects)
    episodes.py    episode selection / resume (the ONLY place that builds
                   the play() list -> shape bugs become impossible)
-   chapters.py    SkipResolver      (mkv chapters + ani-skip -> script-opts)
+   chapters.py    ChapterReader     (ffprobe chapters -> list[Chapter])
+   skip.py        SkipDecider/Service (op/ed decision, ani-skip, flags + note)
 
    sources/
      base.py      MediaSource (ABC)  get_meta() / episodes() / link(num)
@@ -51,8 +52,11 @@ explicit interface, injected where needed, individually testable.
 - **`RangeProxy`** — one implementation of the RAM-head/tail + disk-mirror +
   live-fetch range server, parameterised by a `MediaSource`. Replaces
   `tg_server.py` *and* the two inline handlers in `tg`/`tgp`.
-- **`SkipResolver`** — chapters and ani-skip behind one call:
-  `flags(url, mode, toggle) -> [mpv args]`.
+- **Skip objects** — `ChapterReader` (ffprobe -> chapters, no decisions),
+  `SkipDecider` (chapters + mode -> op/ed, pure), `AniSkipRunner` (binary), and
+  `SkipService` (`flags(...) -> [mpv args], note`), which walks the
+  `probe_targets()` candidate list (origin, then our proxy) and falls back to
+  ani-skip. One failed probe can no longer take the whole feature down.
 - **`Episode`** — a `NamedTuple(num, link)`. `play()` accepts `list[Episode]`;
   selection/resume live in `episodes.py`, so no caller can pass bare links.
 - **`Player`** — builds the mpv argv and owns the IPC watcher (progress +

@@ -14,7 +14,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 
-from tp import chapters, config, episodes, http  # noqa: E402
+from tp import config, episodes, http, skip  # noqa: E402
 
 DATA = bytes(range(256)) * 20000  # ~5.1 MB (exercises the parallel chunk path)
 
@@ -103,14 +103,14 @@ def test_http_retry():
 
 # --- chapters ---------------------------------------------------------------
 def test_chapters():
-    K = chapters.SkipResolver.kind
+    K = skip.SkipDecider.kind
     assert K('Intro') == 'op' and K('Opening') == 'op' and K('OP1') == 'op'
     assert K('Credits') == 'ed' and K('Ending') == 'ed' and K('Outro') == 'ed'
     assert K('Episode') is None and K('Part A') is None and K(None) is None
 
     donghua = [('Chapter 1', 0.0, 162.667), ('Episode Sixty', 162.667, 1198.2),
                ('Ending Song', 1198.2, 1300.667)]
-    S = chapters.SkipResolver.to_skip
+    S = skip.SkipDecider.to_skip
     assert S(donghua) == ((0.0, 162.667), (1198.2, 1300.667))
     assert S(donghua, 'names') == (None, (1198.2, 1300.667))
     assert S(donghua, 'auto') == ((0.0, 162.667), (1198.2, 1300.667))
@@ -122,20 +122,21 @@ def test_chapters():
     assert S([('Chapter 1', 0, 300), ('Episode', 300, 2400),
               ('Chapter 4', 2400, 2500)]) == (None, (2400, 2500))
 
-    opts = chapters.SkipResolver.opts_from((0.0, 162.667), (1198.2, 1300.667),
-                                           toggle=True)
+    opts = skip.SkipDecider.opts_from((0.0, 162.667), (1198.2, 1300.667),
+                                      toggle=True)
     assert opts == ['--script-opts=skip-op_start=0.0,skip-op_end=162.667,'
                     'skip-ed_start=1198.2,skip-ed_end=1300.667,'
                     'skip-toggle=yes,skip-toggle_key=T'], opts
-    assert chapters.SkipResolver.opts_from(None, None) == []
+    assert skip.SkipDecider.opts_from(None, None) == []
     print('PASS chapters')
 
 
 def test_chapters_flags():
-    r = chapters.SkipResolver()
-    r.probe = lambda url, timeout=None: [('Intro', 0.0, 90.0),
-                                         ('Episode', 90.0, 1300.0)]
-    assert r.flags('x') == ['--script-opts=skip-op_start=0.0,skip-op_end=90.0']
+    # pure decide -> opts, no file read
+    d = skip.SkipDecider
+    chs = [('Intro', 0.0, 90.0), ('Episode', 90.0, 1300.0)]
+    assert d.opts_from(*d.to_skip(chs)) == [
+        '--script-opts=skip-op_start=0.0,skip-op_end=90.0']
     print('PASS chapters.flags')
 
 

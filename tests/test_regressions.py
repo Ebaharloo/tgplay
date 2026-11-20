@@ -138,8 +138,8 @@ def test_claim1_direct_stream_is_probed_with_its_headers(cfg):
     _run(cfg, prov, player, skip=skip, skip_mode='all')
 
     call = skip.calls[0]
-    assert call['url'] == HLS, call          # was None for direct streams
-    assert call['headers'] == {'Referer': 'https://animex.one/'}, call
+    # the exact URL mpv plays, with its headers, and nothing else to try
+    assert call['targets'] == [(HLS, {'Referer': 'https://animex.one/'})], call
 
     cmd = player.cmds[0]
     assert any(a.startswith('--script-opts=skip-op_start=90') for a in cmd), cmd
@@ -198,28 +198,25 @@ def test_claim5_player_start_failure_ends_the_run(cfg):
 def test_claim11_skip_off_means_off_and_false_means_all(cfg):
     from tp.skip import SkipService
 
-    class Resolver:
-        def resolve(self, url, mode='all', timeout=None, headers=None):
-            return ((0, 90), None, 'named', None)
-
-        def opts_from(self, _op, _ed, toggle=False):
-            return ['--from-chapters']
+    class Reader:
+        def read(self, url, headers=None, timeout=None):
+            return [('Intro', 0.0, 90.0), ('Episode', 90.0, 1300.0)]
 
     def run(skip_opt):
         prov = FakeProvider(nums=(1,))
         s = _session(cfg, prov, src='agp')
-        s._skip = SkipService(resolver=Resolver(), ani_skip=None, metadata=None)
+        s._skip = SkipService(reader=Reader(), ani_skip=None, metadata=None)
         s.play([1], {'skip': skip_opt}, [])
         return s._player.cmds[0]
 
     # PlaybackOptions keeps an explicit 'off' as a real choice
     assert options.PlaybackOptions({'skip': 'off'}).to_opts()['skip'] == 'off'
     cmd_off = run('off')
-    assert not any('--script-opts' in a or '--from-chapters' in a
-                   for a in cmd_off), cmd_off
+    assert not any('--script-opts' in a for a in cmd_off), cmd_off
     # legacy unset False still means 'all'
     cmd_all = run(False)
-    assert '--from-chapters' in cmd_all, cmd_all
+    assert any(a.startswith('--script-opts=skip-op_start') for a in cmd_all), \
+        cmd_all
 
     # and the session passes the mode down verbatim
     skip = FakeSkip(flags=[])
@@ -227,6 +224,66 @@ def test_claim11_skip_off_means_off_and_false_means_all(cfg):
     s._skip = skip
     s.play([1], {'skip': 'off'}, [])
     assert skip.calls[0]['mode'] == 'off', skip.calls[0]
+
+
+# --- 13. a failed 2 s head peek must not kill skip on proxy streams -------
+class SlowProxy:
+    """prewarm never signals: the head peek times out, like a slow CDN."""
+
+    def __init__(self):
+        self.registered = []
+
+    def register(self, name, stream):
+        self.registered.append((name, stream))
+
+    def prewarm(self, name, ev):
+        pass
+
+    def url(self, name):
+        return f'http://127.0.0.1:9/{name}'
+
+
+class ProxyProvider(FakeProvider):
+    def stream(self, n):
+        return Stream(url=f'https://cdn.example/x/{n}.mkv', direct=False)
+
+
+def test_claim13_failed_head_peek_still_yields_skip_flags(cfg):
+    prov, player, skip = ProxyProvider(nums=(1,)), FakePlayer(), FakeSkip()
+    Playlist(prov, SlowProxy(), None, player, cfg, skip=skip).run(
+        [Episode(1, 'l1')], skip_mode='all')
+
+    targets = skip.calls[0]['targets']
+    assert targets[0][0] == 'https://cdn.example/x/1.mkv', targets   # origin
+    assert targets[1][0].startswith('http://127.0.0.1:9/'), targets  # proxy
+    cmd = player.cmds[0]
+    assert any(a.startswith('--script-opts=skip-op_start=90') for a in cmd), cmd
+
+
+# --- 14. warm path and main loop both go through probe_targets ------------
+def test_claim14_warm_and_main_paths_share_probe_targets(cfg, monkeypatch):
+    seen = []
+    real = playlist_mod.probe_targets
+
+    def spy(stream, proxy_url=None):
+        out = real(stream, proxy_url)
+        seen.append(out)
+        return out
+
+    monkeypatch.setattr(playlist_mod, 'probe_targets', spy)
+    prov, skip = ProxyProvider(nums=(1, 2)), FakeSkip(flags=[])
+    pref = types.SimpleNamespace(prefetch=lambda name, st: None)
+    pl = Playlist(prov, SlowProxy(), None, FakePlayer(), cfg, skip=skip,
+                  prefetcher=pref)
+    pl._skip_mode, pl._skip_toggle = 'all', False
+    pl._warm(Episode(2, 'l2'))                    # warm path
+    pl.run([Episode(1, 'l1')], skip_mode='all')   # main loop
+
+    assert len(seen) == 2, seen
+    assert seen[0][0][0] == 'https://cdn.example/x/2.mkv', seen[0]
+    assert seen[1][0][0] == 'https://cdn.example/x/1.mkv', seen[1]
+    for t in seen:                                # origin, then our proxy
+        assert len(t) == 2 and t[1][0].startswith('http://127.0.0.1:9/'), t
 
 
 # --- GUI stubs ------------------------------------------------------------

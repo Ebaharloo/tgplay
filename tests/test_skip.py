@@ -1,28 +1,27 @@
 #!/usr/bin/env python3
-"""test_skip - SkipService order: file chapters first, then ani-skip."""
+"""test_skip - the split skip objects, one concern each.
+
+ChapterReader is stubbed with FakeReader; SkipDecider and the notes are real,
+so these pin the decisions a broken probe used to take down with it.
+"""
 import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
-from tp.skip import SkipService  # noqa: E402
+from tp.skip import SkipService, probe_targets  # noqa: E402
 
 
-class FakeResolver:
-    def __init__(self, op=None, ed=None, src='named', by_url=None):
-        self._op, self._ed, self._src = op, ed, src
-        self.by_url = by_url or {}
+class FakeReader:
+    """ChapterReader stand-in: chapters per URL, and who was read."""
+
+    def __init__(self, by_url=None):
+        self.by_url = dict(by_url or {})
         self.calls = []
 
-    def resolve(self, url, mode='all', timeout=None, headers=None):
+    def read(self, url, headers=None, timeout=None):
         self.calls.append(url)
-        op, ed = self.by_url.get(url, (self._op, self._ed))
-        return (op, ed,
-                self._src if op else None,
-                self._src if ed else None)
-
-    def opts_from(self, op, ed, toggle=False):
-        return ['--from-chapters'] if (op or ed) else []
+        return list(self.by_url.get(url, []))
 
 
 class FakeAni:
@@ -41,19 +40,25 @@ class FakeMeta:
         return 123
 
 
+CHS = [('Intro', 0.0, 90.0), ('Episode', 90.0, 1200.0),
+       ('Ending', 1200.0, 1260.0)]
+
+
 def test_order():
-    svc = SkipService(resolver=FakeResolver(op=(0, 90), ed=(1200, 1260)),
+    svc = SkipService(reader=FakeReader({'u': CHS}),
                       ani_skip=FakeAni(['--from-ani']), metadata=FakeMeta())
     flags, note = svc.flags(title='T', ep=1, url='u')
-    assert flags == ['--from-chapters'] and note.startswith('chapters'), note
+    assert flags == ['--script-opts=skip-op_start=0.0,skip-op_end=90.0,'
+                     'skip-ed_start=1200.0,skip-ed_end=1260.0'], flags
+    assert note == 'chapters(named) · op 0:00-1:30 · ed 20:00-21:00', note
     # chapters empty -> ani-skip fallback
-    svc = SkipService(resolver=FakeResolver(),
-                      ani_skip=FakeAni(['--from-ani']), metadata=FakeMeta())
+    svc = SkipService(reader=FakeReader(), ani_skip=FakeAni(['--from-ani']),
+                      metadata=FakeMeta())
     flags, note = svc.flags(title='T', ep=1, url='u')
     assert flags == ['--from-ani'] and note.startswith('ani-skip'), note
     # no metadata resolver -> cannot resolve a MAL id -> nothing
-    svc = SkipService(resolver=FakeResolver(),
-                      ani_skip=FakeAni(['--from-ani']), metadata=None)
+    svc = SkipService(reader=FakeReader(), ani_skip=FakeAni(['--from-ani']),
+                      metadata=None)
     flags, note = svc.flags(title='T', ep=1, url='u')
     assert flags == [] and note.startswith('none'), note
     print('PASS skip service order + note')
@@ -75,18 +80,69 @@ def test_notes():
 def test_url2_fallback_reads_the_proxy_when_the_origin_hides_chapters():
     # origin answers but carries no chapters; the same file through the
     # proxy does - skip must not die with the first empty probe
-    r = FakeResolver(by_url={'origin': (None, None), 'proxy': ((0, 90), None)})
-    s = SkipService(resolver=r, ani_skip=FakeAni(['--would-be-wrong']))
+    r = FakeReader({'proxy': CHS})
+    s = SkipService(reader=r, ani_skip=FakeAni(['--would-be-wrong']))
     flags, note = s.flags(title='x', ep=1, url='origin', url2='proxy')
-    assert flags == ['--from-chapters'] and 'chapters' in note, (flags, note)
+    assert flags and 'chapters' in note, (flags, note)
     assert r.calls == ['origin', 'proxy'], r.calls
 
 
 def test_url2_is_not_hit_when_the_origin_answers():
-    r = FakeResolver(op=(43.25, 118.875))
-    s = SkipService(resolver=r, ani_skip=FakeAni([]))
+    r = FakeReader({'origin': CHS})
+    s = SkipService(reader=r, ani_skip=FakeAni([]))
     flags, note = s.flags(title='x', ep=1, url='origin', url2='proxy')
-    assert flags == ['--from-chapters'] and r.calls == ['origin'], (flags, r.calls)
+    assert flags and 'chapters' in note and r.calls == ['origin'], (flags, r.calls)
+
+
+def test_targets_list_is_tried_in_order():
+    r = FakeReader({'proxy': CHS})
+    s = SkipService(reader=r, ani_skip=FakeAni([]))
+    flags, _note = s.flags(title='x', ep=1,
+                           targets=[('origin', {'Referer': 'r'}), ('proxy', None)])
+    assert flags and r.calls == ['origin', 'proxy'], (flags, r.calls)
+
+
+def test_mode_off_short_circuits_before_any_probe():
+    r = FakeReader({'u': CHS})
+    s = SkipService(reader=r, ani_skip=FakeAni(['--from-ani']),
+                    metadata=FakeMeta())
+    assert s.flags(title='T', ep=1, url='u', mode='off') == ([], 'off')
+    assert r.calls == [], r.calls
+
+
+def test_toggle_flag_is_appended():
+    s = SkipService(reader=FakeReader({'u': CHS}), ani_skip=FakeAni([]))
+    flags, _note = s.flags(title='T', ep=1, url='u', toggle=True)
+    assert flags == ['--script-opts=skip-op_start=0.0,skip-op_end=90.0,'
+                     'skip-ed_start=1200.0,skip-ed_end=1260.0,'
+                     'skip-toggle=yes,skip-toggle_key=T'], flags
+
+
+def test_a_raising_reader_still_tries_the_next_candidate():
+    class DeadThenGood(FakeReader):
+        def read(self, url, headers=None, timeout=None):
+            self.calls.append(url)
+            if url == 'origin':
+                raise OSError('ffprobe died')
+            return list(self.by_url.get(url, []))
+
+    r = DeadThenGood({'proxy': CHS})
+    s = SkipService(reader=r, ani_skip=FakeAni(['--would-be-wrong']))
+    flags, note = s.flags(title='x', ep=1, url='origin', url2='proxy')
+    assert flags and 'chapters' in note, (flags, note)
+    assert r.calls == ['origin', 'proxy'], r.calls
+
+
+def test_probe_targets_origin_first_then_proxy():
+    class St:
+        url = 'https://cdn/x/1.mkv'
+        headers = {'Referer': 'https://site/'}
+
+    assert probe_targets(St()) == [(St.url, St.headers)]
+    assert probe_targets(St(), 'http://127.0.0.1:9/1.mkv') == [
+        (St.url, St.headers), ('http://127.0.0.1:9/1.mkv', None)]
+    # nothing to probe (a prefetched local file): not a fake target
+    assert probe_targets(None, 'http://127.0.0.1:9/1.mkv') == []
 
 
 def main():
@@ -94,6 +150,11 @@ def main():
     test_notes()
     test_url2_fallback_reads_the_proxy_when_the_origin_hides_chapters()
     test_url2_is_not_hit_when_the_origin_answers()
+    test_targets_list_is_tried_in_order()
+    test_mode_off_short_circuits_before_any_probe()
+    test_toggle_flag_is_appended()
+    test_a_raising_reader_still_tries_the_next_candidate()
+    test_probe_targets_origin_first_then_proxy()
     print('SKIP OK')
 
 

@@ -16,6 +16,7 @@ from . import log
 from .episodes import Episode
 from .player import PosWatcher, ipc_seek
 from .prefetch import hls_to_file
+from .skip import probe_targets
 
 # Mark an episode watched once this fraction played (even if the user quits).
 WATCHED_FRAC = float(os.environ.get('AGP_WATCHED_FRAC', '0.70'))
@@ -103,11 +104,15 @@ class Playlist:
         self._pre[ep.num] = warm
         log.cprint(f'next: warming ep{ep.num} ({name})')
         if self.skip is not None:
+            # proxied streams: the same bytes through our proxy answer when the
+            # origin hides chapters; direct HLS has no proxy to fall back to
+            proxy_url = (self.proxy.url(name)
+                         if (self.proxy is not None
+                             and not getattr(st, 'direct', False)) else None)
             try:
                 warm['flags'], note = self.skip.flags(
                     title=self.provider.title, ep=ep.num,
-                    url=getattr(st, 'url', None),
-                    headers=getattr(st, 'headers', None),
+                    targets=probe_targets(st, proxy_url),
                     mode=self._skip_mode, toggle=self._skip_toggle,
                     timeout=6, mal_id=self.mal_id or getattr(
                         self.provider, 'mal_id', None))
@@ -197,7 +202,6 @@ class Playlist:
                     # no scrape, no skip probe, mpv opens a local file
                     name, url = warm['name'], warm['path']
                     direct, head_warm = False, True
-                    probe_url, probe_hdr = None, None
                     extra_direct: List[str] = list(warm.get('subs') or [])
                     t_link = time.monotonic() - t_ep
                     log.cprint(f'load: ep{ep.num} from prefetched file '
@@ -209,17 +213,12 @@ class Playlist:
                     direct = getattr(stream, 'direct', False)
                     extra_direct: List[str] = []
                     head_warm = False
-                    probe_url, probe_hdr = None, None
                     if direct:
                         # HLS/DASH: mpv plays the remote URL itself (no proxy)
                         url = stream.url
                         ref = (getattr(stream, 'headers', {}) or {}).get('Referer')
                         if ref:
                             extra_direct.append(f'--referrer={ref}')
-                        # HLS carries chapters in the manifest, so probe the same
-                        # URL mpv will play (that was the dead-skip bug: direct
-                        # streams were never probed)
-                        probe_url, probe_hdr = stream.url, (stream.headers or {})
                         for _lbl, sub in (getattr(stream, 'subs', []) or []):
                             extra_direct.append(f'--sub-file={sub}')
                     else:
@@ -232,23 +231,19 @@ class Playlist:
                         head_warm = ready.wait(2)
                         url = self.proxy.url(name)
                         t_link = time.monotonic() - t_ep   # incl. head warm-up
-                        # chapter probe reads the ORIGIN (fast plain ranges),
-                        # the proxy URL only as fallback - a failed head peek
-                        # used to leave probe_url empty and kill skip
-                        probe_url = getattr(stream, 'url', None)
-                        probe_hdr = (getattr(stream, 'headers', {}) or {}) or None
                     t_link = time.monotonic() - t_ep
                     log.cprint(f'load: ep{ep.num} link + head peek in '
                                f'{t_link:.1f}s ({"hls" if direct else "proxy"})')
+                # chapters come from the origin first, this proxy as fallback;
+                # a failed head peek must not leave this list empty (dead skip)
+                targets = probe_targets(stream, None if direct else url)
 
                 if 'flags' not in warm:
                     if self.skip is not None:
                         t_sk = time.monotonic()
                         try:
                             flags, note = self.skip.flags(
-                                title=title, ep=ep.num,
-                                url=probe_url, headers=probe_hdr,
-                                url2=(None if direct else url),
+                                title=title, ep=ep.num, targets=targets,
                                 mode=skip_mode,
                                 toggle=skip_toggle, timeout=6,
                                 mal_id=self.mal_id or getattr(
