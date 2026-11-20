@@ -13,6 +13,61 @@ from typing import Optional
 
 from ..config import Config
 from ..http import HttpClient
+import http.server
+import urllib.parse
+import urllib.request
+
+# the LATEST authorize_browser call owns this: any alive callback server
+# (even one orphaned by a canceled dialog) delivers the redirect to it
+_AUTH_WAIT = {'done': None, 'result': None}
+
+
+class Callback(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path.startswith('/t?'):
+            q = urllib.parse.parse_qs(self.path[3:])
+            tok = (q.get('access_token') or [''])[0]
+            res = _AUTH_WAIT.get('result')      # {} is falsy - never use
+            if res is None:                     # `or {}` here, it discards
+                res = {}                        # the write
+            if tok:
+                res['token'] = tok
+            body = (b'<meta charset="utf-8">'
+                    b'<body style="background:#111;color:#ddd;'
+                    b'font-family:sans-serif;text-align:center;'
+                    b'padding-top:40px"><h2>&#10003; AniList '
+                    b'connected - you can close this tab.</h2></body>')
+        elif self.path.startswith('/?code='):
+            q = urllib.parse.parse_qs(self.path[2:])
+            code = (q.get('code') or [''])[0]
+            res = _AUTH_WAIT.get('result')
+            if res is None:
+                res = {}
+            if code:
+                res['code'] = code
+                ev = _AUTH_WAIT.get('done')
+                if ev is not None:
+                    ev.set()                # deliver to the CURRENT waiter
+            body = (b'<meta charset="utf-8">'
+                    b'<body style="background:#111;color:#ddd;'
+                    b'font-family:sans-serif;text-align:center;'
+                    b'padding-top:40px"><h2>&#10003; AniList '
+                    b'authorized - one moment&hellip;</h2></body>')
+        else:
+            body = (b'<meta charset="utf-8">'
+                    b'<script>if(location.hash.length>1)'
+                    b'fetch("/t?"+location.hash.slice(1));</script>'
+                    b'<body style="background:#111;color:#ddd;'
+                    b'font-family:sans-serif;text-align:center;'
+                    b'padding-top:40px"><h2>Authorizing&hellip;</h2>'
+                    b'</body>')
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *a):
+        pass
 
 API = 'https://graphql.anilist.co'
 _SEARCH = ('query($s:String){Page(page:1,perPage:8){media(search:$s,type:ANIME){'
@@ -294,46 +349,8 @@ class Tracker:
         import webbrowser
         result = {}
         done = threading.Event()
-
-        class Callback(http.server.BaseHTTPRequestHandler):
-            def do_GET(self):
-                if self.path.startswith('/t?'):
-                    q = urllib.parse.parse_qs(self.path[3:])
-                    tok = (q.get('access_token') or [''])[0]
-                    if tok:
-                        result['token'] = tok
-                        done.set()
-                    body = (b'<meta charset="utf-8">'
-                            b'<body style="background:#111;color:#ddd;'
-                            b'font-family:sans-serif;text-align:center;'
-                            b'padding-top:40px"><h2>&#10003; AniList '
-                            b'connected - you can close this tab.</h2></body>')
-                elif self.path.startswith('/?code='):
-                    q = urllib.parse.parse_qs(self.path[2:])
-                    code = (q.get('code') or [''])[0]
-                    if code:
-                        result['code'] = code
-                        done.set()
-                    body = (b'<meta charset="utf-8">'
-                            b'<body style="background:#111;color:#ddd;'
-                            b'font-family:sans-serif;text-align:center;'
-                            b'padding-top:40px"><h2>&#10003; AniList '
-                            b'authorized - one moment&hellip;</h2></body>')
-                else:
-                    body = (b'<meta charset="utf-8">'
-                            b'<script>if(location.hash.length>1)'
-                            b'fetch("/t?"+location.hash.slice(1));</script>'
-                            b'<body style="background:#111;color:#ddd;'
-                            b'font-family:sans-serif;text-align:center;'
-                            b'padding-top:40px"><h2>Authorizing&hellip;</h2>'
-                            b'</body>')
-                self.send_response(200)
-                self.send_header('Content-Type', 'text/html; charset=utf-8')
-                self.end_headers()
-                self.wfile.write(body)
-
-            def log_message(self, *a):
-                pass
+        _AUTH_WAIT['done'] = done
+        _AUTH_WAIT['result'] = result
 
         srv = http.server.ThreadingHTTPServer(('127.0.0.1', port), Callback)
         threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -350,7 +367,7 @@ class Tracker:
             webbrowser.open(url)
             if not done.wait(timeout):
                 return None
-            code = result['code']
+            code = _AUTH_WAIT['result']['code']
             tok = self._exchange(client_id, client_secret, code, redir)
             user = self.viewer(tok)
             a = self._auth()

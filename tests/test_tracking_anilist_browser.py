@@ -53,6 +53,26 @@ def test_callback_catches_the_code_and_exchanges_it(tmp_path, monkeypatch):
     assert 'exchanged-token' in saved and '"enabled": true' in saved
 
 
+def test_orphaned_server_delivers_to_the_current_waiter(
+        tmp_path, monkeypatch):
+    """A canceled attempt leaves its callback server alive holding the
+    port; the redirect must still reach the NEW dialog's waiter."""
+    from tp.tracking import anilist_client as mod
+    import http.server
+    srv = http.server.ThreadingHTTPServer(('127.0.0.1', 8642), mod.Callback)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        latest_done = threading.Event()
+        mod._AUTH_WAIT['done'] = latest_done          # the NEW dialog's wait
+        urllib.request.urlopen(
+            'http://127.0.0.1:8642/?code=late-code', timeout=5).read()
+        assert latest_done.is_set()
+    finally:
+        srv.shutdown()
+        mod._AUTH_WAIT['done'] = None
+        mod._AUTH_WAIT['result'] = None
+
+
 def test_timeout_returns_none(tmp_path, monkeypatch):
     tr = _tracker(tmp_path, monkeypatch)
     monkeypatch.setattr('webbrowser.open', lambda url: None)
