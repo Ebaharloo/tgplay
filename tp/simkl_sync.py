@@ -14,9 +14,12 @@ still go out.
 
 No Qt here: the GUI passes `on_status` and shows it non-blocking.
 """
+import subprocess
 import threading
 import time
 from typing import Callable, Dict, Optional, Tuple
+
+ALERT_COOLDOWN = 1800          # one loud auth warning per 30 minutes
 
 from .config import load_json, save_json
 from .simkl_account import SimklAccount
@@ -183,6 +186,7 @@ class Syncer:
         self.interval = interval
         self.on_status = on_status
         self.last_error = ''
+        self.auth_failed_recent = False
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -197,8 +201,34 @@ class Syncer:
         with _PUSH_LOCK:
             return self._flush_once()
 
+    # --- loud auth-failure warning --------------------------------------
+    def _auth_alert(self, failed: int) -> None:
+        """A dead login must be IMPOSSIBLE to miss: status line + a desktop
+        notification, at most once per ALERT_COOLDOWN (not per retry)."""
+        now = time.time()
+        if now - getattr(self, '_auth_alert_at', 0) < ALERT_COOLDOWN:
+            return
+        self._auth_alert_at = now
+        self.auth_failed_recent = True     # the GUI light reads this
+        n = len(self.queue)
+        msg = (f'Simkl sync STOPPED: login expired - {n} episode mark(s) '
+               f'waiting since your last sync. Click the Simkl light to '
+               f'log in again; nothing is lost, the queue keeps them.')
+        try:
+            subprocess.run(['notify-send', '-u', 'critical', 'tgplay',
+                            msg], timeout=10, check=False)
+        except Exception:
+            pass
+        if self.on_status:
+            try:
+                self.on_status({'sent': 0, 'failed': failed, 'pending': n,
+                                'alert': 'simkl-auth', 'message': msg})
+            except Exception:
+                pass
+
     def _flush_once(self) -> dict:
         sent = failed = 0
+        auth_failed = 0
         if not self.pushers:             # not connected: keep everything queued
             return {'sent': 0, 'failed': 0, 'pending': len(self.queue)}
         for key, item in self.queue.items().items():
@@ -212,9 +242,15 @@ class Syncer:
                 failed += 1
                 self.last_error = str(ex)
                 self.queue.bump(key, ex, at=item.get('at'))
+                s = str(ex)
+                if '401' in s or 'token' in s.lower() or 'unauthorized' in s.lower():
+                    auth_failed += 1
                 continue
             sent += 1
+            self.auth_failed_recent = False    # working again: clear the state
             self.queue.drop(key, at=item.get('at'))
+        if auth_failed:
+            self._auth_alert(auth_failed)
         res = {'sent': sent, 'failed': failed, 'pending': len(self.queue)}
         if (sent or failed) and self.on_status:
             try:

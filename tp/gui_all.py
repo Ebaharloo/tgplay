@@ -516,8 +516,10 @@ class SimklConnectDialog(W.QDialog):
         self.link.setText(
             f'<a href="{self._dev["url"]}">{self._dev["url"]}</a>')
         self.code_lbl.setText(self._dev['code'] or '')
-        self.status.setText('Approve this code on the Simkl page - the '
-                            'dialog closes itself when done.')
+        self.status.setText('Simkl opened in your browser - press AUTHORIZE '
+                            'there. This dialog closes itself when done; '
+                            'the code below is only a fallback.')
+        self._open()                     # the browser IS the login flow
         threading.Thread(target=self._poll, daemon=True).start()
         self._timer = C.QTimer(self)
         self._timer.setInterval(250)
@@ -2508,6 +2510,13 @@ class MainWindow(W.QWidget):
 
     def _probe_status(self):
         """Check Simkl/AnimeGate/AniList on a worker and light them up."""
+        if getattr(self._syncer, 'auth_failed_recent', False):
+            # the queue is failing on auth: the light must say the login is
+            # dead and clicking it must offer the browser authorize FIRST
+            self._libq.put(('status', [{'key': 'simkl', 'fix': 'simkl',
+                                        'detail': 'login expired - '
+                                                  're-authorize in browser'}]))
+            return
         def work():
             try:
                 from .status import StatusProbe
@@ -2542,12 +2551,56 @@ class MainWindow(W.QWidget):
                 except Exception as ex:
                     self.state['msg'] = f'error: {ex}'
         else:
+            self._anilist_connect()
+
+    def _anilist_connect(self):
+        """Browser authorize: open the AniList approve page, paste the token
+        back once (the page shows it after Authorize), validate + save."""
+        try:
+            from .tracking.anilist_client import Tracker
+            tr = Tracker(self._cfg)
+        except Exception as ex:
+            self.state['msg'] = f'anilist: {ex}'
+            return
+        cid = (os.environ.get('AGP_ANILIST_CLIENT_ID')
+               or (tr._auth() or {}).get('client_id'))
+        if not cid:
             W.QMessageBox.information(
-                self, 'AniList tracking',
-                'AniList progress sync is optional.\n\n'
-                'It is configured with:  tgplay login\n'
-                '(or AGP_ANILIST_TOKEN in the environment).\n\n'
-                'Everything else works without it.')
+                self, 'AniList one-time setup',
+                'Create (or reuse) an AniList app at\n'
+                'anilist.co/settings/developer - Redirect URL:\n'
+                'https://anilist.co/api/v2/oauth/pin\n\n'
+                'Then paste its CLIENT ID here and press OK. '
+                'The browser authorize page opens right after.')
+            cid, ok = W.QInputDialog.getText(
+                self, 'AniList client id', 'client id:')
+            if not ok or not cid.strip():
+                return
+            cid = cid.strip()
+        url = ('https://anilist.co/api/v2/oauth/authorize?client_id='
+               f'{cid}&response_type=token')
+        tok, ok = W.QInputDialog.getMultiLineText(
+            self, 'AniList authorization',
+            'AniList opens in your browser now.\n'
+            'Press AUTHORIZE - the page then shows your token.\n'
+            'Copy that token here and press OK:', '')
+        if not (ok and tok.strip()):
+            return
+        try:
+            import webbrowser
+            webbrowser.open(url)
+            user = tr.login(client_id=cid, tok=tok.strip(),
+                            open_browser=False)
+        except Exception as ex:
+            self.state['msg'] = f'anilist: {ex}'
+            return
+        if user:
+            self.state['msg'] = f'AniList connected as {user["name"]}'
+            _log.cprint(f'anilist: connected from the window as '
+                        f'{user["name"]}')
+            self._probe_status()
+        else:
+            self.state['msg'] = 'AniList: token rejected'
 
     def _simkl_connect(self):
         dlg = SimklConnectDialog(self._tr.client, parent=self)
@@ -2579,6 +2632,10 @@ class MainWindow(W.QWidget):
         disconnect."""
         acc = self._simkl_acc
         menu = W.QMenu(self)
+        # the browser-authorize entry is ALWAYS first: a token can die
+        # server-side while the local file still exists, and then 'Pull'
+        # silently 401s forever. Re-authorizing is always safe.
+        a_auth = menu.addAction('🔗  Authorize in browser…')
         a_pull = menu.addAction('⬇  Pull watched state from Simkl')
         ids = self._show_ids()
         rate, status = {}, {}
@@ -2601,6 +2658,8 @@ class MainWindow(W.QWidget):
             self._tr.lists.set(ids, status[pick])
             self._syncer.wake()
             self._simkl_note(f'list: {status[pick]} (queued)')
+        elif pick is a_auth:
+            self._simkl_connect()
         elif pick is a_pull:
             self.state['msg'] = 'pulling watched state from Simkl…'
             threading.Thread(target=self._simkl_pull, daemon=True).start()
