@@ -89,14 +89,21 @@ class SkipService:
     def flags(self, *, title: str, ep: int, url: Optional[str] = None,
               mode: str = 'all', toggle: bool = False,
               timeout: float = 30, mal_id: Optional[int] = None,
-              headers: Optional[dict] = None
+              headers: Optional[dict] = None,
+              url2: Optional[str] = None
               ) -> Tuple[List[str], str]:
-        """(mpv args, note). note names the detector + times applied."""
+        """(mpv args, note). note names the detector + times applied.
+
+        `url2` is a fallback read of the same file (e.g. through our range
+        proxy) tried when the first URL yielded no named/positional chapter
+        - a slow or header-guarded origin must not silently kill skip."""
         if mode == 'off':
             return [], 'off'
         if url:
             op, ed, osrc, esrc = self.chapters.resolve(url, mode, timeout,
                                                        headers)
+            if url2 and op is None and ed is None:
+                op, ed, osrc, esrc = self.chapters.resolve(url2, mode, timeout)
             f = self.chapters.opts_from(op, ed, toggle)
             if f:
                 return f, _chapter_note(op, ed, osrc, esrc)

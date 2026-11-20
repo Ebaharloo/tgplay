@@ -9,13 +9,17 @@ from tp.skip import SkipService  # noqa: E402
 
 
 class FakeResolver:
-    def __init__(self, op=None, ed=None, src='named'):
+    def __init__(self, op=None, ed=None, src='named', by_url=None):
         self._op, self._ed, self._src = op, ed, src
+        self.by_url = by_url or {}
+        self.calls = []
 
     def resolve(self, url, mode='all', timeout=None, headers=None):
-        return (self._op, self._ed,
-                self._src if self._op else None,
-                self._src if self._ed else None)
+        self.calls.append(url)
+        op, ed = self.by_url.get(url, (self._op, self._ed))
+        return (op, ed,
+                self._src if op else None,
+                self._src if ed else None)
 
     def opts_from(self, op, ed, toggle=False):
         return ['--from-chapters'] if (op or ed) else []
@@ -68,9 +72,28 @@ def test_notes():
     print('PASS skip notes formatting')
 
 
+def test_url2_fallback_reads_the_proxy_when_the_origin_hides_chapters():
+    # origin answers but carries no chapters; the same file through the
+    # proxy does - skip must not die with the first empty probe
+    r = FakeResolver(by_url={'origin': (None, None), 'proxy': ((0, 90), None)})
+    s = SkipService(resolver=r, ani_skip=FakeAni(['--would-be-wrong']))
+    flags, note = s.flags(title='x', ep=1, url='origin', url2='proxy')
+    assert flags == ['--from-chapters'] and 'chapters' in note, (flags, note)
+    assert r.calls == ['origin', 'proxy'], r.calls
+
+
+def test_url2_is_not_hit_when_the_origin_answers():
+    r = FakeResolver(op=(43.25, 118.875))
+    s = SkipService(resolver=r, ani_skip=FakeAni([]))
+    flags, note = s.flags(title='x', ep=1, url='origin', url2='proxy')
+    assert flags == ['--from-chapters'] and r.calls == ['origin'], (flags, r.calls)
+
+
 def main():
     test_order()
     test_notes()
+    test_url2_fallback_reads_the_proxy_when_the_origin_hides_chapters()
+    test_url2_is_not_hit_when_the_origin_answers()
     print('SKIP OK')
 
 

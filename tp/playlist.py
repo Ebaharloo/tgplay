@@ -232,8 +232,11 @@ class Playlist:
                         head_warm = ready.wait(2)
                         url = self.proxy.url(name)
                         t_link = time.monotonic() - t_ep   # incl. head warm-up
-                        if head_warm:
-                            probe_url = url
+                        # chapter probe reads the ORIGIN (fast plain ranges),
+                        # the proxy URL only as fallback - a failed head peek
+                        # used to leave probe_url empty and kill skip
+                        probe_url = getattr(stream, 'url', None)
+                        probe_hdr = (getattr(stream, 'headers', {}) or {}) or None
                     t_link = time.monotonic() - t_ep
                     log.cprint(f'load: ep{ep.num} link + head peek in '
                                f'{t_link:.1f}s ({"hls" if direct else "proxy"})')
@@ -245,6 +248,7 @@ class Playlist:
                             flags, note = self.skip.flags(
                                 title=title, ep=ep.num,
                                 url=probe_url, headers=probe_hdr,
+                                url2=(None if direct else url),
                                 mode=skip_mode,
                                 toggle=skip_toggle, timeout=6,
                                 mal_id=self.mal_id or getattr(
