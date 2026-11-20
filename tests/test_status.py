@@ -67,7 +67,10 @@ def test_anilist_light():
     cfg = Config(home=tempfile.mkdtemp(prefix='tgplay-st-')).ensure()
     it = StatusProbe(cfg).check_anilist()
     assert it['state'] == 'warn' and it['fix'] == 'anilist', it
-    json.dump({'access_token': 'tok'}, open(cfg.anilist_auth, 'w'))
+    # the Tracker reads {'token': ...} (anilist.json) - the old probe looked
+    # for 'access_token' and stayed warn even when connected
+    json.dump({'token': 'tok', 'enabled': True},
+              open(cfg.anilist_auth, 'w'))
     it = StatusProbe(cfg).check_anilist()
     assert it['state'] == 'ok', it
     print('PASS AniList light: optional off -> ok with token')

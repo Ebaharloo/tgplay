@@ -2611,7 +2611,7 @@ class MainWindow(W.QWidget):
 
         threading.Thread(target=work, daemon=True).start()
         while not out.get('done') and not prog.wasCanceled():
-            C.QApplication.processEvents()
+            W.QApplication.processEvents()   # QtWidgets, not QtCore (hang root cause)
             time.sleep(0.05)
         prog.close()
         if 'err' in out:

@@ -10,6 +10,8 @@ import re
 import sys
 from typing import List, Optional, Tuple
 
+from .config import Config, save_json
+
 ALL_HELP = """\
 tgplay - one launcher for every source.
 
@@ -194,6 +196,51 @@ def _simkl_cmd(args: List[str]) -> int:
     return 0
 
 
+def _anilist_cmd(argv):
+    """`tgplay anilist login|status|logout` - terminal login: same
+    browser-approve flow as the GUI light, with visible steps."""
+    import json as _json
+    from .config import load_json, save_json
+    from .tracking.anilist_client import Tracker
+    cfg = Config().ensure()
+    tr = Tracker(cfg, None)
+    auth_path = cfg.anilist_auth
+
+    if argv and argv[0] == 'logout':
+        a = tr._auth() or {}
+        a.clear()
+        save_json(auth_path, a)
+        print('anilist: disconnected')
+        return 0
+
+    if argv and argv[0] == 'status':
+        a = tr._auth() or {}
+        print(f'anilist: {"connected as " + a.get("user", {}).get("name", "?") if a.get("token") else "not connected"}')
+        return 0
+
+    a = tr._auth() or {}
+    cid = a.get('client_id')
+    secret = a.get('client_secret')
+    if not (cid and secret):
+        print('One time: open https://anilist.co/settings/developer')
+        print('  - your app: set Redirect URL to  http://localhost:8642')
+        print('  - Save, then copy-paste the CLIENT ID and CLIENT SECRET.')
+        cid = (cid or input('client id: ').strip())
+        import getpass
+        secret = (secret or getpass.getpass('client secret: ').strip())
+        a.update({'client_id': cid, 'client_secret': secret})
+        save_json(auth_path, a)
+
+    print('opening the AniList AUTHORIZE page in your browser...')
+    print('(press AUTHORIZE there - this closes by itself)')
+    user = tr.authorize_browser(cid, client_secret=secret)
+    if user:
+        print(f'anilist: connected as {user["name"]} ✓')
+        return 0
+    print('anilist: no approval in time (5 min)')
+    return 1
+
+
 def main_all(argv: Optional[List[str]] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if any(a in ('-h', '--help') for a in argv):
@@ -202,6 +249,9 @@ def main_all(argv: Optional[List[str]] = None) -> int:
 
     if argv and argv[0].lower() == 'simkl':
         return _simkl_cmd(argv[1:])
+
+    if argv and argv[0].lower() == 'anilist':
+        return _anilist_cmd(argv[1:])
 
     # explicit source: `tgplay axp <args...>`
     if argv and argv[0].lower() in ('agp', 'axp', 'zoro', 'tg', 'tgp'):

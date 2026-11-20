@@ -69,21 +69,18 @@ class StatusProbe:
 
     # --- anilist token (optional) --------------------------------------
     def check_anilist(self) -> dict:
-        path = getattr(self.cfg, 'anilist_auth', None)
-        tok = None
-        if path:
-            try:
-                import json
-                tok = json.load(open(path)).get('access_token')
-            except Exception:
-                tok = None
+        try:
+            from .tracking.anilist_client import Tracker
+            tok = Tracker(self.cfg, self.http).token()
+        except Exception:
+            tok = None
         if os.environ.get('AGP_ANILIST_TOKEN'):
             tok = os.environ['AGP_ANILIST_TOKEN']
         if tok:
             return _item('anilist', 'AniList', 'ok',
-                         'token set (tracking enabled)', 'anilist')
+                         'connected (tracking enabled)', 'anilist')
         return _item('anilist', 'AniList', 'warn',
-                     'tracking off (optional) - run: tgplay login', 'anilist')
+                     'tracking off (optional) - click to connect', 'anilist')
 
     # --- all -------------------------------------------------------------
     def check_all(self) -> List[dict]:

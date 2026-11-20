@@ -7,7 +7,12 @@ import types
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from datetime import datetime, timezone                      # noqa: E402
 from tp.tracking.simkl_client import SimklClient            # noqa: E402
+
+# LOCAL today as a bare date - the calendar filter converts each row to the
+# local timezone and compares against date.today(); hardcoded dates go stale
+TODAY = datetime.now().astimezone().strftime('%Y-%m-%d')
 
 
 def _cfg(tmp):
@@ -28,10 +33,11 @@ def _cfg(tmp):
 FEED = {
     'metadata': {'1': {'title': 'Mine', 'ids': {'mal': 11}},
                  '9': {'title': 'Other', 'ids': {'mal': 99}}},
+    # dates are relative to today - hardcoded dates go stale at midnight
     'calendar': [
-        {'simkl_id': 9, 'date': '2026-11-20T11:00:00Z',
+        {'simkl_id': 9, 'date': TODAY + 'T11:00:00Z',
          'episode': {'episode': 568, 'title': 'ep568'}},
-        {'simkl_id': 1, 'date': '2026-11-20T10:00:00Z',
+        {'simkl_id': 1, 'date': TODAY + 'T10:00:00Z',
          'episode': {'episode': 25, 'title': 'ep25'}},
     ],
 }
