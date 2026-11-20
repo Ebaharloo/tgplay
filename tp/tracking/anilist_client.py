@@ -259,6 +259,71 @@ class Tracker:
         print(f"tracking: logged in as {u['name']}")
         return u
 
+    def authorize_browser(self, client_id, port=8642, timeout=300):
+        """Real OAuth: open the AniList authorize page, catch the redirect on
+        a localhost callback, exchange nothing (implicit), save the token.
+
+        Requires the AniList app's Redirect URL to be
+        http://localhost:<port>/ - the one-time setup dialog says exactly that.
+        Returns the user dict, or None on timeout."""
+        import http.server
+        import threading
+        import urllib.parse
+        import webbrowser
+        result = {}
+        done = threading.Event()
+
+        class Callback(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path.startswith('/t?'):
+                    q = urllib.parse.parse_qs(self.path[3:])
+                    tok = (q.get('access_token') or [''])[0]
+                    if tok:
+                        result['token'] = tok
+                        done.set()
+                    body = (b'<meta charset="utf-8">'
+                            b'<body style="background:#111;color:#ddd;'
+                            b'font-family:sans-serif;text-align:center;'
+                            b'padding-top:40px"><h2>&#10003; AniList '
+                            b'connected - you can close this tab.</h2></body>')
+                else:
+                    body = (b'<meta charset="utf-8">'
+                            b'<script>if(location.hash.length>1)'
+                            b'fetch("/t?"+location.hash.slice(1));</script>'
+                            b'<body style="background:#111;color:#ddd;'
+                            b'font-family:sans-serif;text-align:center;'
+                            b'padding-top:40px"><h2>Authorizing&hellip;</h2>'
+                            b'</body>')
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/html; charset=utf-8')
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *a):
+                pass
+
+        srv = http.server.ThreadingHTTPServer(('127.0.0.1', port), Callback)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            redir = f'http://localhost:{port}/'
+            url = ('https://anilist.co/api/v2/oauth/authorize?client_id='
+                   f'{client_id}&response_type=token&redirect_uri='
+                   + urllib.parse.quote(redir, safe=''))
+            webbrowser.open(url)
+            if not done.wait(timeout):
+                return None
+            tok = result['token']
+            user = self.viewer(tok)
+            a = self._auth()
+            a.update({'client_id': client_id, 'token': tok,
+                      'user': user, 'enabled': True})
+            a.setdefault('auto_sync', True)
+            from ..config import save_json
+            save_json(self.cfg.anilist_auth, a)
+            return user
+        finally:
+            srv.shutdown()
+
     def logout(self):
         try:
             os.remove(self.cfg.anilist_auth)

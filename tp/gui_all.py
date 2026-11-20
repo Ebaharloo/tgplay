@@ -2554,8 +2554,8 @@ class MainWindow(W.QWidget):
             self._anilist_connect()
 
     def _anilist_connect(self):
-        """Browser authorize: open the AniList approve page, paste the token
-        back once (the page shows it after Authorize), validate + save."""
+        """Real OAuth: open the AniList AUTHORIZE page, catch the redirect on
+        a localhost callback - zero token copying."""
         try:
             from .tracking.anilist_client import Tracker
             tr = Tracker(self._cfg)
@@ -2569,10 +2569,12 @@ class MainWindow(W.QWidget):
             import webbrowser
             W.QMessageBox.information(
                 self, 'AniList - one-time setup',
-                'One time only: open anilist.co/settings/developer\n'
-                '(it is opening for you), create an app with redirect\n'
-                '  https://anilist.co/api/v2/oauth/pin\n'
-                'and paste its CLIENT ID here. Never needed again.')
+                'anilist.co/settings/developer is opening. There:\n'
+                '1. open your app (or create one)\n'
+                '2. set Redirect URL EXACTLY to:\n'
+                '       http://localhost:8642/\n'
+                '3. Save, then paste the CLIENT ID below.\n'
+                'Never needed again - after this, logins are one click.')
             webbrowser.open('https://anilist.co/settings/developer')
             cid, ok = W.QInputDialog.getText(
                 self, 'AniList client id', 'client id:')
@@ -2582,22 +2584,36 @@ class MainWindow(W.QWidget):
             a.update({'client_id': cid})
             from .config import save_json
             save_json(tr.cfg.anilist_auth, a)
-        url = ('https://anilist.co/api/v2/oauth/authorize?client_id='
-               f'{cid}&response_type=token')
-        import webbrowser
-        webbrowser.open(url)                 # the authorize page, never /pin
-        tok, ok = W.QInputDialog.getMultiLineText(
-            self, 'AniList authorization',
-            'The AniList page is open.\n'
-            'Press AUTHORIZE - it shows your access token.\n'
-            'Copy that token here and press OK:', '')
-        if not (ok and tok.strip()):
+        import threading
+        prog = W.QProgressDialog(
+            'AniList opened in your browser - press AUTHORIZE there.\n'
+            'This dialog closes itself the second you approve.',
+            'Cancel', 0, 0, self)
+        prog.setWindowTitle('AniList authorization')
+        prog.setMinimumDuration(0)
+        prog.setModal(True)
+        out = {}
+
+        def work():
+            try:
+                out['user'] = tr.authorize_browser(cid)
+            except Exception as ex:
+                out['err'] = str(ex)
+            out['done'] = True
+
+        threading.Thread(target=work, daemon=True).start()
+        while not out.get('done') and not prog.wasCanceled():
+            C.QApplication.processEvents()
+            time.sleep(0.05)
+        prog.close()
+        if 'err' in out:
+            self.state['msg'] = f'anilist: {out["err"]}'
             return
-        try:
-            user = tr.login(client_id=cid, tok=tok.strip(),
-                            open_browser=False)
-        except Exception as ex:
-            self.state['msg'] = f'anilist: {ex}'
+        user = out.get('user')
+        if user is None and not prog.wasCanceled():
+            self.state['msg'] = 'anilist: no approval in time'
+            return
+        if not user:
             return
         if user:
             self.state['msg'] = f'AniList connected as {user["name"]}'
