@@ -32,6 +32,44 @@ def _fetch_calendar(cfg, http: Optional[HttpClient], ids: set, days: int) -> Lis
         return []
 
 
+def _fetch_anilist_rows(cfg, http):
+    """AniList rows for the union (empty on not-logged-in / any failure)."""
+    try:
+        from .tracking.anilist_client import Tracker
+        tr = Tracker(cfg, http)
+        if not tr.enabled():
+            return []
+        return tr.library()
+    except Exception as ex:
+        import logging
+        logging.getLogger('tp').warning('anilist rows failed: %s', ex)
+        return []
+
+
+def _merge_remote_rows(simkl_rows, anilist_rows):
+    """Union by title: a show known to both keeps its Simkl row (it carries
+    the simkl id the app plays by) and gains the missing anilist id + the
+    higher watched count and newer last_watched; AniList-only shows append."""
+    by_title = {}
+    for r in simkl_rows:
+        by_title.setdefault(_norm_title(r.get('title')), r)
+    for a in anilist_rows:
+        k = _norm_title(a.get('title'))
+        s = by_title.get(k)
+        if s is None:
+            by_title[k] = a
+            continue
+        s.setdefault('anilist', a.get('anilist'))
+        if a.get('anilist') and not s.get('anilist'):
+            s['anilist'] = a['anilist']
+        if (a.get('watched') or 0) > (s.get('watched') or 0):
+            s['watched'] = a['watched']
+            s['next_ep'] = a.get('next_ep')
+        if str(a.get('last_watched') or '') > str(s.get('last_watched') or ''):
+            s['last_watched'] = a['last_watched']
+    return list(by_title.values())
+
+
 def overview(cfg, http: Optional[HttpClient] = None, aired_days: int = 7,
              cal_days: int = 14, hist_limit: int = 15) -> dict:
     """Fetch the library once (+ the calendar once) and derive everything."""
@@ -51,6 +89,8 @@ def overview(cfg, http: Optional[HttpClient] = None, aired_days: int = 7,
             e['kind'] = 'aired'
             aired.append(e)
     aired.sort(key=lambda e: str(e['air_date']), reverse=True)
+    rows = _merge_remote_rows(rows, _fetch_anilist_rows(cfg, http))
+
     rem = [dict(e, kind='remaining') for e in rows
            if e.get('status') == 'watching' and e.get('next_ep') and e.get('title')]
     rem.sort(key=lambda e: str(e.get('air_date') or ''), reverse=True)

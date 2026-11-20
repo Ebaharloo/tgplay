@@ -175,6 +175,55 @@ class Tracker:
         return None
 
     # --- progress ----------------------------------------------------------
+    _STATUS = {'CURRENT': 'watching', 'PLANNING': 'plantowatch',
+               'PAUSED': 'hold', 'DROPPED': 'dropped',
+               'COMPLETED': 'completed', 'REPEATING': 'watching'}
+
+    def library(self, statuses=None):
+        """The user's AniList lists, in the SAME row shape Simkl rows use,
+        so library.overview() can merge them by title."""
+        uid = (self.viewer(self.token()) or {}).get('id')
+        # AniList quirk: the userId must be a literal in the query text
+        # (the variable form answers 'User ID/Name & Type arguments required')
+        q = (f'query{{MediaListCollection(userId:{int(uid)},type:ANIME){{'
+             'lists{entries{status progress updatedAt '
+             'media{id idMal episodes title{romaji english} '
+             'coverImage{large}}}}}}')
+        d = self._gql(q, token=self.token())
+        ml = (d.get('data') or {}).get('MediaListCollection') or {}
+        lists = ml.get('lists') or []
+        out = []
+        for lst in lists:
+            for e in lst.get('entries') or []:
+                m = e.get('media') or {}
+                t = m.get('title') or {}
+                title = t.get('english') or t.get('romaji') or ''
+                prog = e.get('progress') or 0
+                ts = e.get('updatedAt')
+                lw = ''
+                if ts:
+                    try:
+                        from datetime import datetime
+                        lw = datetime.fromtimestamp(int(ts)).strftime(
+                            '%Y-%m-%d %H:%M')
+                    except Exception:
+                        lw = ''
+                row = {
+                    'title': title, 'simkl': None,
+                    'mal': m.get('idMal'), 'anilist': m.get('id'),
+                    'status': self._STATUS.get(e.get('status'),
+                                               e.get('status', '') or ''),
+                    'watched': prog, 'total': m.get('episodes') or 0,
+                    'next_ep': (prog + 1) if prog else None,
+                    'air_date': None, 'last_watched': lw,
+                    'poster': (m.get('coverImage') or {}).get('large'),
+                }
+                if statuses:
+                    row = row if row['status'] in statuses else None
+                if row and title:
+                    out.append(row)
+        return out
+
     @staticmethod
     def watched_of(entry) -> int:
         """progress.json `ep` is current-or-next -> fully watched = ep - 1."""
