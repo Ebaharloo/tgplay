@@ -109,9 +109,11 @@ class Tracker:
 
     # --- graphql -----------------------------------------------------------
     def _gql(self, query, variables=None, token=None):
-        h = {'Content-Type': 'application/json', 'Accept': 'application/json'}
-        if token:
-            h['Authorization'] = 'Bearer ' + token
+        # the saved token is the default: callers that skip it (the WRITES
+        # did) went out anonymous and got 401 'login expired' alarms while
+        # the account was connected all along
+        h = {'Content-Type': 'application/json', 'Accept': 'application/json',
+             'Authorization': 'Bearer ' + (token or self.token() or '')}
         req = self.http.request(API, method='POST', headers=h,
                                 data=json.dumps({'query': query,
                                                  'variables': variables or {}}
